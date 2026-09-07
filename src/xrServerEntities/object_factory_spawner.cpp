@@ -63,6 +63,16 @@ void CObjectFactory::init_spawn_data()
 
             if (!temp.empty())
             {
+                // This is an editor catalog scan, not a request to spawn this squad.
+                // Mods can retain unused squad templates with absent NPC sections.
+                // Report them here without making the catalog prevent game startup.
+                if (!pSettings->line_exist(temp.c_str(), "class"))
+                {
+                    Msg("! [Spawner] Cannot catalog squad [%s]: NPC [%s] has no class definition",
+                        name.c_str(), temp.c_str());
+                    continue;
+                }
+
                 const auto npc_clsid    = pSettings->r_clsid(temp.c_str(), "class");
                 const auto npc_kind     = pSettings->read_if_exists<pcstr>(temp.c_str(), "kind", nullptr);
                 const auto npc_category = try_detect_spawn_category(npc_kind, nullptr, npc_clsid);
