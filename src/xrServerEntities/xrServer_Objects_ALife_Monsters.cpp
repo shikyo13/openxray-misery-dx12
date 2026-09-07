@@ -144,11 +144,10 @@ CSE_ALifeTraderAbstract::CSE_ALifeTraderAbstract(LPCSTR caSection)
 
 CSE_Abstract* CSE_ALifeTraderAbstract::init()
 {
-    string4096 S;
-    // xr_sprintf                        (S,"%s\r\n[game_info]\r\nname_id = default\r\n",!*base()->m_ini_string ? "" :
-    // *base()->m_ini_string);
-    xr_sprintf(S, "%s\r\n[game_info]\r\n", !base()->m_ini_string.c_str() ? "" : base()->m_ini_string.c_str());
-    base()->m_ini_string = S;
+    // Mod-authored NPC custom data can exceed the old 4 KiB temporary buffer.
+    xr_string customData = base()->m_ini_string.empty() ? "" : base()->m_ini_string.c_str();
+    customData += "\r\n[game_info]\r\n";
+    base()->m_ini_string = customData.c_str();
 
     return (base());
 }
