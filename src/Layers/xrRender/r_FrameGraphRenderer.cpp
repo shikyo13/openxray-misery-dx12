@@ -41,7 +41,6 @@
 #include "Bindless/TerrainMaterialBuffer.h"          // Terrain material buffer
 #include "Bindless/VariantTextureBuffer.h"           // Variant texture buffer
 #include "FrameGraphPasses/SkyPassSetup.h"           // Sky dome rendering
-#include "FrameGraphPasses/SunPassSetup.h"           // Sun disc rendering
 #include "FrameGraphPasses/SkinningPassSetup.h"
 #include "FrameGraphPasses/ParticlePassSetup.h"      // Particle rendering (billboards/sprites)
 #include "FrameGraphPasses/DistortionApplyPassSetup.h" // Distortion post-process
@@ -1153,18 +1152,6 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     );
 
     // ═══════════════════════════════════════════════════════
-    //  SUN PASS (Sun disc with additive blending)
-    // ═══════════════════════════════════════════════════════
-
-    auto sunOutput = passes::setupSunPass(
-        *m_framegraph,
-        skyOutput,
-        fgEnv,
-        width,
-        height
-    );
-
-    // ═══════════════════════════════════════════════════════
     //  FORWARD COLOR PASS (Single-RT, Reuses Depth)
     // ═══════════════════════════════════════════════════════
     passes::BindlessForwardConfig bindlessConfig;
@@ -1235,7 +1222,7 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
         *m_framegraph,
         m_device,
         depthBuffer,
-        sunOutput,
+        skyOutput,
         normalBuffer,
         baseColorBuffer,
         m_geometryCollector.get(),
@@ -1631,6 +1618,8 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     if (g_pGamePersistent && g_pGamePersistent->Environment().eff_LensFlare)
     {
         auto* effLF = g_pGamePersistent->Environment().eff_LensFlare;
+        // This pass owns the source disc as well as flares and the gradient.
+        // Drawing a second sun over the sky ignores its alpha/fade and doubles the source.
         effLF->Render(true, true, true);
         if (auto* fgLF = dynamic_cast<FGLensFlareRender*>(effLF->GetRenderer()))
         {
