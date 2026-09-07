@@ -1671,7 +1671,7 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
 
     sceneWithUI = passes::setupDebugDrawPass(*m_framegraph, sceneWithUI, width, height);
 
-    // 6. Tonemap Pass - Convert HDR to LDR using ACES filmic tonemap
+    // 6. Final transfer and the camera's authored post-processing effects.
     auto ldrOutput = passes::setupTonemapPass(
         *m_framegraph,
         m_device,
@@ -1681,7 +1681,8 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
         width,
         height,
         m_blackboard->get_or_add<passes::TonemapPassState>(),
-        &m_blackboard->get_or_add<passes::ExposurePassState>()
+        &m_blackboard->get_or_add<passes::ExposurePassState>(),
+        m_postProcessParams
     );
 
     // ═══════════════════════════════════════════════════════
@@ -3098,6 +3099,7 @@ void FrameGraphRenderer::OnBackBufferResized(u32, u32)
 
 void FrameGraphRenderer::SetPostProcessParams(const SPPInfo& ppi)
 {
+    m_postProcessParams = ppi;
     if (!m_pTarget)
         return;
     m_pTarget->set_blur(ppi.blur);

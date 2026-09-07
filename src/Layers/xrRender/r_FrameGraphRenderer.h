@@ -2,6 +2,7 @@
 #pragma once
 
 #include "xrEngine/Render.h"
+#include "xrCore/PostProcess/PPInfo.hpp"
 #include "Layers/xrRender/FGRenderBase.h"
 #include "Layers/xrRender/Shader.h"
 #include "Layers/xrRender/r__buffer_pool.h"
@@ -393,6 +394,7 @@ public:
     xr_vector<fg::light*> m_Lights_LastFrame;
     fg::SMAP_Allocator m_LP_smap_pool;
     fg::CRenderTarget* m_pTarget{ nullptr };
+    SPPInfo m_postProcessParams;
     fg::CPSLibrary m_PSLibrary;
 
     u32 occq_begin(u32& ID) { return m_HWOCC.occq_begin(ID); }
