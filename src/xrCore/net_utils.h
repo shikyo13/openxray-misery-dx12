@@ -16,7 +16,8 @@ class shared_str;
 
 #pragma pack(push, 1)
 
-const u32 NET_PacketSizeLimit = 16 * 1024;
+// Authored NPC custom data can exceed 16 KiB. Keep serialized lengths at u16.
+const u32 NET_PacketSizeLimit = 32 * 1024;
 
 struct XRCORE_API IIniFileStream
 {

@@ -3,6 +3,7 @@
 #include "net_utils.h"
 #include "xrCommon/math_funcs.h"
 #include "xrCore/_compressed_normal.h"
+#include <exception>
 
 // ---NET_Packet
 
@@ -12,10 +13,15 @@ void NET_Packet::w(const void* p, u32 count)
 {
     R_ASSERT(inistream == NULL || w_allow);
     VERIFY(p && count);
-    VERIFY(B.count + count < NET_PacketSizeLimit);
+    if (B.count >= NET_PacketSizeLimit || count >= NET_PacketSizeLimit - B.count)
+    {
+        xrDebug::Fatal(DEBUG_INFO, "NET_Packet write exceeds capacity: offset=%u, bytes=%u, capacity=%u",
+            B.count, count, NET_PacketSizeLimit - 1);
+        // Continuing from a diagnostic must never turn a failed write into memory corruption.
+        std::terminate();
+    }
     CopyMemory(&B.data[B.count], p, count);
     B.count += count;
-    VERIFY(B.count < NET_PacketSizeLimit);
 }
 
 void NET_Packet::w_float_q16(float a, float min, float max)
