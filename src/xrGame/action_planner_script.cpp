@@ -11,6 +11,7 @@
 #include "script_action_planner_wrapper.h"
 #include "script_game_object.h"
 #include "action_base.h"
+#include "xrScriptEngine/script_engine.hpp"
 
 void set_goal_world_state(CScriptActionPlanner* action_planner, CScriptActionPlanner::CState* world_state)
 {
@@ -25,6 +26,22 @@ bool get_actual(const CScriptActionPlanner* action_planner)
 CScriptActionPlanner* cast_planner(CScriptActionBase* action)
 {
     return (smart_cast<CScriptActionPlanner*>(action));
+}
+
+static void add_script_evaluator(CScriptActionPlanner* planner, const u32& conditionId,
+    CScriptPropertyEvaluator* evaluator)
+{
+    const auto& evaluators = planner->evaluators();
+    const auto existing = evaluators.find(conditionId);
+    if (existing != evaluators.end())
+    {
+        GEnv.ScriptEngine->script_log(LuaMessageType::Error,
+            "Duplicate AI evaluator id %u on [%s]: existing [%s], requested [%s]",
+            conditionId, planner->m_object ? planner->m_object->Name() : "unbound planner",
+            existing->second->m_evaluator_name, evaluator->m_evaluator_name);
+    }
+    // Keep the planner's duplicate-registration assertion and ownership semantics.
+    planner->add_evaluator(conditionId, evaluator);
 }
 
 void CScriptActionPlannerExport::script_register(lua_State* luaState)
@@ -45,7 +62,7 @@ void CScriptActionPlannerExport::script_register(lua_State* luaState)
             .def("remove_action", (void (CScriptActionPlanner::*)(const CScriptActionPlanner::_edge_type&))(
                                       &CScriptActionPlanner::remove_operator))
             .def("action", &CScriptActionPlanner::action)
-            .def("add_evaluator", &CScriptActionPlanner::add_evaluator, adopt<3>())
+            .def("add_evaluator", &add_script_evaluator, adopt<3>())
             .def("remove_evaluator",
                 (void (CScriptActionPlanner::*)(const CScriptActionPlanner::_condition_type&))(
                     &CScriptActionPlanner::remove_evaluator))
