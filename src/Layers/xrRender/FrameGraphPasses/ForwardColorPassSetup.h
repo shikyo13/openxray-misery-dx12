@@ -121,6 +121,7 @@ struct ForwardColorPassState {
     bool bindlessInitialized = false;
     nvrhi::GraphicsPipelineHandle terrainPipeline;
     nvrhi::BindingLayoutHandle terrainLayout;
+    nvrhi::ShaderHandle terrainVS;
     nvrhi::ShaderHandle terrainPS;
     bool terrainInitialized = false;
 };

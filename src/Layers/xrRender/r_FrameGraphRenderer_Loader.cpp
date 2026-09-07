@@ -54,6 +54,8 @@ void FrameGraphRenderer::level_Load(IReader* fs)
             gpuCulling = GetGPUCullingManager();
             if (gpuCulling) {
                 // Estimate geometry size (will be refined during LoadBuffers)
+                // Command-line startup can load a level before the first menu frame.
+                gpuCulling->Initialize(GetRenderDevice());
                 gpuCulling->BeginLevelLoad(2000000, 6000000);
             }
         }

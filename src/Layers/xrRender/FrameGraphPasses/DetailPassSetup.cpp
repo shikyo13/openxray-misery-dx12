@@ -62,7 +62,6 @@ DefaultOutputLayout setupDetailPass(
         fbInfo.colorFormats.push_back(nvrhi::Format::RGBA16_FLOAT);
         fbInfo.colorFormats.push_back(nvrhi::Format::RGBA16_FLOAT);
         fbInfo.colorFormats.push_back(nvrhi::Format::RGBA8_UNORM);
-        fbInfo.colorFormats.push_back(nvrhi::Format::RGBA32_FLOAT);
         fbInfo.depthFormat = nvrhi::Format::D32;
         detailManager->CreateGraphicsPipeline(device, fbInfo);
     }

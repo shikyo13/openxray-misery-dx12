@@ -91,8 +91,11 @@ VS_OUTPUT main(VS_INPUT input)
     float4 worldPos = mul(worldMatrix, float4(input.position.xyz, 1.0));
     output.worldPos = worldPos.xyz;
     float3 clipPos = worldPos.xyz;
+#ifndef BINDLESS_TERRAIN
+    // Terrain IDs address g_TerrainMaterials, not the regular material table.
     if (g_Materials[materialID].flags & MAT_FLAG_ALPHA_BLEND)
         clipPos += (eye_position - clipPos) * 0.002;
+#endif
     output.position = mul(m_VP, float4(clipPos, 1.0));
 
     // Transform normal/tangent to world space

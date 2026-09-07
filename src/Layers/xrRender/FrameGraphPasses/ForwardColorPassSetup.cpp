@@ -99,15 +99,17 @@ void InitializeForwardResources(fg::RenderDevice* device, const nvrhi::Framebuff
 
     QueryBindingLayoutFromPipeline(state.bindlessPipeline, state.bindlessLayout);
 
+    auto terrainVsResult = shaderLoader->LoadVertexShader("bindless_terrain", "main");
     auto terrainPsResult = shaderLoader->LoadPixelShader("bindless_terrain", "main");
-    if (terrainPsResult.handle) {
+    if (terrainVsResult.handle && terrainPsResult.handle) {
+        state.terrainVS = terrainVsResult.handle;
         state.terrainPS = terrainPsResult.handle;
         state.terrainLayout = cache.GetOrCreateBindingLayoutFromReflection(
-            "ForwardColor_Terrain", *vsResult.reflection, *terrainPsResult.reflection, nvDevice);
+            "ForwardColor_Terrain", *terrainVsResult.reflection, *terrainPsResult.reflection, nvDevice);
 
         if (state.terrainLayout) {
             nvrhi::GraphicsPipelineDesc terrainPipeDesc;
-            terrainPipeDesc.VS = state.bindlessVS;
+            terrainPipeDesc.VS = state.terrainVS;
             terrainPipeDesc.PS = state.terrainPS;
             terrainPipeDesc.inputLayout = state.bindlessInputLayout;
             if (bindlessLayout)
@@ -320,7 +322,7 @@ static void renderBindlessForward(
 
             // Create terrain binding set (includes TerrainMaterialBuffer at t9)
             // NOTE: Terrain uses its own instance/batch buffers, not the regular ones
-            auto* terrainVsRefl = shaderLoader->GetCachedReflection("bindless_forward", ".vs");
+            auto* terrainVsRefl = shaderLoader->GetCachedReflection("bindless_terrain", ".vs");
             auto* terrainPsRefl = shaderLoader->GetCachedReflection("bindless_terrain", ".ps");
             framegraph::BindingSetBuilder terrainBsb(*terrainVsRefl, *terrainPsRefl, nvDevice, "ForwardColor.Terrain");
             terrainBsb.ConstantBuffer("static_globals", staticGlobalsCB);
@@ -390,7 +392,6 @@ framegraph::DefaultOutputLayout setupForwardColorPass(
         fbInfo.colorFormats.push_back(nvrhi::Format::RGBA16_FLOAT);
         fbInfo.colorFormats.push_back(nvrhi::Format::RGBA16_FLOAT);
         fbInfo.colorFormats.push_back(nvrhi::Format::RGBA8_UNORM);
-        fbInfo.colorFormats.push_back(nvrhi::Format::RGBA32_FLOAT);
         fbInfo.depthFormat = nvrhi::Format::D32;
         InitializeForwardResources(device, fbInfo, *state);
     }

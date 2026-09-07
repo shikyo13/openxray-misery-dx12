@@ -98,6 +98,21 @@ static nvrhi::ColorMask ParseColorMask(const char* str)
     return static_cast<nvrhi::ColorMask>(mask);
 }
 
+static nvrhi::BlendFactor AlphaBlendFactor(nvrhi::BlendFactor factor)
+{
+    // A shared RGBA blend equation needs scalar factors for the alpha channel.
+    // D3D12 rejects color factors in SrcBlendAlpha and DestBlendAlpha.
+    switch (factor)
+    {
+    case nvrhi::BlendFactor::SrcColor: return nvrhi::BlendFactor::SrcAlpha;
+    case nvrhi::BlendFactor::InvSrcColor: return nvrhi::BlendFactor::InvSrcAlpha;
+    case nvrhi::BlendFactor::DstColor: return nvrhi::BlendFactor::DstAlpha;
+    case nvrhi::BlendFactor::InvDstColor: return nvrhi::BlendFactor::InvDstAlpha;
+    case nvrhi::BlendFactor::SrcAlphaSaturate: return nvrhi::BlendFactor::One;
+    default: return factor;
+    }
+}
+
 static void ParseBlendState(const JsonValue& blend, ShaderPassDesc& pass)
 {
     if (!blend.is_object()) return;
@@ -106,10 +121,12 @@ static void ParseBlendState(const JsonValue& blend, ShaderPassDesc& pass)
     pass.blendRT.srcBlend = ParseBlendFactor(blend["src"].as_string("One"));
     pass.blendRT.destBlend = ParseBlendFactor(blend["dst"].as_string("Zero"));
     pass.blendRT.blendOp = ParseBlendOp(blend["op"].as_string("Add"));
-    pass.blendRT.srcBlendAlpha = ParseBlendFactor(
-        blend.has("srcAlpha") ? blend["srcAlpha"].as_string() : blend["src"].as_string("One"));
-    pass.blendRT.destBlendAlpha = ParseBlendFactor(
-        blend.has("dstAlpha") ? blend["dstAlpha"].as_string() : blend["dst"].as_string("Zero"));
+    pass.blendRT.srcBlendAlpha = blend.has("srcAlpha")
+        ? ParseBlendFactor(blend["srcAlpha"].as_string())
+        : AlphaBlendFactor(pass.blendRT.srcBlend);
+    pass.blendRT.destBlendAlpha = blend.has("dstAlpha")
+        ? ParseBlendFactor(blend["dstAlpha"].as_string())
+        : AlphaBlendFactor(pass.blendRT.destBlend);
     pass.blendRT.blendOpAlpha = ParseBlendOp(
         blend.has("opAlpha") ? blend["opAlpha"].as_string() : blend["op"].as_string("Add"));
 }
