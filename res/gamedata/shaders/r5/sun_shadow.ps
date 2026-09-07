@@ -1,0 +1,11 @@
+#define SM_6_0
+#include "common.h"
+#include "bindless_common.h"
+struct Input { float4 position : SV_Position; float2 uv : TEXCOORD0; nointerpolation uint materialID : TEXCOORD1; };
+void main(Input input) {
+    // Terrain is opaque and uses a separate material table.
+    if (input.materialID == 0xFFFFFFFF) return;
+    MaterialData material = g_Materials[input.materialID];
+    if (material.flags & MAT_FLAG_ALPHA_TEST)
+        clip(SampleDiffuse(material, input.uv).a - material.alphaRef);
+}

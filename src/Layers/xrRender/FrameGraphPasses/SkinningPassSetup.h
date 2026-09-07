@@ -6,6 +6,8 @@
 #include "Layers/xrRender/FrameGraph/IPass.h"
 #include <nvrhi/nvrhi.h>
 
+class CFrustum;
+
 namespace xray::render {
     struct GeometryBatch;
     class MaterialCache;
@@ -13,6 +15,7 @@ namespace xray::render {
     namespace fg {
         class dxRender_Visual;
         class RenderDevice;
+        class RenderContext;
         class GPUCullingManager;
     }
 }
@@ -44,6 +47,8 @@ struct SkinningPipelineVariant {
 };
 
 struct SkinningPassState {
+    nvrhi::GraphicsPipelineHandle sunShadowPipelines[5];
+    nvrhi::BindingLayoutHandle sunShadowLayout;
     SkinningPipelineVariant nonHQ;
     SkinningPipelineVariant hq1w;
     SkinningPipelineVariant hq2w;
@@ -70,6 +75,10 @@ struct SkinningPassState {
 };
 
 void InitializeSkinningResources(fg::RenderDevice* device, const nvrhi::FramebufferInfoEx& fbInfo, SkinningPassState& state);
+
+u32 DrawSkinnedSunShadows(RenderContext* context, RenderDevice* device, GPUCullingManager* gpuCulling,
+    const GeometryCollector* geometry, decals::OverlayManager* overlays, const Fmatrix& viewProjection,
+    const CFrustum& frustum, nvrhi::IFramebuffer* framebuffer, SkinningPassState& state);
 
 struct SkinningPassData {
     framegraph::VirtualResourceHandle color;

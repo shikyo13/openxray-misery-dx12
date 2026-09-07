@@ -140,6 +140,8 @@ target_sources(xrRender PRIVATE
     FrameGraphPasses/UIPassSetup.cpp
     FrameGraphPasses/SkyPassSetup.h
     FrameGraphPasses/SkyPassSetup.cpp
+    FrameGraphPasses/SunShadowPassSetup.h
+    FrameGraphPasses/SunShadowPassSetup.cpp
     FrameGraphPasses/SunPassSetup.h
     FrameGraphPasses/SunPassSetup.cpp
     FrameGraphPasses/DetailCullPassSetup.h

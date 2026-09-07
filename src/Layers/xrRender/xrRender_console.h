@@ -25,6 +25,7 @@ enum
     ssao_mode_hbao,
 };
 
+extern ECORE_API int ps_r_sun_shadows;
 extern ECORE_API u32 ps_r_sun_quality; //	=	0;
 extern ECORE_API u32 ps_r_water_reflection; //	=	0;
 extern ECORE_API const xr_token qsun_quality_token[];

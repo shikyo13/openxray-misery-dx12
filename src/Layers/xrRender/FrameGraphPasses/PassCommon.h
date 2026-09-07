@@ -1,9 +1,13 @@
 #pragma once
 
 #include <nvrhi/nvrhi.h>
+#include "Layers/xrRender/FrameGraph/FGTypes.h"
+namespace xray::render::framegraph { class FrameGraph; }
 #include "xrCore/xrCore.h"
 
 namespace xray::render::fg::passes {
+
+void ReadSunShadowMap(framegraph::FrameGraph& graph, framegraph::PassHandle pass);
 
 inline void DrawIndexedIndirectCountOrFallback(
     nvrhi::ICommandList* cmdList,

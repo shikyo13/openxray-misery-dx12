@@ -452,6 +452,91 @@ static SkinnedPhaseContext BuildSkinnedPhaseContext(
     return ctx;
 }
 
+u32 DrawSkinnedSunShadows(RenderContext* context, RenderDevice* device, GPUCullingManager* gpuCulling,
+    const GeometryCollector* geometry, decals::OverlayManager* overlays, const Fmatrix& viewProjection,
+    const CFrustum& frustum, nvrhi::IFramebuffer* framebuffer, SkinningPassState& state)
+{
+    if (!geometry || !gpuCulling || !state.initialized || !gpuCulling->GetGlobalBoneBuffer()) return 0;
+    auto* command = context->GetCommandList();
+    auto* nvDevice = device->GetNVRHIDevice();
+    auto* backend = device->GetBackend();
+    auto* loader = GEnv.Render->GetShaderLoader();
+    auto& cache = framegraph::GetPassResourceCache();
+    auto ps = loader->LoadPixelShader("sun_shadow_skinned");
+    const auto* vsReflection = loader->GetCachedReflection("bindless_skinned", ".vs");
+    R_ASSERT2(ps.handle && vsReflection, "Skinned sun shadow shaders could not be loaded");
+    if (!state.sunShadowLayout) {
+        state.sunShadowLayout = cache.GetOrCreateBindingLayoutFromReflection("SunShadowSkinned",
+            *vsReflection, *ps.reflection, nvDevice);
+        const SkinningPipelineVariant* variants[] = {&state.nonHQ, &state.hq1w, &state.hq2w, &state.hq3w, &state.hq4w};
+        for (u32 i = 0; i < 5; ++i) {
+            nvrhi::GraphicsPipelineDesc desc;
+            desc.VS = variants[i]->vs; desc.PS = ps.handle; desc.inputLayout = variants[i]->inputLayout;
+            desc.bindingLayouts = { state.sunShadowLayout, backend->GetBindlessLayout() };
+            desc.primType = nvrhi::PrimitiveType::TriangleList;
+            desc.renderState.depthStencilState.depthTestEnable = true;
+            desc.renderState.depthStencilState.depthWriteEnable = true;
+            desc.renderState.depthStencilState.depthFunc = nvrhi::ComparisonFunc::LessOrEqual;
+            desc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::None;
+            desc.renderState.rasterState.depthBias = 64;
+            desc.renderState.rasterState.slopeScaledDepthBias = 1.5f;
+            nvrhi::FramebufferInfoEx info; info.depthFormat = nvrhi::Format::D32;
+            string32 name; xr_sprintf(name, "SunShadowSkinned%u", i);
+            state.sunShadowPipelines[i] = cache.GetOrCreatePipeline(name, desc, info, nvDevice);
+            R_ASSERT2(state.sunShadowPipelines[i], "Skinned sun shadow pipeline creation failed");
+        }
+    }
+    auto transforms = cache.GetOrCreateVolatileCB("SunShadowSkinned", "Transforms", sizeof(DynamicTransforms), device, 8192);
+    auto material = cache.GetOrCreateVolatileCB("SunShadowSkinned", "Material", sizeof(SkinnedMaterialCB), device, 8192);
+    auto globals = cache.GetOrCreateVolatileCB("SunShadowSkinned", "Globals", sizeof(StaticGlobals), device, 32);
+    auto constants = BuildStaticGlobals();
+    constants.m_VP = viewProjection;
+    command->writeBuffer(globals, &constants, sizeof(constants));
+    if (overlays) overlays->UploadSplats(command);
+    framegraph::BindingSetBuilder bsb(*vsReflection, *ps.reflection, nvDevice, "SunShadowSkinned");
+    bsb.ConstantBuffer("dynamic_transforms", transforms);
+    bsb.ConstantBuffer("static_globals", globals);
+    bsb.ConstantBuffer("SkinnedMaterialCB", material);
+    bsb.BufferSRV("g_BoneMatrices", gpuCulling->GetGlobalBoneBuffer());
+    bsb.BufferSRV("g_Materials", MaterialBuffer::Instance().GetBuffer());
+    bsb.BufferSRV("g_PaintSplats", overlays ? overlays->GetSplatBuffer() : nullptr);
+    auto bindings = cache.GetOrCreateBindingSet(bsb.Build(), state.sunShadowLayout, nvDevice);
+    R_ASSERT2(bindings, "Skinned sun shadow binding set creation failed");
+    u32 count = 0;
+    for (const auto& batch : geometry->GetBatches()) {
+        if (!batch.isSkinned || !batch.vertexBuffer || !batch.indexBuffer) continue;
+        if (!frustum.testSphere_dirty(batch.worldBoundsCenter, batch.worldBoundsRadius)) continue;
+        u32 index = 0;
+        switch (GetSkinnedVertexFormatID(batch.skinningRenderMode, batch.vertexStride)) {
+        case VF_SKINNED_HQ1W: index = 1; break;
+        case VF_SKINNED_HQ2W: index = 2; break;
+        case VF_SKINNED_HQ3W: index = 3; break;
+        case VF_SKINNED_HQ4W: index = 4; break;
+        }
+        DynamicTransforms world = {};
+        FillDynamicTransforms(world, batch.worldMatrix);
+        command->writeBuffer(transforms, &world, sizeof(world));
+        const auto splats = GetSplatRange(batch, overlays);
+        SkinnedMaterialCB materialData = {};
+        materialData.materialID = batch.bindlessMaterialID;
+        materialData.skeletonBoneOffset = GetSkeletonBoneOffset(command, *gpuCulling, batch);
+        materialData.splatOffset = splats.offset; materialData.splatCount = splats.count;
+        command->writeBuffer(material, &materialData, sizeof(materialData));
+        nvrhi::GraphicsState draw;
+        draw.pipeline = state.sunShadowPipelines[index]; draw.framebuffer = framebuffer;
+        draw.bindings = { bindings, backend->GetBindlessDescriptorTable() };
+        draw.vertexBuffers = { { batch.vertexBuffer, 0, 0 } };
+        draw.indexBuffer = { batch.indexBuffer, nvrhi::Format::R16_UINT, 0 };
+        const auto& size = framebuffer->getFramebufferInfo();
+        draw.viewport.addViewportAndScissorRect(nvrhi::Viewport(0.f, float(size.width), 0.f, float(size.height), 0.f, 1.f));
+        command->setGraphicsState(draw);
+        command->drawIndexed(nvrhi::DrawArguments().setVertexCount(batch.indexCount)
+            .setStartIndexLocation(batch.startIndex).setStartVertexLocation(batch.baseVertex));
+        ++count;
+    }
+    return count;
+}
+
 static void DrawSkinnedBatch(
     const SkinningPassState& state,
     nvrhi::ICommandList* cmdList,
@@ -567,6 +652,7 @@ framegraph::DefaultOutputLayout setupSkinningPass(
         // ═══════════════════════════════════════════════════════
         [&, width, height, gpuCulling, skinnedDrawArgs, state, overlayMgr](FrameGraph& builder, PassHandle passHandle, SkinningPassData& data) {
             RenderPassBuilder passBuilder(builder, passHandle);
+            ReadSunShadowMap(builder, passHandle);
 
             data.width = width;
             data.height = height;

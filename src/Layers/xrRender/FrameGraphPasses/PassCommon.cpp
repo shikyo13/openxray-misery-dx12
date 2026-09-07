@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "PassCommon.h"
+#include "Layers/xrRender/r_FrameGraphRenderer.h"
 #include "Layers/xrRender/FrameGraph/PassResourceCache.h"
 #include "xrEngine/IGame_Persistent.h"
 #include "xrEngine/Environment.h"
@@ -7,6 +8,12 @@
 #include "xrCDB/Frustum.h"
 
 namespace xray::render::fg::passes {
+
+void ReadSunShadowMap(framegraph::FrameGraph& graph, framegraph::PassHandle pass)
+{
+    const auto shadow = static_cast<FrameGraphRenderer*>(GEnv.Render)->GetSunShadowMap();
+    if (shadow.is_valid()) graph.PassRead(pass, shadow, framegraph::ResourceState::ShaderResource);
+}
 
 nvrhi::BufferHandle GetOrCreateDrawIndexBuffer(const char* passName, nvrhi::IDevice* device)
 {

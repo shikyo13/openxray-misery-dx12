@@ -262,6 +262,10 @@ public:
     void ToggleStatsOverlay() { if (m_statsOverlay) m_statsOverlay->ToggleVisible(); }
 
     fg::RenderDevice* GetRenderDevice() const override { return m_device; }
+    framegraph::VirtualResourceHandle GetSunShadowMap() const { return m_sunShadowMap; }
+    nvrhi::ITexture* GetSunShadowTexture() const {
+        return m_sunShadowMap.is_valid() ? m_framegraph->GetPhysicalTexture(m_sunShadowMap) : nullptr;
+    }
     framegraph::ShaderLoader* GetShaderLoader() const override { return m_shaderLoader; }
     fg::ImGuiRendererNVRHI* GetImGuiRendererNVRHI() const override { return m_imguiRendererNVRHI; }
     void SetImGuiRendererNVRHI(fg::ImGuiRendererNVRHI* r) { m_imguiRendererNVRHI = r; }
@@ -427,6 +431,7 @@ private:
 
     // FrameGraph
     xr_unique_ptr<framegraph::FrameGraph> m_framegraph;
+    framegraph::VirtualResourceHandle m_sunShadowMap;
 
     // Shader phase cache (Week 16 - for precompilation phase detection)
     xr_unique_ptr<framegraph::ShaderPhaseCache> m_shaderPhaseCache;

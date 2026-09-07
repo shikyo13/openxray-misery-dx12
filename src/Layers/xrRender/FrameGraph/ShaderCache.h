@@ -131,7 +131,8 @@ private:
         ExtractedReflection& outReflection
     );
 
-    static constexpr u32 CACHE_VERSION = 6;
+    // Forward lighting now reads cascaded shadow resources from shared headers.
+    static constexpr u32 CACHE_VERSION = 7;
     Stats m_stats;
     bool m_cacheEnabled;
     xr_string m_backendSubdir;

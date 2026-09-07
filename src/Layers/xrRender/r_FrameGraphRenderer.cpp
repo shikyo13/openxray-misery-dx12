@@ -50,6 +50,7 @@
 #include "FrameGraphPasses/ExposurePassSetup.h"      // Auto-exposure from histogram
 #include "FrameGraphPasses/UIPassSetup.h"
 #include "FrameGraphPasses/FontPassSetup.h"
+#include "FrameGraphPasses/SunShadowPassSetup.h"
 #include "FrameGraphPasses/TonemapPassSetup.h"       // Tonemap pass: HDR→LDR conversion
 #include "FrameGraphPasses/SmokeTrailPassSetup.h"
 #include "FrameGraphPasses/ClusterLightPassSetup.h"
@@ -365,6 +366,8 @@ void FrameGraphRenderer::Shutdown() {
     m_framegraph = nullptr;
 
     if (m_blackboard) {
+        if (auto* sunShadow = m_blackboard->try_get<passes::SunShadowPassState>())
+            *sunShadow = {};
         if (auto* tonemap = m_blackboard->try_get<passes::TonemapPassState>())
             passes::ShutdownTonemapPass(*tonemap);
         m_blackboard.reset();
@@ -410,6 +413,7 @@ void FrameGraphRenderer::Render() {
     // ═══════════════════════════════════════════════════════
     //  RESET FRAMEGRAPH FOR NEW FRAME
     // ═══════════════════════════════════════════════════════
+    m_sunShadowMap = {};
     m_framegraph->ResetForNextFrame();
 
     // Shader hot-reload check (throttled to avoid per-frame filesystem polling)
@@ -491,6 +495,9 @@ void FrameGraphRenderer::Render() {
     auto* cmdList = m_renderContext->GetCommandList();
     auto staticGlobalsCB = cache.GetOrCreateVolatileCB("Frame", "StaticGlobals", sizeof(passes::StaticGlobals), m_device);
     auto staticGlobalsData = passes::BuildStaticGlobals();
+    const auto& sunShadow = m_blackboard->get_or_add<passes::SunShadowPassState>();
+    for (u32 i = 0; i < 3; ++i) staticGlobalsData.shadow_matrices[i] = sunShadow.viewProjection[i];
+    staticGlobalsData.cascade_splits = sunShadow.splits;
 
     auto& clm = fg::ClusteredLightManager::Instance();
     if (clm.IsReady() && clm.GetLightCount() > 0) {
@@ -564,6 +571,7 @@ void FrameGraphRenderer::RenderMenu() {
         m_device->GetFGResourceManager()->Update(Device.fTimeDelta);
     }
     
+    m_sunShadowMap = {};
     m_framegraph->ResetForNextFrame();
 
     const u32 width = Device.dwWidth;
@@ -1217,6 +1225,11 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
             m_hasPrevFrameData
         );
     }
+
+    m_sunShadowMap = passes::setupSunShadowPass(*m_framegraph, m_device, m_gpuCullingManager.get(),
+        m_materialCache.get(), drawArgsBuffer, m_blackboard->get_or_add<passes::SunShadowPassState>(),
+        m_geometryCollector.get(), m_blackboard->get_or_add<passes::SkinningPassState>(), m_overlayManager.get());
+    m_framegraph->GetRTRegistry().RegisterRT("rt_SunShadow", m_sunShadowMap);
 
     auto forwardOutputs = passes::setupForwardColorPass(
         *m_framegraph,

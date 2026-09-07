@@ -412,6 +412,7 @@ framegraph::DefaultOutputLayout setupForwardColorPass(
             data.passState = state;
 
             RenderPassBuilder passBuilder(builder, passHandle);
+            ReadSunShadowMap(builder, passHandle);
 
             data.depth = passBuilder.readWrite(depthInput, ResourceState::DepthStencilWrite);
             data.color = passBuilder.readWrite(colorInput, ResourceState::RenderTarget);

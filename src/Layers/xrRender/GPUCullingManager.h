@@ -260,6 +260,10 @@ public:
     const xr_vector<u32>& GetTerrainMaterialIDData() const { return m_terrainMaterialIDData; }
     const xr_vector<IndirectDrawArgs>& GetTransparentDrawArgsData() const { return m_transparentDrawArgsData; }
     const xr_vector<u32>& GetTransparentMaterialIDData() const { return m_transparentMaterialIDData; }
+    const xr_vector<GPUObjectData>& GetStaticObjectData() const { return m_staticObjectData; }
+    const xr_vector<GPUObjectData>& GetTerrainObjectData() const { return m_terrainObjectData; }
+    const xr_vector<GPUObjectData>& GetDynamicObjectData() const { return m_dynamicObjectData; }
+    const xr_vector<IndirectDrawArgs>& GetDynamicDrawArgsData() const { return m_dynamicDrawArgsData; }
     const xr_vector<GPUInstanceData>& GetStaticInstanceData() const { return m_staticInstanceData; }
 
     void SetRTAccelStructManager(RTAccelStructManager* mgr) { m_rtAccelMgr = mgr; }

@@ -1,5 +1,6 @@
 #ifndef	common_functions_h_included
 #define	common_functions_h_included
+#include "shared/shadow_sampling.h"
 
 //	contrast function
 float Contrast(float Input, float ContrastPower)
@@ -271,7 +272,7 @@ f_forward output_forward_pbr(
 		ambientColor
 	);
 
-	float3 finalColor = sunLight + ambient;
+	float3 finalColor = sunLight * SampleCSM(worldPos, N) + ambient;
 
 #ifdef CLUSTERED_LIGHTING_FORWARD
 	if (svPosition.w != 0)

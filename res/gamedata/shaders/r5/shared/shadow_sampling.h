@@ -1,77 +1,40 @@
 #ifndef SHADOW_SAMPLING_H
 #define SHADOW_SAMPLING_H
 
-#ifdef CSM_SHADOW_FORWARD
 Texture2DArray<float> g_ShadowMapArray : register(t23);
 SamplerComparisonState smp_shadowcmp : register(s4);
-#endif
 
-#ifdef HUD_SHADOW_FORWARD
-Texture2D<float> g_HUDShadowMap : register(t24);
-#endif
-
-float SampleCSM(float3 worldPos)
+float SampleSunCascade(float3 worldPos, uint cascade)
 {
-#ifndef CSM_SHADOW_FORWARD
-    return 1.0;
-#else
-    float smapSize = dev_param_3.x > 0 ? dev_param_3.x : 4096.0;
-    float2 texelSize = 1.0 / float2(smapSize, smapSize);
-
-    [unroll]
-    for (uint c = 0; c < 3; c++)
-    {
-        float4 shadowCoord = mul(shadow_matrices[c], float4(worldPos, 1.0));
-        float2 shadowUV = shadowCoord.xy;
-        float depth = shadowCoord.z;
-
-        if (all(shadowUV > 0.0) && all(shadowUV < 1.0) && depth >= 0.0 && depth <= 1.0)
-        {
-            float shadow = 0.0;
-            [unroll]
-            for (int y = -1; y <= 1; y += 2) {
-                [unroll]
-                for (int x = -1; x <= 1; x += 2) {
-                    float2 offset = float2(x, y) * texelSize * 0.5;
-                    shadow += g_ShadowMapArray.SampleCmp(
-                        smp_shadowcmp, float3(shadowUV + offset, c), depth);
-                }
-            }
-            return shadow * 0.25;
-        }
-    }
-
-    return 1.0;
-#endif
-}
-
-float SampleHUDShadow(float3 worldPos)
-{
-#ifndef HUD_SHADOW_FORWARD
-    return 1.0;
-#else
-    float4 shadowCoord = mul(shadow_matrices[3], float4(worldPos, 1.0));
-    float2 shadowUV = shadowCoord.xy;
-    float depth = shadowCoord.z;
-
-    if (any(shadowUV < 0.0) || any(shadowUV > 1.0))
+    float4 clip = mul(shadow_matrices[cascade], float4(worldPos, 1.0));
+    float3 projected = clip.xyz / clip.w;
+    float2 uv = float2(projected.x * 0.5 + 0.5, 0.5 - projected.y * 0.5);
+    if (any(uv <= 0.0) || any(uv >= 1.0) || projected.z <= 0.0 || projected.z >= 1.0)
         return 1.0;
-
-    float hudSmapSize = 2048.0;
-    float2 texelSize = 1.0 / float2(hudSmapSize, hudSmapSize);
-
-    float shadow = 0.0;
-    [unroll]
-    for (int y = -1; y <= 1; y += 2) {
-        [unroll]
-        for (int x = -1; x <= 1; x += 2) {
-            float2 offset = float2(x, y) * texelSize * 0.5;
-            shadow += g_HUDShadowMap.SampleCmp(
-                smp_shadowcmp, shadowUV + offset, depth);
+    float visibility = 0.0;
+    [unroll] for (int y = -1; y <= 1; ++y) {
+        [unroll] for (int x = -1; x <= 1; ++x) {
+            visibility += g_ShadowMapArray.SampleCmpLevelZero(smp_shadowcmp,
+                float3(uv + float2(x,y) * cascade_splits.w, cascade), projected.z - 0.00001);
         }
     }
-    return shadow * 0.25;
-#endif
+    return visibility / 9.0;
 }
 
+float SampleCSM(float3 worldPos, float3 normal)
+{
+    if (cascade_splits.w <= 0.0) return 1.0;
+    float distance = dot(worldPos - eye_position, camera_direction.xyz);
+    if (distance <= 0.0 || distance >= cascade_splits.z) return 1.0;
+    uint cascade = distance < cascade_splits.x ? 0 : (distance < cascade_splits.y ? 1 : 2);
+    float3 position = worldPos + normal * 0.015;
+    float visibility = SampleSunCascade(position, cascade);
+    float edge = cascade_splits[cascade];
+    float blend = saturate((distance - edge * 0.9) / (edge * 0.1));
+    if (blend > 0.0) {
+        float next = cascade < 2 ? SampleSunCascade(position, cascade + 1) : 1.0;
+        visibility = lerp(visibility, next, blend);
+    }
+    return visibility;
+}
 #endif

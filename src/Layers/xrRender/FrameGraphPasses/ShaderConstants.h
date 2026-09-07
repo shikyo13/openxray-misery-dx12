@@ -191,7 +191,7 @@ inline void FillGlobalConstants(GlobalConstants& cb) {
 
     for (int i = 0; i < 4; i++)
         cb.shadow_matrices[i].identity();
-    cb.cascade_splits.set(10.0f, 50.0f, 150.0f, 500.0f);
+    cb.cascade_splits.set(0.0f, 0.0f, 0.0f, 0.0f);
 
     // Cluster grid parameters (PLACEHOLDER - Phase 5: will be populated from light culling pass)
     cb.cluster_params.set(16.0f, 16.0f, 24.0f, 0.0f);  // 16×16×24 grid, 0 lights for now
@@ -247,7 +247,8 @@ inline void FillSunConstants(StaticGlobals& cb, const SunLightData& sun) {
     cb.L_hemi_color.set(
         desc.hemi_color.x,
         desc.hemi_color.y,
-        desc.hemi_color.z
+        desc.hemi_color.z,
+        ps_r2_sun_lumscale_hemi
     );
 }
 

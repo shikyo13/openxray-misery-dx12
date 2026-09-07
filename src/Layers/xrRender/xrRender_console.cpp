@@ -45,6 +45,7 @@ const xr_token qpreset_token[] =
     { nullptr, 0 }
 };
 
+int ps_r_sun_shadows = 1;
 u32 ps_r2_smapsize = 2048;
 const xr_token qsmapsize_token[] =
 {
@@ -956,6 +957,7 @@ void xrRender_initconsole()
     CMD4(CCC_Integer, "r4_debug_gpu_culling", &ps_r4_debug_gpu_culling, 0, 1);
     CMD4(CCC_Integer, "r_path_tracer", &ps_r_path_tracer, 0, 1);
     CMD4(CCC_Integer, "r_path_tracer_bounces", &ps_r_path_tracer_bounces, 1, 16);
+    CMD4(CCC_Integer, "r_sun_shadows", &ps_r_sun_shadows, 0, 1);
     CMD4(CCC_Integer, "r_rt_gi", &ps_r_rt_gi, 0, 1);
     CMD4(CCC_Float, "r_rt_gi_intensity", &ps_r_rt_gi_intensity, 0.0f, 4.0f);
 
