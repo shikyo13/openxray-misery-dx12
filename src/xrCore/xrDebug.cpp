@@ -193,24 +193,17 @@ void xrDebug::GatherInfo(char* assertionInfo, size_t bufferSize, const ErrorLoca
     Log(assertionInfo);
     FlushLog();
 
-    buffer = assertionInfo;
 #if defined(XR_PLATFORM_WINDOWS)
-    if (DebuggerIsPresent() || !strstr(GetCommandLine(), "-no_call_stack_assert"))
+    if (DebuggerIsPresent() || strstr(GetCommandLine(), "-no_call_stack_assert"))
         return;
 #endif
 
-    Log("stack trace:\n");
-    buffer += xr_sprintf(buffer, oneAboveBuffer - buffer, "stack trace:\n\n");
-
-    xr_vector<xr_string> stackTrace = BuildStackTrace();
-    for (size_t i = 2; i < stackTrace.size(); i++)
-    {
-        Log(stackTrace[i].c_str());
-        buffer += xr_sprintf(buffer, oneAboveBuffer - buffer, "%s\n", stackTrace[i].c_str());
-    }
-
+    // Keep the complete trace in the log. Long symbol paths must not overflow
+    // the fixed-size dialog buffer and cause another assertion while reporting one.
+    LogStackTrace("stack trace:");
     FlushLog();
-    os_clipboard::copy_to_clipboard(assertionInfo);
+    if (ShowErrorMessage)
+        os_clipboard::copy_to_clipboard(assertionInfo);
 }
 
 void xrDebug::Fatal(const ErrorLocation& loc, const char* format, ...)

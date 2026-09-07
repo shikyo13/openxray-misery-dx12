@@ -66,6 +66,8 @@ ICF void init_dbghelp()
 {
     s_dbghelp = GetModuleHandleA("dbghelp.dll");
     if (!s_dbghelp)
+        s_dbghelp = LoadLibraryExA("dbghelp.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!s_dbghelp)
     {
         Log("! [StackTraceBuilder] Failed to load dbghelp.dll");
         return;
@@ -101,6 +103,11 @@ StackTraceBuilder::StackTraceBuilder()
 {
     if (!s_dbghelp)
         init_dbghelp();
+
+    if (!symGetOptions || !symSetOptions || !symInitialize || !symCleanup ||
+        !stackWalk || !symFunctionTableAccess || !symGetModuleBase ||
+        !symGetSymFromAddr || !symGetLineFromAddr)
+        return;
 
     u32 dwOptions = symGetOptions();
     symSetOptions(dwOptions | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);

@@ -37,6 +37,11 @@ if (WIN32)
     target_link_options(xr_3da PRIVATE "LINKER:/ERRORLIMIT:0")
 endif()
 
+if (MSVC)
+    # Release objects contain /Zi information; link it into a usable crash PDB.
+    target_link_options(xr_3da PRIVATE "$<$<CONFIG:Release>:/DEBUG:FULL>")
+endif()
+
 set_target_properties(xr_3da PROPERTIES
     PREFIX ""
 )
