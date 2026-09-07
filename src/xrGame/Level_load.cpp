@@ -155,6 +155,14 @@ bool CLevel::Load_GameSpecific_After()
         else
             scripts = "";
         scriptEngine.add_script_process(ScriptProcessor::Level, scriptEngine.CreateScriptProcess("level", scripts));
+
+        // Opt-in startup script, using the same scheduler as the run_script console command.
+        if (pcstr argument = strstr(Core.Params, "-run_script "))
+        {
+            string256 script;
+            if (sscanf(argument + xr_strlen("-run_script "), "%255s", script) == 1)
+                scriptEngine.script_process(ScriptProcessor::Level)->add_script(script, false, false);
+        }
     }
 
     BlockCheatLoad();

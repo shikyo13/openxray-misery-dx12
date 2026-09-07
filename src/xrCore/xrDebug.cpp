@@ -706,6 +706,9 @@ void xrDebug::Initialize(pcstr commandLine)
 #ifdef MASTER_GOLD
     ShowErrorMessage = commandLine ? !!strstr(commandLine, "-show_error_window") : false;
 #endif
+    // Unattended runs must also suppress assertion dialogs, not only BugTrap UI.
+    if (commandLine && strstr(commandLine, "-silent_error_mode"))
+        ShowErrorMessage = false;
 }
 
 void xrDebug::Finalize()
