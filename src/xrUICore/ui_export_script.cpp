@@ -435,7 +435,13 @@ void CUIListBox::script_register(lua_State* luaState)
             .def("RemoveAll", &CUIListBox::Clear)
             .def("GetSize", &CUIListBox::GetSize)
             .def("GetSelectedItem", &CUIListBox::GetSelectedItem)
-            .def("GetSelectedIndex", &CUIListBox::GetSelectedIDX)
+            .def("GetSelectedIndex", +[](CUIListBox* self) -> s64
+            {
+                // Scripts use -1 for no selection. Exporting the native u32
+                // sentinel directly produces 4294967295 in 64-bit Lua.
+                const u32 index = self->GetSelectedIDX();
+                return index == u32(-1) ? s64(-1) : s64(index);
+            })
             .def("SetSelectedIndex", &CUIListBox::SetSelectedIDX)
             .def("SetItemHeight", &CUIListBox::SetItemHeight)
             .def("GetItemHeight", &CUIListBox::GetItemHeight)
