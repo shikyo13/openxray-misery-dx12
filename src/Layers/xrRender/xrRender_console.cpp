@@ -380,7 +380,7 @@ public:
 class CCC_Screenshot : public IConsole_Command
 {
 public:
-    CCC_Screenshot(LPCSTR N) : IConsole_Command(N){};
+    CCC_Screenshot(LPCSTR N) : IConsole_Command(N) { bEmptyArgsHandled = TRUE; };
     virtual void Execute(LPCSTR args)
     {
         if (GEnv.isDedicatedServer)

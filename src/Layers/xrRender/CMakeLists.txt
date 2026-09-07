@@ -1,6 +1,29 @@
 add_library(xrRender STATIC)
 
+if(WIN32)
+    # Reuse the image codec used by the DX11 renderer for screenshot/save formats.
+    # Keep its build options local to avoid changing unrelated dependencies.
+    function(xray_add_screenshot_codec)
+        include(FetchContent)
+        set(BUILD_TOOLS OFF)
+        set(BUILD_SAMPLE OFF)
+        set(BUILD_DX11 OFF)
+        set(BUILD_DX12 OFF)
+        set(BC_USE_OPENMP OFF)
+        FetchContent_Declare(directxtex
+            GIT_REPOSITORY https://github.com/microsoft/DirectXTex.git
+            GIT_TAG 9260384a375e0b39e7b22c8c67fd0d060f0c948a
+        )
+        FetchContent_MakeAvailable(directxtex)
+        # Its private helper names are intentionally repeated in separate files.
+        set_target_properties(DirectXTex PROPERTIES UNITY_BUILD OFF)
+        target_link_libraries(xrRender PRIVATE DirectXTex)
+    endfunction()
+    xray_add_screenshot_codec()
+endif()
+
 target_sources(xrRender PRIVATE
+    r_FrameGraphRenderer_Screenshot.cpp
     stdafx.h
     stdafx.cpp
 

@@ -416,6 +416,7 @@ public:
 
 private:
     bool m_enabled = false;
+    xr_vector<std::pair<IRender::ScreenshotMode, shared_str>> m_pendingScreenshots;
     fg::RenderDevice* m_device = nullptr;
     framegraph::ShaderLoader* m_shaderLoader = nullptr;
     fg::ImGuiRendererNVRHI* m_imguiRendererNVRHI = nullptr;

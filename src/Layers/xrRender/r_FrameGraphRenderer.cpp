@@ -2826,6 +2826,10 @@ void FrameGraphRenderer::Calculate() {}
 void FrameGraphRenderer::OnFrame()
 {
     ZoneScoped;
+    auto screenshots = std::move(m_pendingScreenshots);
+    m_pendingScreenshots.clear();
+    for (const auto& request : screenshots)
+        Screenshot(request.first, request.second.c_str());
     g_pModelPool->DeleteQueue();
     if (g_pGamePersistent->MainMenuActiveOrLevelNotExist())
         return;
@@ -3118,13 +3122,6 @@ void FrameGraphRenderer::SetPostProcessParams(const SPPInfo& ppi)
     m_pTarget->set_cm_imfluence(ppi.cm_influence);
     m_pTarget->set_cm_interpolate(ppi.cm_interpolate);
     m_pTarget->set_cm_textures(ppi.cm_tex1, ppi.cm_tex2);
-}
-
-void FrameGraphRenderer::Screenshot(IRender::ScreenshotMode mode, pcstr name)
-{
-    UNUSED(mode);
-    UNUSED(name);
-    Msg("! Screenshot not yet implemented for FrameGraph renderer");
 }
 
 void FrameGraphRenderer::RequestGrassInteraction(const Fvector& world_pos, float radius, float strength, uint8_t type)
