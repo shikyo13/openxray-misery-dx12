@@ -2,6 +2,7 @@ add_executable(xr_3da WIN32)
 
 target_sources(xr_3da PRIVATE
     entry_point.cpp
+    memory_capacity_check.cpp
     stdafx.h
 
     resource.h

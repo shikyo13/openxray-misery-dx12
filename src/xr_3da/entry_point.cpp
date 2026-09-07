@@ -32,12 +32,17 @@ struct profiler_raii
     ~profiler_raii() { xray::profiler::Shutdown(); }
 };
 
+int RunMemoryCapacityCheck();
+
 int entry_point(pcstr commandLine)
 {
     profiler_raii raii;
     auto* game = strstr(commandLine, "-nogame") ? nullptr : &xrGame;
 
     CApplication app{ commandLine, game, s_render_modules };
+
+    if (strstr(commandLine, "-mem_capacity_check"))
+        return RunMemoryCapacityCheck();
 
     return app.Run();
 }
