@@ -92,9 +92,10 @@ public:
     bool Initialize(fg::RenderDevice* device);
     void Shutdown();
 
-    // Call once per frame with current weapon muzzle transform.
-    // Constant emission — no heat system for first pass.
-    void Update(float dt, const Fvector& muzzlePos, const Fvector& muzzleDir);
+    void UpdateMuzzle(u16 weaponId, const Fvector& muzzlePos, const Fvector& muzzleDir);
+    void OnShot(u16 weaponId);
+    // Called by the renderer even when no weapon is active, so smoke can expire.
+    void PrepareFrame(float dt);
 
     // Buffer accessors for pass setup
     nvrhi::IBuffer* GetSimBuffer()      const { return m_simBuffer.Get(); }
@@ -114,6 +115,8 @@ public:
     static constexpr u32 GROUP_SIZE = 64;
 
 private:
+    void SelectWeapon(u16 weaponId);
+
     // GPU buffers
     nvrhi::BufferHandle m_simBuffer;       // 256 × 48B (SmokeSimPoint ring buffer)
     nvrhi::BufferHandle m_compactBuffer;   // 256 × 32B (GPUTrailControlPoint output)
@@ -122,12 +125,17 @@ private:
 
     // Muzzle tracking
     Fvector m_prevMuzzlePos = {0, 0, 0};
+    Fvector m_muzzlePos = {0, 0, 0};
+    Fvector m_muzzleDir = {0, 0, 1};
+    u16     m_weaponId = u16(-1);
     bool    m_hasPrevMuzzle = false;
+    bool    m_muzzleUpdated = false;
 
     // Emission accumulator
     float m_emitAccum = 0.f;
+    float m_heat = 0.f;
 
-    // Per-frame CB data (computed in Update, consumed by pass setup)
+    // Per-frame CB data (computed in PrepareFrame, consumed by pass setup)
     SmokeEmitParams    m_emitParams    = {};
     SmokeSimParams     m_simParams     = {};
     SmokeCompactParams m_compactParams = {};

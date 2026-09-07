@@ -624,7 +624,7 @@ void CWeaponMagazined::OnShot()
     {
         auto* actor = smart_cast<CActor*>(H_Parent());
         if (actor && actor->inventory().ActiveItem() == this)
-            GEnv.Render->NotifySmokeShot();
+            GEnv.Render->NotifySmokeShot(ID());
     }
 
     // Sound

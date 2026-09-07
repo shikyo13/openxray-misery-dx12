@@ -1,6 +1,6 @@
 // SmokeTrailManager.cpp
 // GPU smoke trail manager: owns buffers and per-frame compute constants.
-// First pass: constant emission at muzzle position, no heat system.
+// Shot-driven emission with simulation independent of the active weapon.
 #include "stdafx.h"
 #include "SmokeTrailManager.h"
 #include "Layers/xrRender/RenderContext/RenderDevice.h"
@@ -103,37 +103,92 @@ void SmokeTrailManager::Shutdown()
     m_drawArgsBuffer = nullptr;
 
     m_hasPrevMuzzle = false;
+    m_muzzleUpdated = false;
+    m_weaponId = u16(-1);
+    m_emitAccum = 0.f;
+    m_heat = 0.f;
+    m_emitParams = {};
+    m_simParams = {};
+    m_compactParams = {};
+    m_device = nullptr;
     m_initialized   = false;
 }
 
-void SmokeTrailManager::Update(float dt, const Fvector& muzzlePos, const Fvector& muzzleDir)
+void SmokeTrailManager::SelectWeapon(u16 weaponId)
 {
-    using namespace xray::render::fg;
+    if (m_weaponId == weaponId)
+        return;
 
+    m_weaponId = weaponId;
+    m_hasPrevMuzzle = false;
+    m_muzzleUpdated = false;
+    m_emitAccum = 0.f;
+    m_heat = 0.f;
+}
+
+void SmokeTrailManager::UpdateMuzzle(u16 weaponId, const Fvector& muzzlePos, const Fvector& muzzleDir)
+{
+    SelectWeapon(weaponId);
+    m_muzzlePos = muzzlePos;
+    m_muzzleDir = muzzleDir;
+    m_muzzleUpdated = true;
+}
+
+void SmokeTrailManager::OnShot(u16 weaponId)
+{
     if (!m_initialized || !ps_r_smoke_trail_enabled)
         return;
 
-    if (!m_hasPrevMuzzle)
+    SelectWeapon(weaponId);
+    m_heat = std::min(m_heat + 0.4f, 1.f);
+    if (strstr(Core.Params, "-smoke_trail_trace"))
+        Msg("* [SmokeTrailTrace] shot frame=%u weapon=%u heat=%.3f", Device.dwFrame, weaponId, m_heat);
+}
+
+void SmokeTrailManager::PrepareFrame(float dt)
+{
+    using namespace xray::render::fg;
+
+    if (!m_initialized)
+        return;
+
+    u32 emitCount = 0;
+    if (!m_muzzleUpdated || !ps_r_smoke_trail_enabled)
     {
-        m_prevMuzzlePos = muzzlePos;
-        m_hasPrevMuzzle = true;
+        m_heat = 0.f;
+        m_emitAccum = 0.f;
+        m_hasPrevMuzzle = false;
+    }
+    else
+    {
+        // Integrate linear cooling over this frame, including a partial final
+        // frame, so emission does not depend on the rendering frame rate.
+        constexpr float coolingRate = 0.5f;
+        const float emittingTime = std::min(dt, m_heat / coolingRate);
+        const float cooledHeat = std::max(0.f, m_heat - coolingRate * dt);
+        m_emitAccum += ps_r_smoke_max_emit_rate * 0.5f * (m_heat + cooledHeat) * emittingTime;
+        const u32 wholePoints = static_cast<u32>(m_emitAccum);
+        m_emitAccum -= static_cast<float>(wholePoints);
+        emitCount = std::min(wholePoints, MAX_POINTS);
+        m_heat = cooledHeat;
     }
 
-    // Constant emission — no heat gating for first pass
-    m_emitAccum += ps_r_smoke_max_emit_rate * dt;
-    u32 emitCount = static_cast<u32>(m_emitAccum);
-    m_emitAccum -= static_cast<float>(emitCount);
+    if (!m_hasPrevMuzzle)
+    {
+        m_prevMuzzlePos = m_muzzlePos;
+        m_hasPrevMuzzle = m_muzzleUpdated;
+    }
 
     // Emit CB
     m_emitParams.prevPosX        = m_prevMuzzlePos.x;
     m_emitParams.prevPosY        = m_prevMuzzlePos.y;
     m_emitParams.prevPosZ        = m_prevMuzzlePos.z;
-    m_emitParams.currPosX        = muzzlePos.x;
-    m_emitParams.currPosY        = muzzlePos.y;
-    m_emitParams.currPosZ        = muzzlePos.z;
-    m_emitParams.emitDirX        = muzzleDir.x;
-    m_emitParams.emitDirY        = muzzleDir.y;
-    m_emitParams.emitDirZ        = muzzleDir.z;
+    m_emitParams.currPosX        = m_muzzlePos.x;
+    m_emitParams.currPosY        = m_muzzlePos.y;
+    m_emitParams.currPosZ        = m_muzzlePos.z;
+    m_emitParams.emitDirX        = m_muzzleDir.x;
+    m_emitParams.emitDirY        = m_muzzleDir.y;
+    m_emitParams.emitDirZ        = m_muzzleDir.z;
     m_emitParams.baseLifetime    = ps_r_smoke_point_lifetime;
     m_emitParams.lifetimeVariance = 0.f;
     m_emitParams.maxWidth        = ps_r_smoke_max_width;
@@ -145,7 +200,13 @@ void SmokeTrailManager::Update(float dt, const Fvector& muzzlePos, const Fvector
     m_emitParams.frameSeed = static_cast<float>(s_frameSeed) * (1.f / 4294967296.f);
     m_emitParams.pad0      = 0.f;
 
-    m_prevMuzzlePos = muzzlePos;
+    static const bool trace = strstr(Core.Params, "-smoke_trail_trace") != nullptr;
+    if (trace && (emitCount || Device.dwFrame % 60 == 0))
+        Msg("* [SmokeTrailTrace] frame=%u weapon=%u muzzle=%u heat=%.3f emit=%u dt=%.6f",
+            Device.dwFrame, m_weaponId, m_muzzleUpdated ? 1u : 0u, m_heat, emitCount, dt);
+
+    m_prevMuzzlePos = m_muzzlePos;
+    m_muzzleUpdated = false;
 
     // Sim CB
     m_simParams.dt         = dt;
@@ -155,7 +216,7 @@ void SmokeTrailManager::Update(float dt, const Fvector& muzzlePos, const Fvector
     m_simParams.drag       = 0.7f;
     m_simParams.time       = Device.fTimeGlobal;
     m_simParams.maxPoints  = MAX_POINTS;
-    m_simParams.heat01     = 1.f;  // always full heat for constant emission
+    m_simParams.heat01     = m_heat;
 
     // Compact CB
     m_compactParams.maxPoints      = MAX_POINTS;
@@ -166,9 +227,9 @@ void SmokeTrailManager::Update(float dt, const Fvector& muzzlePos, const Fvector
     m_compactParams.turbEvolution  = Device.fTimeGlobal * 0.5f;
     m_compactParams.sphereRadius   = 3.0f;
     m_compactParams.pad0           = 0.f;
-    m_compactParams.sphereCenterX  = muzzlePos.x;
-    m_compactParams.sphereCenterY  = muzzlePos.y;
-    m_compactParams.sphereCenterZ  = muzzlePos.z;
+    m_compactParams.sphereCenterX  = m_muzzlePos.x;
+    m_compactParams.sphereCenterY  = m_muzzlePos.y;
+    m_compactParams.sphereCenterZ  = m_muzzlePos.z;
     m_compactParams.pad1           = 0.f;
 }
 

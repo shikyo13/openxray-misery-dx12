@@ -918,7 +918,7 @@ void CWeapon::UpdateCL()
         if (pActor && pActor->inventory().ActiveItem() == this)
         {
             GEnv.Render->UpdateSmokeTrail(
-                get_LastFP(), get_LastFD(), Device.fTimeDelta, !!GetHUDmode());
+                ID(), get_LastFP(), get_LastFD(), !!GetHUDmode());
         }
     }
 }

@@ -1428,6 +1428,7 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     auto smokeOutputs = trailOutputs.layout;
     if (m_smokeTrailManager && m_smokeTrailManager->IsReady())
     {
+        m_smokeTrailManager->PrepareFrame(Device.fTimeDelta);
         smokeOutputs = passes::setupSmokeTrailPass(
             *m_framegraph,
             m_device,
@@ -2578,7 +2579,7 @@ void FrameGraphRenderer::RenderImGui(ImDrawData* drawData, fg::ImGuiRendererNVRH
 }
 
 void FrameGraphRenderer::UpdateSmokeTrail(
-    const Fvector& muzzlePos, const Fvector& muzzleDir, float dt, bool isHUDMode)
+    u16 weaponId, const Fvector& muzzlePos, const Fvector& muzzleDir, bool isHUDMode)
 {
     if (!m_smokeTrailManager || !m_smokeTrailManager->IsReady())
         return;
@@ -2594,12 +2595,13 @@ void FrameGraphRenderer::UpdateSmokeTrail(
         correctedDir.normalize_safe();
     }
 
-    m_smokeTrailManager->Update(dt, correctedPos, correctedDir);
+    m_smokeTrailManager->UpdateMuzzle(weaponId, correctedPos, correctedDir);
 }
 
-void FrameGraphRenderer::NotifySmokeShot()
+void FrameGraphRenderer::NotifySmokeShot(u16 weaponId)
 {
-    // TODO: forward to m_smokeTrailManager->OnShot() when heat system is added
+    if (m_smokeTrailManager)
+        m_smokeTrailManager->OnShot(weaponId);
 }
 
 namespace

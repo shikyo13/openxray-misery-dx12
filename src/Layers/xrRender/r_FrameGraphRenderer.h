@@ -269,8 +269,8 @@ public:
     fg::FGUIRender* GetUIRender() const override { return m_uiRender.get(); }
 
     // Smoke trail interface
-    void UpdateSmokeTrail(const Fvector& muzzlePos, const Fvector& muzzleDir, float dt, bool isHUDMode) override;
-    void NotifySmokeShot() override;
+    void UpdateSmokeTrail(u16 weaponId, const Fvector& muzzlePos, const Fvector& muzzleDir, bool isHUDMode) override;
+    void NotifySmokeShot(u16 weaponId) override;
     fg::passes::SmokeTrailManager* GetSmokeTrailManager() const { return m_smokeTrailManager.get(); }
 
     // GPU Culling Manager accessor (for level loading integration)
