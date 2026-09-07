@@ -2517,6 +2517,11 @@ if (WIN32)
     )
 endif()
 
+if (MSVC)
+    # The script bindings exceed the standard COFF section limit in unity builds.
+    target_compile_options(xrGame PRIVATE /bigobj)
+endif()
+
 # E2K hack: MCST lcc compiler does not support object files greater than 4Gb due to a bug in EDG frontend
 if (CMAKE_CXX_COMPILER_ID MATCHES "LCC")
     target_compile_options(xrGame

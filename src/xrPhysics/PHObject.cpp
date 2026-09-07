@@ -266,6 +266,6 @@ void CPHUpdateObject::Deactivate()
 {
     if (!b_activated)
         return;
-    ph_world->RemoveUpdateObject(this);
+    ph_world->RemoveUpdateObject(PH_UPDATE_OBJECT_I(this));
     b_activated = false;
 }
