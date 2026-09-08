@@ -2304,6 +2304,10 @@ bool FrameGraphRenderer::ProcessHudGeometry(dxRender_Visual* visual, const Fmatr
 
 static u8 QueryParticleBlendMode(LPCSTR shaderName)
 {
+    // particles_xadd.s defines ONE/ONE color plus a separate l_special
+    // distortion pass. It is a scripted shader, not a B_PARTICLE blender.
+    if (shaderName && xr_strcmp(shaderName, "particles\\xadd") == 0)
+        return passes::PARTICLE_BLEND_ADD;
     u32 id = 0;
     if (!shader_info::GetParticleBlendIndex(shaderName, id))
         return passes::PARTICLE_BLEND_BLEND;
@@ -2339,16 +2343,29 @@ void FrameGraphRenderer::ProcessSingleParticleEffect(
     batch.particleCount = particleCount;
     batch.blendMode = QueryParticleBlendMode(pDef->m_ShaderName.c_str());
 
-    if (strstr(pDef->m_ShaderName.c_str(), "distort"))
-        batch.shaderVariant = passes::ParticleShaderVariant::Distort;
-
-    if (m_materialCache && pDef->m_TextureName.size())
-        batch.bindlessMaterialID = m_materialCache->PreRegisterParticleMaterial(pDef->m_TextureName);
-
-    if (isHUDParticle)
-        m_hudParticleBatches.push_back(batch);
-    else
-        m_worldParticleBatches.push_back(batch);
+    const bool distortionOnly = strstr(pDef->m_ShaderName.c_str(), "distort") != nullptr;
+    const bool additiveDistortion = xr_strcmp(pDef->m_ShaderName.c_str(), "particles\\xadd") == 0;
+    auto& batches = isHUDParticle ? m_hudParticleBatches : m_worldParticleBatches;
+    if (!distortionOnly)
+    {
+        if (m_materialCache && pDef->m_TextureName.size())
+            batch.bindlessMaterialID = m_materialCache->PreRegisterParticleMaterial(pDef->m_TextureName, 0);
+        batches.push_back(batch);
+    }
+    if (distortionOnly || additiveDistortion)
+    {
+        // xadd uses t_second for s_distort; xdistort uses t_base and has no
+        // color pass. Keep both draws for xadd, with independent material IDs.
+        const u32 slot = additiveDistortion ? 1 : 0;
+        const u32 materialID = m_materialCache
+            ? m_materialCache->PreRegisterParticleMaterial(pDef->m_TextureName, slot) : UINT32_MAX;
+        if (materialID != UINT32_MAX)
+        {
+            batch.bindlessMaterialID = materialID;
+            batch.shaderVariant = passes::ParticleShaderVariant::Distort;
+            batches.push_back(batch);
+        }
+    }
 }
 
 bool FrameGraphRenderer::ProcessParticleGeometry(

@@ -1435,20 +1435,39 @@ u32 MaterialCache::PreRegisterBindlessMaterial(dxRender_Visual* visual)
     return materialID;
 }
 
-u32 MaterialCache::PreRegisterParticleMaterial(const shared_str& textureName)
+u32 MaterialCache::PreRegisterParticleMaterial(const shared_str& textureNames, u32 textureSlot)
 {
     using namespace fg::bindless;
 
-    if (!textureName.size() || !textureName[0])
+    if (!textureNames.size() || !textureNames[0])
         return UINT32_MAX;
 
-    auto it = m_particleTextureToMaterialID.find(textureName);
+    const auto key = std::make_pair(textureNames, textureSlot);
+    auto it = m_particleTextureToMaterialID.find(key);
     if (it != m_particleTextureToMaterialID.end())
         return it->second;
 
     auto& materialBuffer = MaterialBuffer::Instance();
     if (!materialBuffer.IsInitialized())
         return UINT32_MAX;
+
+    // Particle definitions contain the same comma-separated list used by the
+    // legacy shader's t_base/t_second arguments. Resolve only the requested slot,
+    // once per cache entry, instead of sending the entire list to the DDS loader.
+    const char* begin = textureNames.c_str();
+    for (u32 slot = 0; slot < textureSlot && begin; ++slot)
+    {
+        begin = strchr(begin, ',');
+        if (begin) ++begin;
+    }
+    const char* end = begin ? strchr(begin, ',') : nullptr;
+    if (!begin || !*begin || end == begin)
+    {
+        m_particleTextureToMaterialID.emplace(key, UINT32_MAX);
+        Msg("! [MaterialCache] Particle texture slot %u is absent in '%s'", textureSlot, textureNames.c_str());
+        return UINT32_MAX;
+    }
+    const shared_str textureName(xr_string(begin, end ? size_t(end - begin) : strlen(begin)).c_str());
 
     MaterialData matData = {};
     matData.diffuseIndex = INVALID_TEXTURE_INDEX;
@@ -1462,7 +1481,7 @@ u32 MaterialCache::PreRegisterParticleMaterial(const shared_str& textureName)
 
     u32 materialID = materialBuffer.RegisterMaterial(matData);
 
-    m_particleTextureToMaterialID[textureName] = materialID;
+    m_particleTextureToMaterialID[key] = materialID;
 
     PendingMaterial pending;
     pending.materialID = materialID;
@@ -1470,8 +1489,8 @@ u32 MaterialCache::PreRegisterParticleMaterial(const shared_str& textureName)
     pending.textureName = textureName;
     m_pendingMaterials.push_back(pending);
 
-    Msg("* [MaterialCache] PreRegisterParticle: matID=%u tex='%s' pending=%u",
-        materialID, textureName.c_str(), static_cast<u32>(m_pendingMaterials.size()));
+    Msg("* [MaterialCache] PreRegisterParticle: matID=%u tex='%s' slot=%u list='%s' pending=%u",
+        materialID, textureName.c_str(), textureSlot, textureNames.c_str(), static_cast<u32>(m_pendingMaterials.size()));
 
     return materialID;
 }
@@ -1597,6 +1616,10 @@ void MaterialCache::FinalizePendingMaterials(fg::RenderContext* ctx)
             materialBuffer.UpdateMaterial(materialID, matData);
             processedCount++;
         }
+        if (!visual && strstr(Core.Params, "-particle_trace"))
+            Msg("* [ParticleMaterial] matID=%u texture='%s' diffuse_descriptor=%u resolved=%u",
+                materialID, diffuseName.c_str(), matData.diffuseIndex,
+                matData.diffuseIndex != INVALID_TEXTURE_INDEX ? 1u : 0u);
 
         if (matData.shaderVariant > 0) {
             auto& registry = ShaderVariantRegistry::Instance();

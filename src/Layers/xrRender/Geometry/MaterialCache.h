@@ -302,7 +302,7 @@ private:
     };
     xr_vector<PendingMaterial> m_pendingMaterials;
 
-    xr_map<shared_str, u32> m_particleTextureToMaterialID;
+    xr_map<std::pair<shared_str, u32>, u32> m_particleTextureToMaterialID;
 
 
     xr_unordered_map<shared_str, u32> m_shaderToTerrainMaterialID;
@@ -343,7 +343,7 @@ public:
 
     u32 PreRegisterBindlessMaterial(dxRender_Visual* visual);
 
-    u32 PreRegisterParticleMaterial(const shared_str& textureName);
+    u32 PreRegisterParticleMaterial(const shared_str& textureNames, u32 textureSlot = 0);
 
 
     bool IsTerrainMaterial(dxRender_Visual* visual);

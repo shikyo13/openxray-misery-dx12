@@ -230,6 +230,15 @@ static u32 GenerateParticleVertices(
         if (particleCount == 0 || !particles)
             continue;
 
+        if (strstr(Core.Params, "-particle_trace"))
+        {
+            static xr_set<std::pair<shared_str, u8>> tracedEffects;
+            if (tracedEffects.emplace(pDef->m_Name, u8(batch.shaderVariant)).second)
+                Msg("* [ParticleVertices] effect='%s' shader='%s' variant=%u blend=%u matID=%u particles=%u hud=%u",
+                    pDef->m_Name.c_str(), pDef->m_ShaderName.c_str(), u32(batch.shaderVariant),
+                    u32(batch.blendMode), batch.bindlessMaterialID, particleCount, batch.isHUDMode ? 1u : 0u);
+        }
+
         u32 baseVertex = (u32)vertices.size();
         vertices.resize(baseVertex + particleCount * 4);
         ParticleVertex* pv = &vertices[baseVertex];
