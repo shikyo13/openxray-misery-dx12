@@ -26,6 +26,7 @@ extern ECORE_API int ps_r_water_temporal;
 extern ECORE_API float ps_r_bloom_strength;
 extern ECORE_API int ps_r_bloom_debug;
 extern ECORE_API int ps_r_motion_debug;
+extern ECORE_API int ps_r_tree_wind;
 extern ECORE_API float ps_r_motion_debug_scale;
 extern ECORE_API u32 ps_r_ssao; //	=	0;
 extern ECORE_API const xr_token qssao_token[];

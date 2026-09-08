@@ -4,6 +4,7 @@ namespace xray::render::shader_info
 {
 
 bool IsTerrainShader(const char* shaderName);
+bool IsTreeWindShader(const char* shaderName);
 
 struct TerrainDetailNames
 {

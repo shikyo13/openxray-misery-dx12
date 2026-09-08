@@ -11,6 +11,7 @@
 #define SM_6_0
 #include "common.h"
 #include "bindless_common.h"
+#include "shared/tree_wind.h"
 #ifdef WATER_SURFACES
 #include "shared/waterconfig.h"
 #include "shared/watermove.h"
@@ -109,6 +110,8 @@ VS_OUTPUT main(VS_INPUT input)
 
     // Transform position
     float4 worldPos = mul(worldMatrix, float4(input.position.xyz, 1.0));
+    if (instanceData.flags & GPU_INSTANCE_TREE_WIND)
+        worldPos = TreeWindPosition(worldPos, worldMatrix[1][3], input.texcoord1.x, tree_wave, tree_wind);
 #ifdef WATER_TEMPORAL
     float4 previousWorldPos = watermove_at_time(worldPos, water_temporal_options.x);
 #endif

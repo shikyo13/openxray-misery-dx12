@@ -169,8 +169,8 @@ void VertexConverter::ConvertMuModel(const mu_model_vert& src, UnifiedVertex& ds
     dst.texcoord0.x = u;
     dst.texcoord0.y = v;
 
-    // No lightmap UV
-    dst.texcoord1.x = 0.0f;
+    // Trees have no lightmap UV. Preserve their authored branch rigidity.
+    dst.texcoord1.x = UnpackMuModelUV(src.misc.z);
     dst.texcoord1.y = 0.0f;
 
     // No vertex color in mu_model

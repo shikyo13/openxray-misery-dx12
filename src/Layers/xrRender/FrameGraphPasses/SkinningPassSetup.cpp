@@ -564,7 +564,8 @@ void DrawObjectMotion(RenderContext* context, RenderDevice* device, GPUCullingMa
     info.colorFormats.push_back(nvrhi::Format::RG16_FLOAT);
     info.depthFormat = nvrhi::Format::D32;
     auto pipeline = [&](nvrhi::IShader* vs, nvrhi::IInputLayout* input,
-                        nvrhi::IBindingLayout* layout, const char* name) {
+                        nvrhi::IBindingLayout* layout, const char* name,
+                        nvrhi::RasterCullMode cull = nvrhi::RasterCullMode::Back) {
         nvrhi::GraphicsPipelineDesc desc;
         desc.VS = vs; desc.PS = ps.handle; desc.inputLayout = input;
         desc.bindingLayouts = {layout, backend->GetBindlessLayout()};
@@ -573,7 +574,7 @@ void DrawObjectMotion(RenderContext* context, RenderDevice* device, GPUCullingMa
         desc.renderState.depthStencilState.depthWriteEnable = false;
         desc.renderState.depthStencilState.depthFunc = nvrhi::ComparisonFunc::Equal;
         desc.renderState.rasterState.frontCounterClockwise = false;
-        desc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::Back;
+        desc.renderState.rasterState.cullMode = cull;
         auto result = cache.GetOrCreatePipeline(name, desc, info, nv);
         R_ASSERT2(result, "Object motion pipeline creation failed");
         return result;
@@ -584,7 +585,7 @@ void DrawObjectMotion(RenderContext* context, RenderDevice* device, GPUCullingMa
         state.rigidLayout = cache.GetOrCreateBindingLayoutFromReflection("ObjectMotionRigid", *vs.reflection, *ps.reflection, nv);
         nvrhi::VertexAttributeDesc attributes[] = {
             nvrhi::VertexAttributeDesc().setName("POSITION").setFormat(nvrhi::Format::RGB32_FLOAT).setOffset(0).setElementStride(48),
-            nvrhi::VertexAttributeDesc().setName("TEXCOORD").setFormat(nvrhi::Format::RG32_FLOAT).setOffset(24).setElementStride(48)
+            nvrhi::VertexAttributeDesc().setName("TEXCOORD").setFormat(nvrhi::Format::RG32_FLOAT).setArraySize(2).setOffset(24).setElementStride(48)
         };
         state.rigidInputLayout = nv->createInputLayout(attributes, 2, vs.handle);
         state.rigidPipeline = pipeline(vs.handle, state.rigidInputLayout, state.rigidLayout, "ObjectMotionRigid");
@@ -602,13 +603,16 @@ void DrawObjectMotion(RenderContext* context, RenderDevice* device, GPUCullingMa
             state.skinnedPipelines[i] = pipeline(vs.handle, variants[i]->inputLayout, state.skinnedLayout, shaderNames[i]);
         }
     }
-    struct MotionConstants { Fmatrix previousViewProjection, previousWorld; Fvector4 controls; };
-    static_assert(sizeof(MotionConstants) == 144);
+    struct MotionConstants { Fmatrix previousViewProjection, previousWorld; Fvector4 controls, previousTreeWind, previousTreeWave; };
+    static_assert(sizeof(MotionConstants) == 176);
     auto motionCB = cache.GetOrCreateVolatileCB("ObjectMotion", "Motion", sizeof(MotionConstants), device, 8192);
     auto worldCB = cache.GetOrCreateVolatileCB("ObjectMotion", "World", sizeof(DynamicTransforms), device, 8192);
     auto materialCB = cache.GetOrCreateVolatileCB("ObjectMotion", "Material", sizeof(SkinnedMaterialCB), device, 8192);
     auto globalsCB = cache.GetOrCreateVolatileCB("ObjectMotion", "Globals", sizeof(StaticGlobals), device);
     auto globals = BuildStaticGlobals(2.f, framebuffer->getFramebufferInfo().width, framebuffer->getFramebufferInfo().height);
+    const bool windHistory = historyValid && state.windFrame == Device.dwFrame - 1;
+    const Fvector4 previousWind = windHistory ? state.previousTreeWind : globals.tree_wind;
+    const Fvector4 previousWave = windHistory ? state.previousTreeWave : globals.tree_wave;
     command->writeBuffer(globalsCB, &globals, sizeof(globals));
     if (overlays) overlays->UploadSplats(command);
     auto bindingSet = [&](bool skinned) {
@@ -656,8 +660,8 @@ void DrawObjectMotion(RenderContext* context, RenderDevice* device, GPUCullingMa
             history.previous = history.valid ? history.current : world;
             history.current = world; history.frame = Device.dwFrame; history.seen = true;
         }
-        MotionConstants motion{previousViewProjection, history.previous, {}};
-        motion.controls.set(history.valid ? 1.f : 0.f, ps_r_motion_debug == 3 ? 1.f : 0.f, 0, 0);
+        MotionConstants motion{previousViewProjection, history.previous, {}, previousWind, previousWave};
+        motion.controls.set(history.valid ? 1.f : 0.f, ps_r_motion_debug == 3 ? 1.f : 0.f, batch.HasTreeWind() ? 1.f : 0.f, 0);
         command->writeBuffer(motionCB, &motion, sizeof(motion));
         DynamicTransforms transforms{};
         FillDynamicTransforms(transforms, world);
@@ -698,9 +702,64 @@ void DrawObjectMotion(RenderContext* context, RenderDevice* device, GPUCullingMa
     };
     if (geometry) for (const auto& batch : geometry->GetBatches()) drawBatch(batch, false);
     if (hudBatches) for (const auto& batch : *hudBatches) drawBatch(batch, true);
+    // Static instance transforms still contain moving tree vertices. Submit
+    // their motion in one indirect batch, rather than one constant update per tree.
+    u32 treeCount = 0;
+    if (gpuCulling->IsMegaDataUploaded()) {
+        const auto& original = gpuCulling->GetStaticDrawArgsData();
+        const auto& objects = gpuCulling->GetStaticObjectData();
+        xr_vector<IndirectDrawArgs> visible;
+        for (u32 i = 0; i < objects.size(); ++i) {
+            if (!(objects[i].flags & GPU_INSTANCE_TREE_WIND) || !frustum.testSphere_dirty(objects[i].position, objects[i].radius)) continue;
+            auto args = original[i];
+            args.instanceCount = 1; args.startInstanceLocation = i;
+            visible.push_back(args);
+        }
+        treeCount = u32(visible.size());
+        if (treeCount) {
+            auto vs = loader->LoadVertexShader("tree_motion");
+            R_ASSERT2(vs.handle && vs.reflection, "Tree motion shader compilation failed");
+            if (!state.treePipeline) {
+                state.treeLayout = cache.GetOrCreateBindingLayoutFromReflection("TreeMotion", *vs.reflection, *ps.reflection, nv);
+                u32 count;
+                const auto* attributes = GetUnifiedVertexAttributes(count);
+                auto input = nv->createInputLayout(attributes, count, vs.handle);
+                state.treePipeline = pipeline(vs.handle, input, state.treeLayout, "TreeMotion", nvrhi::RasterCullMode::None);
+            }
+            const u64 bytes = visible.size() * sizeof(IndirectDrawArgs);
+            if (!state.treeDrawArgs || state.treeDrawArgs->getDesc().byteSize < bytes) {
+                nvrhi::BufferDesc desc;
+                desc.byteSize = original.size() * sizeof(IndirectDrawArgs); desc.isDrawIndirectArgs = true;
+                desc.initialState = nvrhi::ResourceStates::IndirectArgument; desc.keepInitialState = true; desc.debugName = "TreeMotionArgs";
+                state.treeDrawArgs = nv->createBuffer(desc);
+            }
+            command->writeBuffer(state.treeDrawArgs, visible.data(), bytes);
+            MotionConstants motion{previousViewProjection, Fidentity, {}, previousWind, previousWave};
+            motion.controls.set(windHistory ? 1.f : 0.f, ps_r_motion_debug == 3 ? 1.f : 0.f, 1, 0);
+            command->writeBuffer(motionCB, &motion, sizeof(motion));
+            framegraph::BindingSetBuilder bsb(*vs.reflection, *ps.reflection, nv, "TreeMotion");
+            bsb.ConstantBuffer("ObjectMotionParams", motionCB);
+            bsb.ConstantBuffer("static_globals", globalsCB);
+            bsb.BufferSRV("g_InstanceData", gpuCulling->GetStaticInstanceBuffer());
+            bsb.BufferSRV("g_Materials", MaterialBuffer::Instance().GetBuffer());
+            auto bindings = cache.GetOrCreateBindingSet(bsb.Build(), state.treeLayout, nv);
+            R_ASSERT2(bindings, "Tree motion bindings failed");
+            nvrhi::GraphicsState draw;
+            draw.pipeline = state.treePipeline; draw.framebuffer = framebuffer;
+            draw.bindings = {bindings, backend->GetBindlessDescriptorTable()};
+            draw.vertexBuffers = {{gpuCulling->GetMegaVertexBuffer(), 0, 0}, {GetOrCreateDrawIndexBuffer("TreeMotion", nv), 1, 0}};
+            draw.indexBuffer = {gpuCulling->GetMegaIndexBuffer(), nvrhi::Format::R32_UINT, 0};
+            draw.indirectParams = state.treeDrawArgs;
+            draw.viewport.addViewportAndScissorRect(nvrhi::Viewport(0.f, float(size.width), 0.f, float(size.height), 0.f, 1.f));
+            command->setGraphicsState(draw);
+            command->drawIndexedIndirect(0, treeCount);
+        }
+    }
+    state.previousTreeWind = globals.tree_wind; state.previousTreeWave = globals.tree_wave; state.windFrame = Device.dwFrame;
     if (strstr(Core.Params, "-graphics_trace") && Device.dwFrame % 120 == 0)
-        Msg("* [ObjectMotion] frame=%u rigid=%u skinned=%u hud=%u continuous=%u camera_history=%u",
-            Device.dwFrame, counts[0], counts[1], counts[2], continuous, historyValid ? 1u : 0u);
+        Msg("* [ObjectMotion] frame=%u rigid=%u skinned=%u hud=%u continuous=%u camera_history=%u trees=%u wind_history=%u wave=%.5f previous_wave=%.5f",
+            Device.dwFrame, counts[0], counts[1], counts[2], continuous, historyValid ? 1u : 0u,
+            treeCount, unsigned(windHistory), globals.tree_wave.w, previousWave.w);
 }
 
 static void DrawSkinnedBatch(

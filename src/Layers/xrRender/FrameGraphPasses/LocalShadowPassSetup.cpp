@@ -188,6 +188,7 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                 command->writeBuffer(ClusteredLightManager::Instance().GetShadowMatricesBuffer(),
                     state.matrices.data(), state.matrices.size() * sizeof(Fmatrix));
             u32 worldCount = 0, skinnedCount = 0, detailCount = 0, renderedFaces = 0, staticUpdates = 0;
+            u32 treeCount = 0;
             if (canRender) {
                 data.materials->FinalizePendingMaterials(context);
                 bindless::MaterialBuffer::Instance().Upload(context);
@@ -198,6 +199,10 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                 state.outputFramebuffers.resize(texture->getDesc().arraySize);
                 lap(0);
                 xr_vector<u32> candidates[3];
+                xr_vector<u32> treeCandidates[3], animatedTrees;
+                const auto& staticObjects = geometry->GetStaticObjectData();
+                for (u32 i = 0; i < staticObjects.size(); ++i)
+                    if (staticObjects[i].flags & GPU_INSTANCE_TREE_WIND) animatedTrees.push_back(i);
                 xr_vector<const GeometryBatch*> skinnedBatches, skinnedCandidates;
                 if (data.collector) {
                     for (const auto& batch : data.collector->GetBatches())
@@ -222,6 +227,12 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                         lastOwner = state.owners[face];
                         staticCandidatesReady = false;
                         collect(2, geometry->GetDynamicObjectData(), source);
+                        treeCandidates[0].clear();
+                        for (u32 i : animatedTrees) {
+                            const float radius = source->range + staticObjects[i].radius;
+                            if (staticObjects[i].position.distance_to_sqr(source->position) <= radius * radius)
+                                treeCandidates[0].push_back(i);
+                        }
                         // A cubemap's corners extend beyond the spherical light
                         // range. Keep only characters that can shadow this light,
                         // then apply the existing face frustum test when drawing.
@@ -281,7 +292,7 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                         if (!target) target = command->getDevice()->createFramebuffer(staticFB);
                         R_ASSERT2(target, "Static local shadow framebuffer creation failed");
                         worldCount += DrawWorldShadowMap(context, data.device, geometry,
-                            state.matrices[face], state.frusta[face], target, state.drawing, candidates, 3);
+                            state.matrices[face], state.frusta[face], target, state.drawing, candidates, 3, 1);
                         saved.matrices[lightFace] = state.matrices[face]; saved.valid[lightFace] = true;
                     }
                     command->copyTexture(texture, nvrhi::TextureSlice().setArraySlice(face),
@@ -289,6 +300,10 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                     lap(2);
                     worldCount += DrawWorldShadowMap(context, data.device, geometry,
                         state.matrices[face], state.frusta[face], framebuffer, state.drawing, candidates, 4);
+                    // Wind moves authored tree vertices even though their instance transforms are static.
+                    // Draw them over the fixed-geometry cache each frame.
+                    treeCount += DrawWorldShadowMap(context, data.device, geometry,
+                        state.matrices[face], state.frusta[face], framebuffer, state.drawing, treeCandidates, 1, 2);
                     lap(3);
                     skinnedCount += DrawSkinnedSunShadows(context, data.device, geometry, data.collector,
                         data.overlays, state.matrices[face], state.frusta[face], framebuffer, *data.skinning, &skinnedCandidates);
@@ -307,9 +322,9 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
             }
             if (trace) {
                 state.nextTrace = Device.dwTimeGlobal + 1000;
-                Msg("* [LocalShadow] frame=%u size=%u points=%u spots=%u faces=%u rendered=%u static_updates=%u budget=%d omitted=%u world=%u skinned=%u detail=%u",
+                Msg("* [LocalShadow] frame=%u size=%u points=%u spots=%u faces=%u rendered=%u static_updates=%u budget=%d omitted=%u world=%u skinned=%u detail=%u trees=%u",
                     Device.dwFrame, state.resolution, state.pointLights, state.spotLights, u32(state.matrices.size()),
-                    renderedFaces, staticUpdates, ps_r_local_shadow_faces, state.omittedLights, worldCount, skinnedCount, detailCount);
+                    renderedFaces, staticUpdates, ps_r_local_shadow_faces, state.omittedLights, worldCount, skinnedCount, detailCount, treeCount);
                 Msg("* [LocalShadowCPU] frame=%u time=%u init_ms=%.3f candidates_ms=%.3f static_copy_ms=%.3f dynamic_ms=%.3f skinned_ms=%.3f detail_ms=%.3f",
                     Device.dwFrame, Device.dwTimeGlobal, cpu[0], cpu[1], cpu[2], cpu[3], cpu[4], cpu[5]);
             }

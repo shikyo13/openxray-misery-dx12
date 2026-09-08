@@ -5,6 +5,7 @@
 #include "Layers/xrRender/Blender_CLSID.h"
 #include "Layers/xrRender/blenders/Blender_BmmD.h"
 #include "Layers/xrRender/blenders/Blender_Particle.h"
+#include "Layers/xrRender/blenders/Blender_tree.h"
 #include "Layers/xrRender/ResourceManager.h"
 #include "Layers/xrRender/r_FrameGraphRenderer.h"
 #include "Layers/xrRender/r__scene.h"
@@ -50,6 +51,16 @@ bool GetTerrainDetailNames(const char* shaderName, TerrainDetailNames& out)
     out.b = terrainBlender->GetDetailB();
     out.a = terrainBlender->GetDetailA();
     return true;
+}
+
+bool IsTreeWindShader(const char* shaderName)
+{
+    if (!shaderName || !shaderName[0]) return false;
+    auto* resources = GetResources();
+    if (!resources) return false;
+    auto* blender = resources->_FindBlender(shaderName);
+    return blender && blender->getDescription().CLS == fg::B_TREE &&
+        !static_cast<const fg::CBlender_Tree*>(blender)->oNotAnTree.value;
 }
 
 bool GetShaderBlendInfo(const char* shaderName, ShaderBlendInfo& out)

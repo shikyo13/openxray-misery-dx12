@@ -19,6 +19,11 @@ struct ObjectMotionState {
     nvrhi::BindingLayoutHandle rigidLayout;
     nvrhi::GraphicsPipelineHandle skinnedPipelines[5];
     nvrhi::BindingLayoutHandle skinnedLayout;
+    nvrhi::GraphicsPipelineHandle treePipeline;
+    nvrhi::BindingLayoutHandle treeLayout;
+    nvrhi::BufferHandle treeDrawArgs;
+    Fvector4 previousTreeWind{}, previousTreeWave{};
+    u32 windFrame = u32(-1);
     struct TransformHistory {
         Fmatrix current, previous;
         u32 frame = 0;

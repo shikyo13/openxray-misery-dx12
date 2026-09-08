@@ -9,6 +9,7 @@
 extern ECORE_API float ps_r2_sun_lumscale_hemi;
 extern ENGINE_API int ps_fg_pbr_diffuse_mode;
 extern ENGINE_API int ps_r_hemi;
+extern ENGINE_API int ps_r_tree_wind;
 extern ENGINE_API Fvector4 ps_dev_param_1;
 extern ENGINE_API Fvector4 ps_dev_param_2;
 extern ENGINE_API Fvector4 ps_dev_param_3;
@@ -127,8 +128,9 @@ struct alignas(16) StaticGlobals {
     Fvector4 dev_param_2;
     Fvector4 dev_param_3;
     Fvector4 dev_param_4;
+    Fvector4 tree_wind, tree_wave;
 };
-static_assert(sizeof(StaticGlobals) == 848, "StaticGlobals must be 848 bytes");
+static_assert(sizeof(StaticGlobals) == 880, "StaticGlobals must be 880 bytes");
 
 // Legacy alias for compatibility
 using GlobalConstants = StaticGlobals;
@@ -221,6 +223,16 @@ inline void FillGlobalConstants(GlobalConstants& cb, u32 width = Device.dwWidth,
     cb.dev_param_2 = ps_dev_param_2;
     cb.dev_param_3 = ps_dev_param_3;
     cb.dev_param_4 = ps_dev_param_4;
+    cb.tree_wind.set(0, 0, 0, 0);
+    cb.tree_wave.set(0, 0, 0, 0);
+    if (g_pGamePersistent) {
+        const auto& env = g_pGamePersistent->Environment().CurrentEnv;
+        const float rotation = PI_MUL_2 * Device.fTimeGlobal / _max(env.m_fTreeRotation, EPS_S);
+        const float amplitude = ps_r_tree_wind ? env.m_fTreeAmplitude : 0.f;
+        cb.tree_wind.set(_sin(rotation) * amplitude, 0, _cos(rotation) * amplitude, 0);
+        cb.tree_wave.set(env.m_fTreeWave.x, env.m_fTreeWave.y, env.m_fTreeWave.z, Device.fTimeGlobal * env.m_fTreeSpeed);
+        cb.tree_wave.div(PI_MUL_2);
+    }
 }
 
 inline void FillDynamicTransforms(DynamicTransforms& cb, Fmatrix m_W = Fidentity) {

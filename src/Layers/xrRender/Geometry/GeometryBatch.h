@@ -5,6 +5,7 @@
 #include "Layers/xrRender/FrameGraph/ShaderReflection.h"  // For RenderPhase
 #include "Layers/xrRender/Shader.h"  // For ShaderElement flags (legacy)
 #include "Layers/xrRender/FBasicVisual.h"  // For dxRender_Visual
+#include "Layers/xrRender/FTreeVisual.h"
 #include "Layers/xrRender/GPUCullingManager.h"  // For MeshAllocation
 #include "Layers/xrRender/Materials/MaterialSystem.h"  // For D3D12 material info
 
@@ -116,6 +117,12 @@ struct GeometryBatch {
     //  SHADER FLAG HELPERS
     // ═══════════════════════════════════════════════════
     // Uses MaterialSystem for material flags
+
+    // Keep material-authored rigid tree/LOD objects outside wind paths.
+    bool HasTreeWind() const {
+        return visual && (visual->getType() == MT_TREE_ST || visual->getType() == MT_TREE_PM) &&
+            static_cast<const fg::FTreeVisual*>(visual)->HasWind();
+    }
 
     // Check if batch is alpha-tested (uses clip/discard in shader)
     bool IsAlphaTested() const {

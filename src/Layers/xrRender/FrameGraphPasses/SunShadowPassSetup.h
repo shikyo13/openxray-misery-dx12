@@ -38,7 +38,8 @@ struct SunShadowPassState : ShadowMapPassState {
 void InitializeShadowMapResources(RenderDevice* device, ShadowMapPassState& state);
 u32 DrawWorldShadowMap(RenderContext* context, RenderDevice* device, GPUCullingManager* geometry,
     const Fmatrix& viewProjection, const CFrustum& frustum, nvrhi::IFramebuffer* framebuffer,
-    ShadowMapPassState& state, const xr_vector<u32>* candidates = nullptr, u32 groups = 7);
+    ShadowMapPassState& state, const xr_vector<u32>* candidates = nullptr, u32 groups = 7,
+    u32 treeFilter = 0); // 0: all, 1: fixed geometry, 2: animated trees only.
 bool DrawDetailShadowMap(RenderContext* context, RenderDevice* device, FGDetailManager* details,
     ShadowMapPassState& state, const Fmatrix& viewProjection, const CFrustum& frustum,
     nvrhi::IFramebuffer* framebuffer, const Fvector4* lightSphere = nullptr);

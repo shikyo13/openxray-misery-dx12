@@ -19,10 +19,12 @@ private:
 protected:
     _5color c_scale;
     _5color c_bias;
+    bool windEnabled = false;
 public:
     Fmatrix xform;
     float GetHemiScale() const { return c_scale.hemi; }
     float GetHemiBias() const { return c_bias.hemi; }
+    bool HasWind() const { return windEnabled; }
 
 public:
     virtual void Load(LPCSTR N, IReader* data, u32 dwFlags);

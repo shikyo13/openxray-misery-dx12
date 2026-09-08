@@ -132,7 +132,7 @@ private:
     );
 
     // Material stride and authored hemisphere lighting inputs changed.
-    static constexpr u32 CACHE_VERSION = 30;
+    static constexpr u32 CACHE_VERSION = 31;
     Stats m_stats;
     bool m_cacheEnabled;
     xr_string m_backendSubdir;

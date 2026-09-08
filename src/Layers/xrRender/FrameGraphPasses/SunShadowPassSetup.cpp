@@ -3,6 +3,7 @@
 #include "SkinningPassSetup.h"
 #include "DetailPassSetup.h"
 #include "PassCommon.h"
+#include "ShaderConstants.h"
 #include "Layers/xrRender/FrameGraph/FrameGraph.h"
 #include "Layers/xrRender/FrameGraph/RenderPassBuilder.h"
 #include "Layers/xrRender/FrameGraph/BindingSetBuilder.h"
@@ -375,7 +376,7 @@ bool DrawDetailShadowMap(RenderContext* context, RenderDevice* device, FGDetailM
 
 u32 DrawWorldShadowMap(RenderContext* context, RenderDevice* device, GPUCullingManager* geometry,
     const Fmatrix& viewProjection, const CFrustum& frustum, nvrhi::IFramebuffer* framebuffer,
-    ShadowMapPassState& state, const xr_vector<u32>* candidates, u32 groups)
+    ShadowMapPassState& state, const xr_vector<u32>* candidates, u32 groups, u32 treeFilter)
 {
     auto* command = context->GetCommandList();
     auto* nvDevice = command->getDevice();
@@ -395,6 +396,8 @@ u32 DrawWorldShadowMap(RenderContext* context, RenderDevice* device, GPUCullingM
         visible.reserve(candidateCount);
         for (u32 candidate = 0; candidate < candidateCount; ++candidate) {
             const u32 i = candidates ? candidates[group][candidate] : candidate;
+            const bool tree = (objects[i].flags & GPU_INSTANCE_TREE_WIND) != 0;
+            if ((treeFilter == 1 && tree) || (treeFilter == 2 && !tree)) continue;
             if (!frustum.testSphere_dirty(objects[i].position, objects[i].radius)) continue;
             auto args = original[i];
             args.instanceCount = 1; args.startInstanceLocation = i;
@@ -417,6 +420,7 @@ u32 DrawWorldShadowMap(RenderContext* context, RenderDevice* device, GPUCullingM
         command->writeBuffer(state.constants, &constants, sizeof(constants));
         framegraph::BindingSetBuilder bsb(*vs, *ps, nvDevice, "SunShadow");
         bsb.ConstantBuffer("SunShadowDraw", state.constants);
+        bsb.ConstantBuffer("static_globals", cache.GetOrCreateVolatileCB("Frame", "StaticGlobals", sizeof(StaticGlobals), device));
         bsb.BufferSRV("g_InstanceData", instances);
         bsb.BufferSRV("g_Materials", materialBuffer.GetBuffer());
         auto bindings = cache.GetOrCreateBindingSet(bsb.Build(), state.layout, nvDevice);

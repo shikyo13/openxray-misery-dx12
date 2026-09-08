@@ -5,6 +5,7 @@
 #include "xrEngine/Environment.h"
 #include "xrCore/FMesh.hpp"
 #include "FTreeVisual.h"
+#include "Layers/xrRender/Materials/ShaderInfo.h"
 #include "Layers/xrRender/r__buffer_pool.h"
 #include "Common/OGF_GContainer_Vertices.hpp"
 
@@ -25,6 +26,11 @@ void FTreeVisual::Release() { dxRender_Visual::Release(); }
 void FTreeVisual::Load(const char* N, IReader* data, u32 dwFlags)
 {
     dxRender_Visual::Load(N, data, dwFlags);
+
+    windEnabled = xray::render::shader_info::IsTreeWindShader(shaderName.c_str());
+    static u32 windTrace = 0;
+    if (strstr(Core.Params, "-graphics_trace") && windTrace++ < 12)
+        Msg("* [TreeWindAsset] enabled=%u shader=%s", unsigned(windEnabled), shaderName.c_str());
 
     const VertexElement* vFormat = nullptr;
 
@@ -166,6 +172,7 @@ void FTreeVisual::Copy(dxRender_Visual* pSrc)
     PCOPY(xform);
     PCOPY(c_scale);
     PCOPY(c_bias);
+    PCOPY(windEnabled);
 }
 
 //-----------------------------------------------------------------------------------

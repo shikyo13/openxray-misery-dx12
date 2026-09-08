@@ -115,6 +115,7 @@ int ps_r_water_temporal = 1;
 float ps_r_bloom_strength = 1.f;
 int ps_r_bloom_debug = 0;
 int ps_r_motion_debug = 0;
+int ps_r_tree_wind = 1;
 float ps_r_motion_debug_scale = 1.f;
 const xr_token qaa_fg_token[] = {{"off", 0}, {"fxaa", 1}, {"dlaa", 2},
     {"dlss_quality", 3}, {"dlss_balanced", 4}, {"dlss_performance", 5}, {nullptr, 0}};
@@ -939,6 +940,7 @@ void xrRender_initconsole()
     CMD4(CCC_Float, "r_bloom_strength", &ps_r_bloom_strength, 0.f, 2.f);
     CMD4(CCC_Integer, "r_bloom_debug", &ps_r_bloom_debug, 0, 1);
     CMD4(CCC_Integer, "r_motion_debug", &ps_r_motion_debug, 0, 3);
+    CMD4(CCC_Integer, "r_tree_wind", &ps_r_tree_wind, 0, 1);
     CMD4(CCC_Float, "r_motion_debug_scale", &ps_r_motion_debug_scale, .01f, 64.f);
     CMD3(CCC_Mask, "r2_ssao_blur", &ps_r2_ls_flags_ext, R2FLAGEXT_SSAO_BLUR); // Need restart
     CMD3(CCC_Mask, "r2_ssao_opt_data", &ps_r2_ls_flags_ext, R2FLAGEXT_SSAO_OPT_DATA); // Need restart

@@ -1842,6 +1842,8 @@ void GPUCullingManager::UploadSceneObjects(fg::RenderContext* ctx, const Geometr
             obj.flags |= GPU_OBJECT_ALPHA_TEST;
         if (batch.IsStrictB2F())
             obj.flags |= GPU_OBJECT_TRANSPARENT;
+        if (batch.HasTreeWind())
+            obj.flags |= GPU_INSTANCE_TREE_WIND;
 
         obj.pad0 = 0.0f;
         obj.pad1 = 0.0f;

@@ -120,6 +120,7 @@ struct MeshAllocation {
 
 // Instance flags retain the object flags in bits 0-2.
 constexpr u32 GPU_INSTANCE_TREE_HEMI = 0x8;
+constexpr u32 GPU_INSTANCE_TREE_WIND = 0x10;
 
 struct GPUInstanceData {
     Fmatrix world;          // World transform (64 bytes)
