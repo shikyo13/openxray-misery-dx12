@@ -507,6 +507,8 @@ private:
     bool m_dlssActive = false;
     bool m_fsrActive = false;
     int m_lastWaterTemporal = -1;
+    int m_lastSSGI = -1, m_lastSSGIDebug = -1;
+    float m_lastSSGIRadius = 0.f, m_lastSSGIStrength = 0.f;
     Fvector2 m_dlssJitter{};
     u32 m_renderWidth = 0, m_renderHeight = 0;
     u32 m_previousRenderedFrame = 0;

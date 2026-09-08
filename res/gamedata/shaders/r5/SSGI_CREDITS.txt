@@ -1,0 +1,13 @@
+Native DX12 screen-space indirect lighting
+
+The light-gathering approach was informed by Ascii1457's Screen Space Shaders
+indirect-light module, Update14.5, as available in viventaje/xray-16 commit
+53639afffa6ff892272a7893ee91250099696e29 (screenspace_il.h).
+Author and reuse permission:
+https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders
+
+This is a native compute implementation for the fork's world normals, reverse-Z
+depth, material colors and authored fog. It is not the newer SSS23 implementation.
+It adds emitter/receiver orientation, short visibility checks, fog removal,
+ambient exclusion and depth/normal-aware filtering. Only visible surfaces can
+contribute; ordinary ambient lighting remains the fallback outside that coverage.

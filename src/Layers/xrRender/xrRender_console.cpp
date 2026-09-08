@@ -100,6 +100,12 @@ u32 ps_r_ssao = 3;
 float ps_r_ssao_radius = .8f;
 float ps_r_ssao_strength = 1.f;
 int ps_r_ssao_debug = 0;
+int ps_r_ssgi = 0; // Experimental: default off until lighting and motion qualification.
+float ps_r_ssgi_radius = 3.f;
+float ps_r_ssgi_strength = 1.f;
+// 0 composite, 1 bounce, 2 source, 3 sample acceptance, 4 diffuse material,
+// 5 raw irradiance amplified 16x (diagnostic only, before receiver reflectance).
+int ps_r_ssgi_debug = 0;
 u32 ps_r_aa = 1;
 int ps_r_fsr_fg = 0;
 int ps_r_fsr_fg_capture = 0;
@@ -919,6 +925,10 @@ void xrRender_initconsole()
     CMD4(CCC_Float, "r_ssao_radius", &ps_r_ssao_radius, .1f, 3.f);
     CMD4(CCC_Float, "r_ssao_strength", &ps_r_ssao_strength, 0.f, 3.f);
     CMD4(CCC_Integer, "r_ssao_debug", &ps_r_ssao_debug, 0, 1);
+    CMD4(CCC_Integer, "r_ssgi", &ps_r_ssgi, 0, 3);
+    CMD4(CCC_Float, "r_ssgi_radius", &ps_r_ssgi_radius, .25f, 10.f);
+    CMD4(CCC_Float, "r_ssgi_strength", &ps_r_ssgi_strength, 0.f, 4.f);
+    CMD4(CCC_Integer, "r_ssgi_debug", &ps_r_ssgi_debug, 0, 5);
     CMD3(CCC_Token, "r_aa", &ps_r_aa, qaa_fg_token);
     CMD4(CCC_Integer, "r_fsr_fg", &ps_r_fsr_fg, 0, 1);
     CMD4(CCC_Integer, "r_fsr_fg_capture", &ps_r_fsr_fg_capture, 0, 64);

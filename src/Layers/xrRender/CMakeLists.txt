@@ -170,6 +170,8 @@ target_sources(xrRender PRIVATE
     FrameGraphPasses/MotionVectorPassSetup.cpp
     FrameGraphPasses/AmbientOcclusionPassSetup.h
     FrameGraphPasses/AmbientOcclusionPassSetup.cpp
+    FrameGraphPasses/ScreenSpaceGIPassSetup.h
+    FrameGraphPasses/ScreenSpaceGIPassSetup.cpp
     FrameGraphPasses/AntialiasingPassSetup.h
     FrameGraphPasses/AntialiasingPassSetup.cpp
     FrameGraphPasses/DlssPassSetup.h

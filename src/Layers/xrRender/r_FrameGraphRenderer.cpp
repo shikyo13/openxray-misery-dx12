@@ -69,6 +69,7 @@
 #include "FrameGraphPasses/BloomPassSetup.h"
 #include "FrameGraphPasses/SunShaftPassSetup.h"
 #include "FrameGraphPasses/ReSTIRGIPassSetup.h"
+#include "FrameGraphPasses/ScreenSpaceGIPassSetup.h"
 #include "FrameGraphPasses/RibbonPassSetup.h"
 #include "FrameGraphPasses/TrailPassSetup.h"
 #include "Layers/xrRender/FrameGraph/Blackboard.h"
@@ -584,7 +585,7 @@ void FrameGraphRenderer::Render() {
             // Readback is asynchronous; compare settled settings windows.
             for (const auto& timing : m_gpuProfiler->GetPassTimings()) {
                 const char* name = timing.name.c_str();
-                if (!timing.pending && name && (strstr(name, "SSAO") || strstr(name, "Antialiasing") ||
+                if (!timing.pending && name && (strstr(name, "SSAO") || strstr(name, "SSGI.") || strstr(name, "Antialiasing") ||
                     strstr(name, "DLSS.") || strstr(name, "Exposure") || strstr(name, "SceneTonemap") || strstr(name, "SkyBackgroundCopy") || strstr(name, "Bloom.") || strstr(name, "SunShafts.") || strstr(name, "Water.") || strstr(name, "Transparent Pass") || strstr(name, "Motion Vectors") || strstr(name, "Sun shadow") || strstr(name, "Local shadow") || strstr(name, "Detail")))
                     m_graphicsTrace->w_printf("gpu,%u,%u,%u,%u,%s,%.6f\n", Device.dwFrame,
                         Device.dwTimeGlobal, ps_r_aa, ps_r_ssao, name, timing.timeMs);
@@ -1066,6 +1067,13 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     m_fsrActive = fsrActive;
     if (m_lastWaterTemporal != ps_r_water_temporal) m_hasPrevFrameData = false;
     m_lastWaterTemporal = ps_r_water_temporal;
+    if (m_lastSSGI != ps_r_ssgi || m_lastSSGIDebug != ps_r_ssgi_debug ||
+        m_lastSSGIRadius != ps_r_ssgi_radius || m_lastSSGIStrength != ps_r_ssgi_strength)
+        m_hasPrevFrameData = false;
+    m_lastSSGI = ps_r_ssgi;
+    m_lastSSGIDebug = ps_r_ssgi_debug;
+    m_lastSSGIRadius = ps_r_ssgi_radius;
+    m_lastSSGIStrength = ps_r_ssgi_strength;
 
     const bool dlssActive = ps_r_aa >= 2 &&
         m_blackboard->get_or_add<passes::DlssPassState>().Prepare(m_device->GetNVRHIDevice(),
@@ -1504,6 +1512,12 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
 
     auto aoOutputs = passes::setupAmbientOcclusionPass(*m_framegraph, m_device, detailOutputs,
         width, height, m_blackboard->get_or_add<passes::AmbientOcclusionPassState>());
+
+    // Gather from the pre-AO opaque lighting so the authored ambient term can be
+    // removed exactly. Composite before fogged transparency, shafts and temporal AA.
+    aoOutputs = passes::setupScreenSpaceGIPass(*m_framegraph, m_device, aoOutputs,
+        detailOutputs.albedo, skyOutput, width, height,
+        m_blackboard->get_or_add<passes::ScreenSpaceGIPassState>());
 
     aoOutputs.albedo = passes::setupSunShaftPass(*m_framegraph, m_device,
         aoOutputs.albedo, aoOutputs.depth, m_sunShadowMap,

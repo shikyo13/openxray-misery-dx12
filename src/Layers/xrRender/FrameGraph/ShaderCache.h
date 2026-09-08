@@ -131,8 +131,8 @@ private:
         ExtractedReflection& outReflection
     );
 
-    // Invalidate cached includes and reflection for previous-pose motion shaders.
-    static constexpr u32 CACHE_VERSION = 23;
+    // Invalidate cached SSGI sampling and diagnostic shaders.
+    static constexpr u32 CACHE_VERSION = 26;
     Stats m_stats;
     bool m_cacheEnabled;
     xr_string m_backendSubdir;
