@@ -325,6 +325,10 @@ f_forward output_forward_pbr(
 		res.color.rgb = skyVisibility;
 		res.ambient = 0;
 	}
+	if (material_settings.x == 2) {
+		res.color.rgb = N * 0.5 + 0.5;
+		res.ambient = 0;
+	}
 	return res;
 }
 

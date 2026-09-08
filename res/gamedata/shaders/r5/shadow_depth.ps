@@ -23,7 +23,9 @@ struct MaterialData
     uint flags;
     uint shaderVariant;
     uint hemiIndex;
-    uint3 padding;
+    uint normalCorrectionIndex;
+    uint detailNormalIndex;
+    uint detailCorrectionIndex;
 };
 
 #define MAT_FLAG_ALPHA_TEST (1 << 0)

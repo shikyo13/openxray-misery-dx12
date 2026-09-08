@@ -20,6 +20,7 @@ extern ECORE_API float ps_r_ssgi_strength;
 extern ECORE_API int ps_r_ssgi_debug;
 extern ECORE_API int ps_r_hemi;
 extern ECORE_API int ps_r_env_diffuse;
+extern ECORE_API int ps_r_bump_mode;
 extern ECORE_API u32 ps_r_aa;
 extern ECORE_API int ps_r_fsr_fg;
 extern ECORE_API int ps_r_fsr_fg_capture;

@@ -45,7 +45,7 @@ inline const char* GetTextureTypeName(TextureType type) {
 // Layout (48 bytes total):
 //   Bytes 0-15:  Texture descriptor indices (4× u32)
 //   Bytes 16-31: Material properties
-//   Bytes 32-47: Authored hemisphere lightmap and reserved padding
+//   Bytes 32-47: Authored hemisphere and bump/detail texture indices
 
 struct alignas(16) MaterialData {
     // Descriptor heap indices (UINT32_MAX = invalid/not present)
@@ -60,7 +60,9 @@ struct alignas(16) MaterialData {
     u32 flags;           // Material flags (see MaterialFlags)
     u32 shaderVariant;   // Index into ShaderVariantRegistry (0=default)
     u32 hemiIndex = INVALID_TEXTURE_INDEX;
-    u32 padding[3]{};
+    u32 normalCorrectionIndex = INVALID_TEXTURE_INDEX;
+    u32 detailNormalIndex = INVALID_TEXTURE_INDEX;
+    u32 detailCorrectionIndex = INVALID_TEXTURE_INDEX;
 };
 static_assert(sizeof(MaterialData) == 48, "MaterialData must be 48 bytes for GPU alignment");
 

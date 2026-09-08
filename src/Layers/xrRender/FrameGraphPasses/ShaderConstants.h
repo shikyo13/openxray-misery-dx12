@@ -130,8 +130,9 @@ struct alignas(16) StaticGlobals {
     Fvector4 dev_param_4;
     Fvector4 tree_wind, tree_wave;
     Fvector4 environment_color, environment_settings;
+    Fvector4 material_settings;
 };
-static_assert(sizeof(StaticGlobals) == 912, "StaticGlobals must be 912 bytes");
+static_assert(sizeof(StaticGlobals) == 928, "StaticGlobals must be 928 bytes");
 
 // Legacy alias for compatibility
 using GlobalConstants = StaticGlobals;
@@ -228,6 +229,7 @@ inline void FillGlobalConstants(GlobalConstants& cb, u32 width = Device.dwWidth,
     cb.tree_wave.set(0, 0, 0, 0);
     cb.environment_color.set(0, 0, 0, 0);
     cb.environment_settings.set(float(ps_r_env_diffuse), 0, 0, 0);
+    cb.material_settings.set(float(ps_r_bump_mode), 0, 0, 0);
     if (g_pGamePersistent) {
         const auto& env = g_pGamePersistent->Environment().CurrentEnv;
         const float rotation = PI_MUL_2 * Device.fTimeGlobal / _max(env.m_fTreeRotation, EPS_S);

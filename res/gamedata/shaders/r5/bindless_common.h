@@ -37,7 +37,9 @@ struct MaterialData
     uint flags;
     uint shaderVariant;
     uint hemiIndex;
-    uint3 padding;
+    uint normalCorrectionIndex;
+    uint detailNormalIndex;
+    uint detailCorrectionIndex;
 };
 
 // Material flags
@@ -157,7 +159,16 @@ struct BumpSample
     float gloss;
 };
 
-BumpSample SampleNormal(MaterialData mat, float2 uv)
+float3 DecodeAuthoredBump(float4 packed, uint correctionIndex, float2 uv)
+{
+    float3 correction = 0.5;
+    if (correctionIndex != INVALID_TEXTURE_INDEX)
+        correction = GetBindlessTexture(correctionIndex).Sample(smp_base, uv).rgb;
+    // X-Ray stores the normal in A/B/G and the compression residual in bump# RGB.
+    return packed.abg + correction - 1.0;
+}
+
+BumpSample SampleNormal(MaterialData mat, float2 uv, float mode)
 {
     BumpSample result;
     result.normal = float3(0, 0, 1);
@@ -169,11 +180,26 @@ BumpSample SampleNormal(MaterialData mat, float2 uv)
     Texture2D tex = GetBindlessTexture(mat.normalIndex);
     float4 Nu = tex.Sample(smp_base, uv);
 
-    // X-Ray bump format: R=glossiness, G=normalZ(unused), B=normalY(DX), A=normalX
-    result.normal.x = Nu.a * 2.0 - 1.0;
-    result.normal.y = Nu.b * 2.0 - 1.0;
-    result.normal.z = sqrt(saturate(1.0 - result.normal.x * result.normal.x - result.normal.y * result.normal.y));
     result.gloss = Nu.r * Nu.r;
+    if (mode < 0.5) {
+        result.normal.xy = Nu.ab * 2.0 - 1.0;
+        result.normal.z = sqrt(saturate(1.0 - dot(result.normal.xy, result.normal.xy)));
+        return result;
+    }
+
+    result.normal = DecodeAuthoredBump(Nu, mat.normalCorrectionIndex, uv);
+    if (mat.flags & MAT_FLAG_HAS_DETAIL) {
+        float2 detailUV = uv * mat.detailScale;
+        if (mat.detailNormalIndex != INVALID_TEXTURE_INDEX) {
+            float4 detail = GetBindlessTexture(mat.detailNormalIndex).Sample(smp_base, detailUV);
+            result.normal += DecodeAuthoredBump(detail, mat.detailCorrectionIndex, detailUV);
+            result.gloss *= detail.r * 2.0;
+        } else {
+            result.gloss *= GetBindlessTexture(mat.detailIndex).Sample(smp_base, detailUV).a * 2.0;
+        }
+    }
+    // Preserve the authored sload contrast after both normal contributions.
+    result.normal.z *= 0.5;
     return result;
 }
 

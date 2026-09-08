@@ -297,6 +297,8 @@ private:
 
     xr_map<std::tuple<shared_str, shared_str, shared_str, bool>, u32> m_materialIDByNames;
     xr_map<shared_str, resources::TextureHandle> m_hemiTextures;
+    xr_map<shared_str, resources::TextureHandle> m_bumpTextures;
+    u32 RegisterSupplementalBumpTexture(const shared_str& name);
 
     struct PendingMaterial {
         u32 materialID;

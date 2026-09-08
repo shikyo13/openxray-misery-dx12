@@ -44,7 +44,7 @@ PS_OUTPUT main(PS_INPUT input)
     float gloss = 0.0;
     if (mat.flags & MAT_FLAG_HAS_NORMAL)
     {
-        BumpSample bump = SampleNormal(mat, input.texcoord);
+        BumpSample bump = SampleNormal(mat, input.texcoord, material_settings.x);
         float3x3 TBN = float3x3(
             normalize(input.tangent),
             normalize(input.bitangent),
@@ -61,7 +61,7 @@ PS_OUTPUT main(PS_INPUT input)
     }
 
     float metallic = 0.0;
-    float roughness = 1.0 - gloss;
+    float roughness = saturate(1.0 - gloss);
     float ao = 1.0;
 
     if (mat.flags & MAT_FLAG_HAS_PBR)

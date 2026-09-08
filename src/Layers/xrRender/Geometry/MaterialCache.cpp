@@ -995,6 +995,8 @@ void MaterialCache::Clear()
         {
             for (auto& [name, handle] : m_hemiTextures)
                 if (handle.IsValid()) texMgr->Release(handle);
+            for (auto& [name, handle] : m_bumpTextures)
+                if (handle.IsValid()) texMgr->Release(handle);
             for (auto& [key, pso] : m_cache)
             {
                 if (!pso) continue;
@@ -1007,6 +1009,7 @@ void MaterialCache::Clear()
     }
     m_cache.clear();
     m_hemiTextures.clear();
+    m_bumpTextures.clear();
     m_textureHandleCache.clear();
     m_detailScaleCache.clear();
     m_shaderHandles.clear();
@@ -1019,6 +1022,30 @@ void MaterialCache::Clear()
 
 
 
+
+u32 MaterialCache::RegisterSupplementalBumpTexture(const shared_str& name)
+{
+    using namespace fg::bindless;
+    if (name.empty()) return INVALID_TEXTURE_INDEX;
+    auto* textures = m_resourceManager ? m_resourceManager->GetTextureManager() : nullptr;
+    if (!textures || !GEnv.Backend) return INVALID_TEXTURE_INDEX;
+    auto found = m_bumpTextures.find(name);
+    if (found == m_bumpTextures.end()) {
+        string_path path;
+        // Older/custom materials may omit the optional correction or detail map.
+        if (!FS.exist(path, "$game_textures$", name.c_str(), ".dds"))
+            return INVALID_TEXTURE_INDEX;
+        auto handle = textures->LoadTexture(name.c_str());
+        R_ASSERT3(handle.IsValid() && textures->GetNVRHITexture(handle),
+            "Authored bump texture failed to load", name.c_str());
+        found = m_bumpTextures.emplace(name, handle).first;
+        if (strstr(Core.Params, "-graphics_trace"))
+            Msg("* [BumpTexture] loaded='%s'", name.c_str());
+    }
+    const u32 index = GEnv.Backend->RegisterBindlessTexture(textures->GetNVRHITexture(found->second));
+    R_ASSERT2(index != INVALID_TEXTURE_INDEX, "Authored bump texture descriptor failed");
+    return index;
+}
 
 float MaterialCache::GetDetailScale(const shared_str& textureName)
 {
@@ -1596,6 +1623,11 @@ void MaterialCache::FinalizePendingMaterials(fg::RenderContext* ctx)
                     if (descriptorIndex != INVALID_TEXTURE_INDEX) {
                         matData.normalIndex = descriptorIndex;
                         matData.flags |= MAT_FLAG_HAS_NORMAL;
+                        if (!(matData.flags & MAT_FLAG_WATER)) {
+                            xr_string correctionName(bumpName.c_str());
+                            correctionName += "#";
+                            matData.normalCorrectionIndex = RegisterSupplementalBumpTexture(shared_str(correctionName.c_str()));
+                        }
                         updated = true;
                     }
                 }
@@ -1614,6 +1646,17 @@ void MaterialCache::FinalizePendingMaterials(fg::RenderContext* ctx)
                             matData.detailIndex = descriptorIndex;
                             matData.detailScale = texDescMgr.GetDetailScale(diffuseName);
                             matData.flags |= MAT_FLAG_HAS_DETAIL;
+                            bool detailDiffuse = false, detailBump = false;
+                            texDescMgr.GetTextureUsage(diffuseName, detailDiffuse, detailBump);
+                            if (detailBump) {
+                                const shared_str detailNormal = texDescMgr.GetBumpName(shared_str(detailTexName));
+                                matData.detailNormalIndex = RegisterSupplementalBumpTexture(detailNormal);
+                                if (matData.detailNormalIndex != INVALID_TEXTURE_INDEX) {
+                                    xr_string correctionName(detailNormal.c_str());
+                                    correctionName += "#";
+                                    matData.detailCorrectionIndex = RegisterSupplementalBumpTexture(shared_str(correctionName.c_str()));
+                                }
+                            }
                             updated = true;
                         }
                     }
@@ -1653,6 +1696,10 @@ void MaterialCache::FinalizePendingMaterials(fg::RenderContext* ctx)
         }
         if (updated) {
             materialBuffer.UpdateMaterial(materialID, matData);
+            if (strstr(Core.Params, "-graphics_trace") && (matData.flags & MAT_FLAG_HAS_NORMAL) && !(matData.flags & MAT_FLAG_WATER))
+                Msg("* [BumpMaterial] id=%u base='%s' normal=%u correction=%u detail_normal=%u detail_correction=%u",
+                    materialID, diffuseName.c_str(), matData.normalIndex, matData.normalCorrectionIndex,
+                    matData.detailNormalIndex, matData.detailCorrectionIndex);
             processedCount++;
         }
         if (!visual && strstr(Core.Params, "-particle_trace"))

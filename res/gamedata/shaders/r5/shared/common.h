@@ -70,6 +70,7 @@ cbuffer	static_globals : register(b2)
 	float4		tree_wave;
 	float4		environment_color;
 	float4		environment_settings;
+	float4		material_settings;
 };
 
 /*
