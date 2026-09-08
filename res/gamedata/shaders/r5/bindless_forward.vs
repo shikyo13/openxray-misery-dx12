@@ -15,6 +15,9 @@
 #include "shared/waterconfig.h"
 #include "shared/watermove.h"
 #endif
+#ifdef WATER_TEMPORAL
+#include "water_temporal.h"
+#endif
 
 // UnifiedVertex format (48 bytes):
 //   Position:  float3    at offset  0 (12 bytes)
@@ -49,6 +52,10 @@ struct VS_OUTPUT
 #ifdef WATER_SURFACES
     float4 waterLight : COLOR0; // Authored RGB lighting and hemisphere occlusion.
     float sunOcclusion : TEXCOORD6;
+#endif
+#ifdef WATER_TEMPORAL
+    float4 previousClip : TEXCOORD7;
+    float4 currentClip : TEXCOORD8;
 #endif
 };
 
@@ -97,6 +104,9 @@ VS_OUTPUT main(VS_INPUT input)
 
     // Transform position
     float4 worldPos = mul(worldMatrix, float4(input.position.xyz, 1.0));
+#ifdef WATER_TEMPORAL
+    float4 previousWorldPos = watermove_at_time(worldPos, water_temporal_options.x);
+#endif
 #ifdef WATER_SURFACES
     if (g_Materials[materialID].flags & MAT_FLAG_WATER)
         worldPos = watermove(worldPos);
@@ -112,6 +122,11 @@ VS_OUTPUT main(VS_INPUT input)
         clipPos += (eye_position - clipPos) * 0.002;
 #endif
     output.position = mul(m_VP, float4(clipPos, 1.0));
+#ifdef WATER_TEMPORAL
+    output.currentClip = output.position;
+    output.previousClip = water_temporal_options.y > .5 ?
+        mul(water_previous_view_projection, previousWorldPos) : output.currentClip;
+#endif
 
     // Transform normal/tangent to world space
     float3x3 worldMatrix3x3 = (float3x3)worldMatrix;

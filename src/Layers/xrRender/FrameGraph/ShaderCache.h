@@ -132,7 +132,7 @@ private:
     );
 
     // Invalidate cached includes and reflection for previous-pose motion shaders.
-    static constexpr u32 CACHE_VERSION = 22;
+    static constexpr u32 CACHE_VERSION = 23;
     Stats m_stats;
     bool m_cacheEnabled;
     xr_string m_backendSubdir;

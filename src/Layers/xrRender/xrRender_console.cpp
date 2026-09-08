@@ -103,6 +103,7 @@ int ps_r_ssao_debug = 0;
 u32 ps_r_aa = 1;
 int ps_r_fsr_fg = 0;
 int ps_r_fsr_fg_capture = 0;
+int ps_r_water_temporal = 1;
 float ps_r_bloom_strength = 1.f;
 int ps_r_bloom_debug = 0;
 int ps_r_motion_debug = 0;
@@ -921,6 +922,7 @@ void xrRender_initconsole()
     CMD3(CCC_Token, "r_aa", &ps_r_aa, qaa_fg_token);
     CMD4(CCC_Integer, "r_fsr_fg", &ps_r_fsr_fg, 0, 1);
     CMD4(CCC_Integer, "r_fsr_fg_capture", &ps_r_fsr_fg_capture, 0, 64);
+    CMD4(CCC_Integer, "r_water_temporal", &ps_r_water_temporal, 0, 1);
     CMD4(CCC_Float, "r_bloom_strength", &ps_r_bloom_strength, 0.f, 2.f);
     CMD4(CCC_Integer, "r_bloom_debug", &ps_r_bloom_debug, 0, 1);
     CMD4(CCC_Integer, "r_motion_debug", &ps_r_motion_debug, 0, 3);

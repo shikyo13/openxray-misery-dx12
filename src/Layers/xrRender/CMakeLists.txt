@@ -160,6 +160,8 @@ target_sources(xrRender PRIVATE
     FrameGraphPasses/DetailPassSetup.cpp
     FrameGraphPasses/TransparentPassSetup.h
     FrameGraphPasses/TransparentPassSetup.cpp
+    FrameGraphPasses/WaterTemporalPassSetup.h
+    FrameGraphPasses/WaterTemporalPassSetup.cpp
     FrameGraphPasses/PassCommon.h
     FrameGraphPasses/PassCommon.cpp
     FrameGraphPasses/PathTracerPassSetup.h

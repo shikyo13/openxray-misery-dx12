@@ -17,6 +17,7 @@ extern ECORE_API int ps_r_ssao_debug;
 extern ECORE_API u32 ps_r_aa;
 extern ECORE_API int ps_r_fsr_fg;
 extern ECORE_API int ps_r_fsr_fg_capture;
+extern ECORE_API int ps_r_water_temporal;
 extern ECORE_API float ps_r_bloom_strength;
 extern ECORE_API int ps_r_bloom_debug;
 extern ECORE_API int ps_r_motion_debug;

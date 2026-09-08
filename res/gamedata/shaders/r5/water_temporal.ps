@@ -1,0 +1,48 @@
+#define SM_6_0
+#include "common.h"
+#include "bindless_common.h"
+#include "water_temporal.h"
+Texture2D<float> t_OpaqueDepth : register(t29);
+struct Input {
+    float4 position : SV_Position;
+    float3 worldPos : TEXCOORD0;
+    float2 texcoord : TEXCOORD1;
+    float3 normal : TEXCOORD2;
+    float3 tangent : TEXCOORD3;
+    float3 bitangent : TEXCOORD4;
+    nointerpolation uint materialID : TEXCOORD5;
+    float4 waterLight : COLOR0;
+    float sunOcclusion : TEXCOORD6;
+    float4 previousClip : TEXCOORD7;
+    float4 currentClip : TEXCOORD8;
+};
+float2 main(Input input) : SV_Target {
+    clip((g_Materials[input.materialID].flags & MAT_FLAG_WATER) ? 1 : -1);
+    // Only replace depth/motion where the water contribution dominates.
+    // Clear shallow edges and fog retain the underlying scenery's inputs.
+    float alpha = .75, edge = 1;
+    if (water_temporal_options.z > .5) {
+        float2 uv = input.position.xy * screen_res.zw;
+        float d = t_OpaqueDepth.Load(int3(input.position.xy, 0));
+        clip(.9 - d); // Preserve first-person HUD depth.
+        float backgroundDepth = 10000;
+        if (d > .000001) {
+            float4 p = mul(water_current_inverse_view_projection,
+                float4(uv.x * 2 - 1, 1 - uv.y * 2, d, 1));
+            backgroundDepth = mul(m_V, float4(p.xyz / p.w, 1)).z;
+        }
+        float depth = max(backgroundDepth - mul(m_V, float4(input.worldPos, 1)).z, 0);
+        edge = saturate(depth * 20);
+        // .75 is the visible shader's minimum Fresnel alpha: a conservative
+        // dominance test that never promotes mostly transparent shoreline pixels.
+        alpha = max(min(alpha, saturate(depth)), 1 - exp(-4 * depth));
+    }
+    float fog = distance_fog_amount(input.worldPos);
+    clip(alpha * edge * (1 - fog * fog) - .5);
+    // Green distinguishes water from the red object/grass coverage diagnostic.
+    if (water_temporal_options.w > .5) return float2(0, .02);
+    if (input.previousClip.w <= 1e-6 || input.currentClip.w <= 1e-6) return 0;
+    float2 motion = (input.previousClip.xy / input.previousClip.w -
+        input.currentClip.xy / input.currentClip.w) * float2(.5, -.5);
+    return all(isfinite(motion)) ? motion : float2(0, 0);
+}

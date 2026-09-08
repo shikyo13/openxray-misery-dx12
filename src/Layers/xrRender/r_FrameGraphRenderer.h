@@ -506,6 +506,7 @@ private:
     bool m_hasPrevFrameData = false;              // Valid previous frame exists
     bool m_dlssActive = false;
     bool m_fsrActive = false;
+    int m_lastWaterTemporal = -1;
     Fvector2 m_dlssJitter{};
     u32 m_renderWidth = 0, m_renderHeight = 0;
     u32 m_previousRenderedFrame = 0;

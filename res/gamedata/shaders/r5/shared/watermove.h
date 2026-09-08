@@ -1,12 +1,13 @@
 #ifndef _WATERMOVE_H
 #define _WATERMOVE_H
 
-float4	watermove	(float4 P)	{
+float4 watermove_at_time(float4 P, float time) {
 	float3 	wave1	= float3(0.11f,0.13f,0.07f)*W_POSITION_SHIFT_SPEED	;
-	float 	dh	= sin  	(timers.x+dot(P.xyz,wave1))			;
+	float 	dh	= sin  	(time+dot(P.xyz,wave1))			;
 			P.y	+= dh * W_POSITION_SHIFT_HEIGHT	;
 	return 	P	;
 }
+float4 watermove(float4 P) { return watermove_at_time(P, timers.x); }
 float2	watermove_tc	(float2 base, float2 P, float amp)	{
 	float2 	wave1	= 	float2	(0.2111f,0.2333f)*amp	;
 	float 	angle 	= 	timers.z + dot (P,wave1)	;

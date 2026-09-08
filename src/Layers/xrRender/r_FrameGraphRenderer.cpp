@@ -64,6 +64,7 @@
 #include "FrameGraphPasses/AntialiasingPassSetup.h"
 #include "FrameGraphPasses/DlssPassSetup.h"
 #include "FrameGraphPasses/FsrFrameGenerationPassSetup.h"
+#include "FrameGraphPasses/WaterTemporalPassSetup.h"
 #include "FrameGraphPasses/SceneTonemapPassSetup.h"
 #include "FrameGraphPasses/BloomPassSetup.h"
 #include "FrameGraphPasses/SunShaftPassSetup.h"
@@ -1063,6 +1064,8 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     const bool fsrActive = ps_r_fsr_fg && passes::prepareFsrFrameGeneration(m_device, outputWidth, outputHeight);
     if (fsrActive != m_fsrActive) m_hasPrevFrameData = false;
     m_fsrActive = fsrActive;
+    if (m_lastWaterTemporal != ps_r_water_temporal) m_hasPrevFrameData = false;
+    m_lastWaterTemporal = ps_r_water_temporal;
 
     const bool dlssActive = ps_r_aa >= 2 &&
         m_blackboard->get_or_add<passes::DlssPassState>().Prepare(m_device->GetNVRHIDevice(),
@@ -1555,6 +1558,12 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
             transparentOutputs.depth, motionOutput.motionVectors, m_prevViewProj, m_hasPrevFrameData,
             m_blackboard->get_or_add<passes::DetailMotionPassState>());
 
+    auto temporalWater = passes::setupWaterTemporalPass(*m_framegraph, m_device,
+        transparentOutputs.depth, motionOutput.motionVectors, transparentConfig,
+        m_hasPrevFrameData ? m_prevViewProj : Device.mFullTransform, m_hasPrevFrameData,
+        width, height, m_blackboard->get_or_add<passes::WaterTemporalPassState>());
+    motionOutput.motionVectors = temporalWater.motion;
+
     auto particleOutputs = passes::setupParticlePass(
         *m_framegraph,
         m_device,
@@ -1815,7 +1824,7 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     // ═══════════════════════════════════════════════════════
     if (m_dlssActive)
         sceneColor = passes::setupDlssPass(*m_framegraph, m_device, sceneColor,
-            transparentOutputs.depth, motionOutput.motionVectors, width, height, outputWidth, outputHeight,
+            temporalWater.depth, motionOutput.motionVectors, width, height, outputWidth, outputHeight,
             m_dlssJitter.x, m_dlssJitter.y, !m_hasPrevFrameData,
             m_blackboard->get_or_add<passes::DlssPassState>());
 
@@ -2029,7 +2038,7 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     // Store final output for presentation (now points to backbuffer)
     if (m_fsrActive)
         finalOutput = passes::setupFsrFrameGenerationPass(*m_framegraph, m_device, finalOutput,
-            fsrHudless, transparentOutputs.depth, motionOutput.motionVectors, width, height,
+            fsrHudless, temporalWater.depth, motionOutput.motionVectors, width, height,
             m_dlssJitter.x, m_dlssJitter.y, !m_hasPrevFrameData,
             m_blackboard->get_or_add<passes::FsrFrameGenerationPassState>());
     m_finalOutput = finalOutput;
