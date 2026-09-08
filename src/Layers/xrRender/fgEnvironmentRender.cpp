@@ -297,17 +297,20 @@ void FGEnvironmentRender::InitSkyResources()
 
 nvrhi::ITexture* FGEnvironmentRender::GetSkyTexture(CEnvironment* environment, u32 index)
 {
-    InitSkyResources();
-    auto* renderer = static_cast<FrameGraphRenderer*>(GEnv.Render);
-    auto* resources = renderer->GetRenderDevice()->GetFGResourceManager();
-    auto* textures = resources ? resources->GetTextureManager() : nullptr;
-    if (textures && environment && index < 2 && environment->Current[index]) {
-        const auto& name = environment->Current[index]->sky_texture_name;
-        if (name.size()) {
-            auto* texture = textures->GetNVRHITexture(textures->LoadTexture(name.c_str()));
+    if (environment && index < 2 && environment->Current[index]) {
+        auto* descriptor = static_cast<FGEnvDescriptorRender*>(&*environment->Current[index]->m_pDescriptor);
+        if (descriptor->sky_texture) {
+            // The descriptor owns this lazy texture across sky and water draws.
+            // LoadTexture on every draw would acquire an unreleased manager reference.
+            auto* texture = descriptor->sky_texture->surface_get_native();
+            if (!texture) {
+                descriptor->sky_texture->Load();
+                texture = descriptor->sky_texture->surface_get_native();
+            }
             if (texture) return texture;
         }
     }
+    InitSkyResources();
     return m_skyPlaceholderCube.Get();
 }
 
@@ -393,21 +396,24 @@ void FGEnvironmentRender::DrawSky(nvrhi::ICommandList* cmdList, nvrhi::IFramebuf
     auto dynamicCBBuffer = cache.GetOrCreateVolatileCB("FGEnv_Sky", "DynamicCB", sizeof(passes::DynamicTransforms), renderDevice);
     cmdList->writeBuffer(dynamicCBBuffer, &dynamicCB, sizeof(dynamicCB));
 
-    nvrhi::ITexture* sky0Tex = nullptr;
-    nvrhi::ITexture* sky1Tex = nullptr;
-    auto* texManager = renderDevice->GetFGResourceManager()
-        ? renderDevice->GetFGResourceManager()->GetTextureManager() : nullptr;
-    if (texManager && environment->Current[0] && environment->Current[1])
-    {
-        const shared_str& skyName0 = environment->Current[0]->sky_texture_name;
-        const shared_str& skyName1 = environment->Current[1]->sky_texture_name;
-        if (skyName0.size())
-            sky0Tex = texManager->GetNVRHITexture(texManager->LoadTexture(skyName0.c_str()));
-        if (skyName1.size())
-            sky1Tex = texManager->GetNVRHITexture(texManager->LoadTexture(skyName1.c_str()));
+    auto* sky0Tex = GetSkyTexture(environment, 0);
+    auto* sky1Tex = GetSkyTexture(environment, 1);
+    if (strstr(Core.Params, "-graphics_trace") && Device.dwFrame % 120 == 0) {
+        auto* resources = renderDevice->GetFGResourceManager();
+        auto* textures = resources ? resources->GetTextureManager() : nullptr;
+        const auto traceTexture = [&](u32 index, nvrhi::ITexture* texture) {
+            const auto* current = environment->Current[index];
+            auto* descriptor = current ? static_cast<FGEnvDescriptorRender*>(&*current->m_pDescriptor) : nullptr;
+            const char* name = current ? current->sky_texture_name.c_str() : "<none>";
+            const auto* metadata = textures && current ? textures->GetMetadata(textures->FindTexture(name)) : nullptr;
+            const bool owned = descriptor && descriptor->sky_texture && descriptor->sky_texture->surface_get_native() == texture;
+            Msg("* [SkyTexture] frame=%u index=%u cube=%ux%u fallback=%u owned=%u managed_refs=%u source=%s",
+                Device.dwFrame, index, texture->getDesc().width, texture->getDesc().height,
+                unsigned(texture == m_skyPlaceholderCube.Get()), unsigned(owned), metadata ? metadata->refCount : 0, name);
+        };
+        traceTexture(0, sky0Tex);
+        traceTexture(1, sky1Tex);
     }
-    if (!sky0Tex) sky0Tex = m_skyPlaceholderCube.Get();
-    if (!sky1Tex) sky1Tex = m_skyPlaceholderCube.Get();
 
     auto* vsRefl = RImplementation.GetShaderLoader()->GetCachedReflection("sky_forward", ".vs");
     auto* psRefl = RImplementation.GetShaderLoader()->GetCachedReflection("sky_forward", ".ps");
