@@ -9,10 +9,12 @@
 
 namespace xray::render::fg::passes {
 
-void ReadSunShadowMap(framegraph::FrameGraph& graph, framegraph::PassHandle pass)
+void ReadWorldShadowMaps(framegraph::FrameGraph& graph, framegraph::PassHandle pass)
 {
     const auto shadow = static_cast<FrameGraphRenderer*>(GEnv.Render)->GetSunShadowMap();
     if (shadow.is_valid()) graph.PassRead(pass, shadow, framegraph::ResourceState::ShaderResource);
+    const auto local = static_cast<FrameGraphRenderer*>(GEnv.Render)->GetLocalShadowMap();
+    if (local.is_valid()) graph.PassRead(pass, local, framegraph::ResourceState::ShaderResource);
 }
 
 void ReadSkyBackground(framegraph::FrameGraph& graph, framegraph::PassHandle pass)

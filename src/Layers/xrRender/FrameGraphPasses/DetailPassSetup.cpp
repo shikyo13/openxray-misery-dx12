@@ -136,7 +136,7 @@ DefaultOutputLayout setupDetailPass(
         [&, width, height, gpuProfiler](
             FrameGraph& builder, PassHandle passHandle, DetailPassData& data) {
             RenderPassBuilder passBuilder(builder, passHandle);
-            ReadSunShadowMap(builder, passHandle);
+            ReadWorldShadowMaps(builder, passHandle);
             ReadSkyBackground(builder, passHandle);
 
             data.width = width;

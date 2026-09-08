@@ -122,7 +122,7 @@ framegraph::DefaultOutputLayout setupTransparentPass(
             data.passState = &state;
 
             RenderPassBuilder passBuilder(builder, passHandle);
-            ReadSunShadowMap(builder, passHandle);
+            ReadWorldShadowMaps(builder, passHandle);
             ReadSkyBackground(builder, passHandle);
             data.color = passBuilder.readWrite(inputs.albedo, ResourceState::RenderTarget);
             data.normal = passBuilder.readWrite(inputs.normal, ResourceState::RenderTarget);

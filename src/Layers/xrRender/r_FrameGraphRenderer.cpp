@@ -53,6 +53,7 @@
 #include "FrameGraphPasses/UIPassSetup.h"
 #include "FrameGraphPasses/FontPassSetup.h"
 #include "FrameGraphPasses/SunShadowPassSetup.h"
+#include "FrameGraphPasses/LocalShadowPassSetup.h"
 #include "FrameGraphPasses/TonemapPassSetup.h"       // Tonemap pass: HDR→LDR conversion
 #include "FrameGraphPasses/SmokeTrailPassSetup.h"
 #include "FrameGraphPasses/ClusterLightPassSetup.h"
@@ -562,7 +563,7 @@ void FrameGraphRenderer::Render() {
             for (const auto& timing : m_gpuProfiler->GetPassTimings()) {
                 const char* name = timing.name.c_str();
                 if (!timing.pending && name && (strstr(name, "SSAO") || strstr(name, "Antialiasing") ||
-                    strstr(name, "Exposure") || strstr(name, "SceneTonemap") || strstr(name, "SkyBackgroundCopy") || strstr(name, "Bloom.") || strstr(name, "Sun shadow") || strstr(name, "Detail")))
+                    strstr(name, "Exposure") || strstr(name, "SceneTonemap") || strstr(name, "SkyBackgroundCopy") || strstr(name, "Bloom.") || strstr(name, "Sun shadow") || strstr(name, "Local shadow") || strstr(name, "Detail")))
                     m_graphicsTrace->w_printf("gpu,%u,%u,%u,%u,%s,%.6f\n", Device.dwFrame,
                         Device.dwTimeGlobal, ps_r_aa, ps_r_ssao, name, timing.timeMs);
             }
@@ -911,7 +912,7 @@ void FrameGraphRenderer::SetupFrame() {
     }
 
     m_lstRenderables.clear();
-    m_sunCasterCandidates.clear();
+    m_shadowCasterCandidates.clear();
 
     if (levelLoaded)
     {
@@ -942,33 +943,53 @@ void FrameGraphRenderer::SetupFrame() {
             const u32 cameraCount = u32(m_lstRenderables.size());
             if (sunShadows.enabled && !ps_r_sun_camera_only) {
                 for (const auto& frustum : sunShadows.frustum) {
-                    g_pGamePersistent->SpatialSpace.q_frustum(m_sunCasterQuery,
+                    g_pGamePersistent->SpatialSpace.q_frustum(m_shadowCasterQuery,
                         0, STYPE_RENDERABLE, frustum);
-                    for (ISpatial* spatial : m_sunCasterQuery) {
+                    for (ISpatial* spatial : m_shadowCasterQuery) {
                         const auto& bounds = spatial->GetSpatialData().sphere;
                         if (view_frustum.testSphere_dirty(bounds.P, bounds.R)) continue;
                         auto* renderable = spatial->dcast_Renderable();
                         if (!renderable || !renderable->renderable_ShadowGenerate()) continue;
-                        m_sunCasterCandidates.push_back(spatial);
+                        m_shadowCasterCandidates.push_back(spatial);
                     }
                 }
-                // Cascades overlap. Reuse the vectors and submit each callback
+            }
+            // A nearby lamp also needs casters behind the camera, including at
+            // night when the sun pass is disabled. Preserve authored light flags.
+            if (ps_r_local_shadows && !ps_r_sun_camera_only && !strstr(Core.Params, "-noshadows")) {
+                for (u32 i = 0; i < cameraCount; ++i) {
+                    if (!(m_lstRenderables[i]->GetSpatialData().type & STYPE_LIGHTSOURCE)) continue;
+                    const auto* source = static_cast<const light*>(m_lstRenderables[i]->dcast_Light());
+                    if (!source || !source->flags.bShadow || source->range <= .1f) continue;
+                    g_pGamePersistent->SpatialSpace.q_sphere(m_shadowCasterQuery,
+                        0, STYPE_RENDERABLE, source->position, source->range);
+                    for (ISpatial* spatial : m_shadowCasterQuery) {
+                        const auto& bounds = spatial->GetSpatialData().sphere;
+                        if (view_frustum.testSphere_dirty(bounds.P, bounds.R)) continue;
+                        auto* renderable = spatial->dcast_Renderable();
+                        if (renderable && renderable->renderable_ShadowGenerate())
+                            m_shadowCasterCandidates.push_back(spatial);
+                    }
+                }
+            }
+            if (!m_shadowCasterCandidates.empty()) {
+                // Sun and lamp volumes overlap. Reuse the vectors and submit each callback
                 // exactly once; ordinary camera/GPU culling still controls color.
-                std::sort(m_sunCasterCandidates.begin(), m_sunCasterCandidates.end(), std::less<ISpatial*>{});
-                m_sunCasterCandidates.erase(std::unique(m_sunCasterCandidates.begin(), m_sunCasterCandidates.end()),
-                    m_sunCasterCandidates.end());
-                m_lstRenderables.insert(m_lstRenderables.end(), m_sunCasterCandidates.begin(), m_sunCasterCandidates.end());
+                std::sort(m_shadowCasterCandidates.begin(), m_shadowCasterCandidates.end(), std::less<ISpatial*>{});
+                m_shadowCasterCandidates.erase(std::unique(m_shadowCasterCandidates.begin(), m_shadowCasterCandidates.end()),
+                    m_shadowCasterCandidates.end());
+                m_lstRenderables.insert(m_lstRenderables.end(), m_shadowCasterCandidates.begin(), m_shadowCasterCandidates.end());
             }
             if (strstr(Core.Params, "-shadow_trace") && Device.dwFrame % 120 == 0) {
                 xr_string ids;
-                for (ISpatial* spatial : m_sunCasterCandidates) {
+                for (ISpatial* spatial : m_shadowCasterCandidates) {
                     if (const auto* object = spatial->dcast_GameObject()) {
                         ids += std::to_string(object->ID()).c_str();
                         ids += ',';
                     }
                 }
-                Msg("* [SunCasters] frame=%u camera=%u offscreen=%u merged=%u ids=%s",
-                    Device.dwFrame, cameraCount, u32(m_sunCasterCandidates.size()), u32(m_lstRenderables.size()), ids.c_str());
+                Msg("* [ShadowCasters] frame=%u camera=%u offscreen=%u merged=%u ids=%s",
+                    Device.dwFrame, cameraCount, u32(m_shadowCasterCandidates.size()), u32(m_lstRenderables.size()), ids.c_str());
             }
         }
     }
@@ -1339,6 +1360,11 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
         m_materialCache.get(), drawArgsBuffer, detailWind, m_detailManager.get(), m_blackboard->get_or_add<passes::SunShadowPassState>(),
         m_geometryCollector.get(), m_blackboard->get_or_add<passes::SkinningPassState>(), m_overlayManager.get());
     m_framegraph->GetRTRegistry().RegisterRT("rt_SunShadow", m_sunShadowMap);
+    m_localShadowMap = passes::setupLocalShadowPass(*m_framegraph, m_device, m_gpuCullingManager.get(),
+        m_materialCache.get(), drawArgsBuffer, detailWind, m_detailManager.get(), m_blackboard->get_or_add<passes::LocalShadowPassState>(),
+        m_geometryCollector.get(), m_blackboard->get_or_add<passes::SkinningPassState>(), m_overlayManager.get());
+    m_framegraph->GetRTRegistry().RegisterRT("rt_LocalShadow", m_localShadowMap);
+
 
     auto forwardOutputs = passes::setupForwardColorPass(
         *m_framegraph,

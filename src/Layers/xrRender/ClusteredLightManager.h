@@ -42,6 +42,7 @@ static_assert(sizeof(LightHiZCullCB) == 160, "LightHiZCullCB must be 160 bytes")
 static constexpr u32 CLUSTER_TILE_SIZE = 64;
 static constexpr u32 CLUSTER_NUM_SLICES = 24;
 static constexpr u32 MAX_LIGHTS = 1024;
+static constexpr u32 MAX_LOCAL_SHADOW_FACES = 768;
 static constexpr u32 MAX_LIGHT_INDICES = 1024 * 1024;
 
 class ClusteredLightManager {
@@ -63,6 +64,10 @@ public:
     nvrhi::IBuffer* GetLightIndexCounterBuffer() const { return m_lightIndexCounterBuffer; }
     nvrhi::IBuffer* GetVisibleLightIndicesBuffer() const { return m_visibleLightIndicesBuffer; }
     nvrhi::IBuffer* GetVisibleLightCountBuffer() const { return m_visibleLightCountBuffer; }
+
+    const xr_vector<const light*>& GetLightSources() const { return m_lightSources; }
+    void SetShadowBase(u32 index, u32 basePlusOne) { m_lightsCPU[index].spotParamsAndType.w = float(basePlusOne); }
+    nvrhi::IBuffer* GetShadowMatricesBuffer() const { return m_shadowMatricesBuffer; }
 
     u32 GetLightCount() const { return m_numLights; }
     u32 GetPointCount() const { return m_numPoint; }
@@ -87,6 +92,8 @@ private:
     nvrhi::DeviceHandle m_device;
 
     xr_vector<GPULightData> m_lightsCPU;
+    xr_vector<const light*> m_lightSources;
+    nvrhi::BufferHandle m_shadowMatricesBuffer;
     std::array<u32, MAX_LIGHTS> m_identityIndices;
     xr_map<shared_str, u32> m_spotTextureCache;
     u32 m_numLights = 0;

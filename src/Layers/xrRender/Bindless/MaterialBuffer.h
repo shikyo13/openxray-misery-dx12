@@ -16,6 +16,8 @@ public:
     void UpdateMaterial(u32 materialID, const MaterialData& material);
     const MaterialData* GetMaterial(u32 materialID) const { return Get(materialID); }
 
+    u64 GetShadowRevision() const { return m_shadowRevision; }
+
     u32 GetMaterialCount() const { return m_materialCount; }
 
     u32 GetShaderVariant(u32 materialID) const {
@@ -27,6 +29,7 @@ private:
     MaterialBuffer() = default;
 
     u32 m_materialCount = 0;
+    u64 m_shadowRevision = 0;
 };
 
 class DrawMaterialIDBuffer {

@@ -22,6 +22,15 @@ void ClusteredLightManager::Initialize(fg::RenderDevice* device)
     nvrhi::IDevice* nvDevice = device->GetNVRHIDevice();
     m_device = nvDevice;
     m_lightsCPU.reserve(MAX_LIGHTS);
+    m_lightSources.reserve(MAX_LIGHTS);
+    nvrhi::BufferDesc shadowMatrices;
+    shadowMatrices.byteSize = MAX_LOCAL_SHADOW_FACES * sizeof(Fmatrix);
+    shadowMatrices.structStride = sizeof(Fmatrix);
+    shadowMatrices.debugName = "LocalShadowMatrices";
+    shadowMatrices.initialState = nvrhi::ResourceStates::ShaderResource;
+    shadowMatrices.keepInitialState = true;
+    m_shadowMatricesBuffer = nvDevice->createBuffer(shadowMatrices);
+    R_ASSERT2(m_shadowMatricesBuffer, "Local shadow matrix buffer allocation failed");
 
     for (u32 i = 0; i < MAX_LIGHTS; i++)
         m_identityIndices[i] = i;
@@ -100,6 +109,7 @@ void ClusteredLightManager::Initialize(fg::RenderDevice* device)
 
 void ClusteredLightManager::Shutdown()
 {
+    m_shadowMatricesBuffer = nullptr;
     m_lightDataBuffer = nullptr;
     m_clusterGridBuffer = nullptr;
     m_lightIndexListBuffer = nullptr;
@@ -112,6 +122,7 @@ void ClusteredLightManager::Shutdown()
     m_statsScheduled = 0;
     m_visibleLightCountCPU = 0;
     m_lightsCPU.clear();
+    m_lightSources.clear();
     m_spotTextureCache.clear();
     m_device = nullptr;
 }
@@ -119,6 +130,7 @@ void ClusteredLightManager::Shutdown()
 void ClusteredLightManager::BeginFrame()
 {
     m_lightsCPU.clear();
+    m_lightSources.clear();
     m_numLights = 0;
     m_numPoint = 0;
     m_numSpot = 0;
@@ -142,8 +154,8 @@ GPULightData ClusteredLightManager::BuildGPULightData(const light* L)
 
     if (isSpot)
     {
-        const float cosOuter = _cos(L->cone);
-        const float cosInner = _cos(L->cone * 0.8f);
+        const float cosOuter = _cos(L->cone * 0.5f);
+        const float cosInner = _cos(L->cone * 0.4f);
         const float scale = 1.0f / std::max(cosInner - cosOuter, 0.001f);
         const float offset = -cosOuter * scale;
 
@@ -157,7 +169,7 @@ GPULightData ClusteredLightManager::BuildGPULightData(const light* L)
         std::memcpy(&texIdxBits, &texIdx, sizeof(float));
         gpu.spotParamsAndType.set(offset, 1.0f, texIdxBits, 0.0f);
 
-        if (texIdx != 0)
+        // The same projection defines cookies and depth shadows.
         {
             Fvector L_dir, L_up, L_right;
             L_dir.set(L->direction);
@@ -211,6 +223,7 @@ void ClusteredLightManager::CollectLight(const light* L)
     if (m_numLights >= MAX_LIGHTS)
         return;
 
+    m_lightSources.push_back(L);
     m_lightsCPU.push_back(BuildGPULightData(L));
     m_numLights++;
 }
@@ -230,6 +243,7 @@ void ClusteredLightManager::CollectLightsParallel(const xr_vector<const light*>&
             GetOrLoadSpotTexture(L->spot_texture_name);
     }
 
+    m_lightSources.assign(lights.begin(), lights.begin() + count);
     m_lightsCPU.resize(count);
     m_numLights = count;
 
@@ -258,6 +272,7 @@ void ClusteredLightManager::AddLight(const light* L, u32 type)
     if (m_numLights >= MAX_LIGHTS)
         return;
 
+    m_lightSources.push_back(L);
     m_lightsCPU.push_back(BuildGPULightData(L));
     m_numLights++;
 }
@@ -265,6 +280,7 @@ void ClusteredLightManager::AddLight(const light* L, u32 type)
 void ClusteredLightManager::BuildLightBuffer(const light_Package& package)
 {
     m_lightsCPU.clear();
+    m_lightSources.clear();
     m_numLights = 0;
 
     for (const light* L : package.v_point)

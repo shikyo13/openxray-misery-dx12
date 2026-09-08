@@ -45,6 +45,10 @@ const xr_token qpreset_token[] =
     { nullptr, 0 }
 };
 
+int ps_r_local_shadows = 1;
+int ps_r_local_shadow_cache = 1;
+int ps_r_local_shadow_resolution = 512;
+int ps_r_local_shadow_faces = 768;
 int ps_r_sun_shadows = 1;
 int ps_r_sun_camera_only = 0; // Diagnostic reproduction of the old caster collection.
 int ps_r_detail_shadows = 1;
@@ -973,6 +977,10 @@ void xrRender_initconsole()
     CMD4(CCC_Integer, "r4_debug_gpu_culling", &ps_r4_debug_gpu_culling, 0, 1);
     CMD4(CCC_Integer, "r_path_tracer", &ps_r_path_tracer, 0, 1);
     CMD4(CCC_Integer, "r_path_tracer_bounces", &ps_r_path_tracer_bounces, 1, 16);
+    CMD4(CCC_Integer, "r_local_shadow_cache", &ps_r_local_shadow_cache, 0, 1);
+    CMD4(CCC_Integer, "r_local_shadows", &ps_r_local_shadows, 0, 1);
+    CMD4(CCC_Integer, "r_local_shadow_resolution", &ps_r_local_shadow_resolution, 256, 1024);
+    CMD4(CCC_Integer, "r_local_shadow_faces", &ps_r_local_shadow_faces, 6, 768);
     CMD4(CCC_Integer, "r_sun_shadows", &ps_r_sun_shadows, 0, 1);
     CMD4(CCC_Integer, "r_sun_camera_only", &ps_r_sun_camera_only, 0, 1);
     CMD4(CCC_Integer, "r_detail_shadows", &ps_r_detail_shadows, 0, 1);

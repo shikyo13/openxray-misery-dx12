@@ -58,6 +58,7 @@ float LinearizeDepth(float ndcDepth, float zNear, float zFar)
 
 #ifdef CLUSTERED_LIGHTING_FORWARD
 #include "shared/pbr_brdf.h"
+#include "shared/local_shadow_sampling.h"
 
 float3 EvaluateClusteredLights(
     float3 worldPos,
@@ -107,7 +108,7 @@ float3 EvaluateClusteredLights(
                     projUV.y = 1.0 - projUV.y;
                     Texture2D spotTex = GetBindlessTexture(texIdx);
                     float4 texSample = spotTex.SampleLevel(smp_rtlinear, projUV, 0);
-                    atten *= texSample.r;
+                    atten *= all(projUV >= 0) && all(projUV <= 1) ? texSample.r : 0.0;
                 }
                 else
                 {
@@ -125,6 +126,7 @@ float3 EvaluateClusteredLights(
 
         if (atten > 0.001f)
         {
+            atten *= SampleLocalShadow(light, worldPos, N);
             float3 litColor = PBRDirectLighting(
                 albedo, N, V, L,
                 lightColor * atten,

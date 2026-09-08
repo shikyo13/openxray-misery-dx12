@@ -14,13 +14,15 @@ cbuffer DetailShadowCull : register(b0) {
     uint slotCount; uint capacity; float maximumRadius; uint instanceCapacity;
     float4 rootRadii[16];
     float4 cameraRange;
+    uint4 slotWindow; // startX, startZ, width, database stride
 };
 
 [numthreads(256, 1, 1)]
 void main(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= slotCount) return;
-    SlotAABB slot = t_Slots[id.x];
+    uint slotIndex = (slotWindow.y + id.x / slotWindow.z) * slotWindow.w + slotWindow.x + id.x % slotWindow.z;
+    SlotAABB slot = t_Slots[slotIndex];
     if (slot.instance_count == 0 || slot.instance_base >= instanceCapacity) return;
     float3 closest = clamp(cameraRange.xyz, slot.aabb_min, slot.aabb_max);
     if (dot(closest - cameraRange.xyz, closest - cameraRange.xyz) > cameraRange.w * cameraRange.w) return;

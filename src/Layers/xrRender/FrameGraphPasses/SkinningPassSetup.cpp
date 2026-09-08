@@ -488,7 +488,7 @@ u32 DrawSkinnedSunShadows(RenderContext* context, RenderDevice* device, GPUCulli
     }
     auto transforms = cache.GetOrCreateVolatileCB("SunShadowSkinned", "Transforms", sizeof(DynamicTransforms), device, 8192);
     auto material = cache.GetOrCreateVolatileCB("SunShadowSkinned", "Material", sizeof(SkinnedMaterialCB), device, 8192);
-    auto globals = cache.GetOrCreateVolatileCB("SunShadowSkinned", "Globals", sizeof(StaticGlobals), device, 32);
+    auto globals = cache.GetOrCreateVolatileCB("SunShadowSkinned", "Globals", sizeof(StaticGlobals), device, 4096);
     auto constants = BuildStaticGlobals();
     constants.m_VP = viewProjection;
     command->writeBuffer(globals, &constants, sizeof(constants));
@@ -653,7 +653,7 @@ framegraph::DefaultOutputLayout setupSkinningPass(
         // ═══════════════════════════════════════════════════════
         [&, width, height, gpuCulling, skinnedDrawArgs, state, overlayMgr](FrameGraph& builder, PassHandle passHandle, SkinningPassData& data) {
             RenderPassBuilder passBuilder(builder, passHandle);
-            ReadSunShadowMap(builder, passHandle);
+            ReadWorldShadowMaps(builder, passHandle);
             ReadSkyBackground(builder, passHandle);
 
             data.width = width;

@@ -33,11 +33,12 @@ struct alignas(16) DetailShadowCullConstants {
     u32 instanceCapacity;
     Fvector4 rootRadii[16];
     Fvector4 cameraRange;
+    u32 gridStartX, gridStartZ, gridWidth, gridStride;
 };
-static_assert(sizeof(DetailShadowCullConstants) == 384);
+static_assert(sizeof(DetailShadowCullConstants) == 400);
 
-bool DrawDetailSunShadows(RenderContext* context, RenderDevice* device, FGDetailManager* dm,
-    SunShadowPassState& state, u32 cascade, nvrhi::IFramebuffer* framebuffer)
+bool DrawDetailShadowMapImpl(RenderContext* context, RenderDevice* device, FGDetailManager* dm,
+    ShadowMapPassState& state, const Fmatrix& viewProjection, const CFrustum& frustum, nvrhi::IFramebuffer* framebuffer, const Fvector4* lightSphere)
 {
     // This path renders MISERY's authored detail meshes. Procedural blades use
     // different geometry and must not cast the silhouettes of those meshes.
@@ -72,8 +73,8 @@ bool DrawDetailSunShadows(RenderContext* context, RenderDevice* device, FGDetail
         compute.CS = cs.handle; compute.bindingLayouts = {state.detailCullLayout};
         state.detailCullPipeline = cache.GetOrCreateComputePipeline("DetailShadowCull", compute, nv);
         R_ASSERT2(state.detailPipeline && state.detailCullPipeline, "Detail sun shadow pipeline creation failed");
-        state.detailConstants = cache.GetOrCreateVolatileCB("DetailShadow", "DetailGlobals", sizeof(FGDetailManager::DetailFrameConstants), device);
-        state.detailCullConstants = cache.GetOrCreateVolatileCB("DetailShadow", "DetailShadowCull", sizeof(DetailShadowCullConstants), device);
+        state.detailConstants = cache.GetOrCreateVolatileCB("DetailShadow", "DetailGlobals", sizeof(FGDetailManager::DetailFrameConstants), device, 4096);
+        state.detailCullConstants = cache.GetOrCreateVolatileCB("DetailShadow", "DetailShadowCull", sizeof(DetailShadowCullConstants), device, 4096);
         nvrhi::BufferDesc args;
         args.byteSize = 5 * sizeof(u32); args.isDrawIndirectArgs = true;
         args.canHaveUAVs = true; args.canHaveRawViews = true;
@@ -95,9 +96,9 @@ bool DrawDetailSunShadows(RenderContext* context, RenderDevice* device, FGDetail
         state.detailCapacity = dm->visibleBufferCapacity;
     }
     DetailShadowCullConstants constants{};
-    R_ASSERT(state.frustum[cascade].p_count == 6);
+    R_ASSERT(frustum.p_count == 6);
     for (u32 p = 0; p < 6; ++p) {
-        const auto& plane = state.frustum[cascade].planes[p];
+        const auto& plane = frustum.planes[p];
         constants.planes[p].set(plane.n.x, plane.n.y, plane.n.z, plane.d);
     }
     constants.slotCount = dm->slot_count; constants.capacity = state.detailCapacity;
@@ -106,6 +107,26 @@ bool DrawDetailSunShadows(RenderContext* context, RenderDevice* device, FGDetail
         Device.vCameraPosition.z, ps_r_detail_shadow_distance);
     CopyMemory(constants.rootRadii, dm->modelRootRadii, sizeof(constants.rootRadii));
     for (float radius : dm->modelRootRadii) constants.maximumRadius = _max(constants.maximumRadius, radius * 4.f);
+    // The detail database is a regular XZ grid. Restrict dispatch to the root
+    // distance window already enforced below, plus the local light's reach.
+    // Keep GPU height/mesh/frustum tests; no readback or camera occlusion needed.
+    float minX = Device.vCameraPosition.x - ps_r_detail_shadow_distance;
+    float maxX = Device.vCameraPosition.x + ps_r_detail_shadow_distance;
+    float minZ = Device.vCameraPosition.z - ps_r_detail_shadow_distance;
+    float maxZ = Device.vCameraPosition.z + ps_r_detail_shadow_distance;
+    if (lightSphere) {
+        const float reach = lightSphere->w + constants.maximumRadius;
+        minX = _max(minX, lightSphere->x - reach); maxX = _min(maxX, lightSphere->x + reach);
+        minZ = _max(minZ, lightSphere->z - reach); maxZ = _min(maxZ, lightSphere->z + reach);
+    }
+    const int beginX = _max(0, int(std::floor(minX / DETAIL_SLOT_SIZE)) + dm->dtH.x_offs());
+    const int beginZ = _max(0, int(std::floor(minZ / DETAIL_SLOT_SIZE)) + dm->dtH.z_offs());
+    const int endX = _min(int(dm->dtH.x_size()) - 1, int(std::floor(maxX / DETAIL_SLOT_SIZE)) + dm->dtH.x_offs());
+    const int endZ = _min(int(dm->dtH.z_size()) - 1, int(std::floor(maxZ / DETAIL_SLOT_SIZE)) + dm->dtH.z_offs());
+    if (minX > maxX || minZ > maxZ || beginX > endX || beginZ > endZ) return false;
+    constants.gridStartX = beginX; constants.gridStartZ = beginZ;
+    constants.gridWidth = endX - beginX + 1; constants.gridStride = dm->dtH.x_size();
+    constants.slotCount = constants.gridWidth * (endZ - beginZ + 1);
     const u32 args[] = {dm->maxPulledIndexCount, 0, 0, 0, 0};
     command->writeBuffer(state.detailDrawArgs, args, sizeof(args));
     command->writeBuffer(state.detailCullConstants, &constants, sizeof(constants));
@@ -119,9 +140,9 @@ bool DrawDetailSunShadows(RenderContext* context, RenderDevice* device, FGDetail
     nvrhi::ComputeState compute;
     compute.pipeline = state.detailCullPipeline; compute.bindings = {cullBindings};
     command->setComputeState(compute);
-    command->dispatch((dm->slot_count + 255) / 256, 1, 1);
+    command->dispatch((constants.slotCount + 255) / 256, 1, 1);
 
-    const auto drawConstants = BuildDetailFrameConstants(dm, state.viewProjection[cascade]);
+    const auto drawConstants = BuildDetailFrameConstants(dm, viewProjection);
     command->writeBuffer(state.detailConstants, &drawConstants, sizeof(drawConstants));
     const auto* vs = loader->GetCachedReflection("detail_shadow", ".vs");
     const auto* ps = loader->GetCachedReflection("detail_shadow", ".ps");
@@ -137,7 +158,7 @@ bool DrawDetailSunShadows(RenderContext* context, RenderDevice* device, FGDetail
     draw.pipeline = state.detailPipeline; draw.framebuffer = framebuffer; draw.bindings = {drawBindings};
     draw.indexBuffer = {dm->pulledIndexBuffer, nvrhi::Format::R16_UINT, 0};
     draw.indirectParams = state.detailDrawArgs;
-    draw.viewport.addViewportAndScissorRect(nvrhi::Viewport(float(state.resolution), float(state.resolution)));
+    draw.viewport.addViewportAndScissorRect(nvrhi::Viewport(float(framebuffer->getFramebufferInfo().width), float(framebuffer->getFramebufferInfo().height)));
     command->setGraphicsState(draw);
     command->drawIndexedIndirect(0);
     return true;
@@ -197,7 +218,7 @@ void PrepareCascades(SunShadowPassState& state)
     }
 }
 
-void InitializeShadowPipeline(RenderDevice* device, SunShadowPassState& state)
+void InitializeShadowPipeline(RenderDevice* device, ShadowMapPassState& state)
 {
     if (state.pipeline) return;
     auto* nvDevice = device->GetNVRHIDevice();
@@ -225,10 +246,87 @@ void InitializeShadowPipeline(RenderDevice* device, SunShadowPassState& state)
     R_ASSERT2(state.pipeline, "Sun shadow pipeline creation failed");
     nvrhi::BufferDesc cb;
     cb.byteSize = sizeof(SunShadowDrawConstants); cb.isConstantBuffer = true;
-    cb.isVolatile = true; cb.maxVersions = 32; cb.debugName = "SunShadowDraw";
+    cb.isVolatile = true; cb.maxVersions = 8192; cb.debugName = "SunShadowDraw";
     state.constants = nvDevice->createBuffer(cb);
     R_ASSERT(state.constants);
 }
+}
+
+void InitializeShadowMapResources(RenderDevice* device, ShadowMapPassState& state)
+{
+    InitializeShadowPipeline(device, state);
+}
+
+bool DrawDetailShadowMap(RenderContext* context, RenderDevice* device, FGDetailManager* details,
+    ShadowMapPassState& state, const Fmatrix& viewProjection, const CFrustum& frustum,
+    nvrhi::IFramebuffer* framebuffer, const Fvector4* lightSphere)
+{
+    return DrawDetailShadowMapImpl(context, device, details, state, viewProjection, frustum, framebuffer, lightSphere);
+}
+
+u32 DrawWorldShadowMap(RenderContext* context, RenderDevice* device, GPUCullingManager* geometry,
+    const Fmatrix& viewProjection, const CFrustum& frustum, nvrhi::IFramebuffer* framebuffer,
+    ShadowMapPassState& state, const xr_vector<u32>* candidates, u32 groups)
+{
+    auto* command = context->GetCommandList();
+    auto* nvDevice = command->getDevice();
+    auto& cache = framegraph::GetPassResourceCache();
+    auto& materialBuffer = bindless::MaterialBuffer::Instance();
+    auto* loader = GEnv.Render->GetShaderLoader();
+    const auto* vs = loader->GetCachedReflection("sun_shadow", ".vs");
+    const auto* ps = loader->GetCachedReflection("sun_shadow", ".ps");
+    auto indexBuffer = GetOrCreateDrawIndexBuffer("SunShadow", nvDevice);
+    u32 count = 0;
+    auto drawSet = [&](u32 group, const xr_vector<IndirectDrawArgs>& original,
+        const xr_vector<GPUObjectData>& objects, nvrhi::IBuffer* instances, bool terrain) {
+        if (!(groups & (1u << group)) || original.empty() || !instances) return;
+        R_ASSERT(original.size() == objects.size());
+        xr_vector<IndirectDrawArgs> visible;
+        const u32 candidateCount = candidates ? u32(candidates[group].size()) : u32(original.size());
+        visible.reserve(candidateCount);
+        for (u32 candidate = 0; candidate < candidateCount; ++candidate) {
+            const u32 i = candidates ? candidates[group][candidate] : candidate;
+            if (!frustum.testSphere_dirty(objects[i].position, objects[i].radius)) continue;
+            auto args = original[i];
+            args.instanceCount = 1; args.startInstanceLocation = i;
+            visible.push_back(args);
+        }
+        if (visible.empty()) return;
+        const u64 bytes = visible.size() * sizeof(IndirectDrawArgs);
+        auto& buffer = state.drawArgs[group];
+        if (!buffer || buffer->getDesc().byteSize < bytes) {
+            nvrhi::BufferDesc desc;
+            desc.byteSize = original.size() * sizeof(IndirectDrawArgs);
+            desc.isDrawIndirectArgs = true; desc.debugName = "SunShadowDrawArgs";
+            desc.initialState = nvrhi::ResourceStates::IndirectArgument; desc.keepInitialState = true;
+            buffer = nvDevice->createBuffer(desc);
+        }
+        command->writeBuffer(buffer, visible.data(), bytes);
+        SunShadowDrawConstants constants;
+        constants.viewProjection = viewProjection;
+        constants.options.set(terrain ? 1.f : 0.f, 0.f, 0.f, 0.f);
+        command->writeBuffer(state.constants, &constants, sizeof(constants));
+        framegraph::BindingSetBuilder bsb(*vs, *ps, nvDevice, "SunShadow");
+        bsb.ConstantBuffer("SunShadowDraw", state.constants);
+        bsb.BufferSRV("g_InstanceData", instances);
+        bsb.BufferSRV("g_Materials", materialBuffer.GetBuffer());
+        auto bindings = cache.GetOrCreateBindingSet(bsb.Build(), state.layout, nvDevice);
+        R_ASSERT2(bindings, "Sun shadow binding set creation failed");
+        nvrhi::GraphicsState draw;
+        draw.pipeline = state.pipeline; draw.framebuffer = framebuffer;
+        draw.bindings = { bindings, device->GetBackend()->GetBindlessDescriptorTable() };
+        draw.vertexBuffers = { {geometry->GetMegaVertexBuffer(), 0, 0}, {indexBuffer, 1, 0} };
+        draw.indexBuffer = { geometry->GetMegaIndexBuffer(), nvrhi::Format::R32_UINT, 0 };
+        draw.indirectParams = buffer;
+        draw.viewport.addViewportAndScissorRect(nvrhi::Viewport(0.f, float(framebuffer->getFramebufferInfo().width), 0.f, float(framebuffer->getFramebufferInfo().width), 0.f, 1.f));
+        command->setGraphicsState(draw);
+        command->drawIndexedIndirect(0, u32(visible.size()));
+        count += u32(visible.size());
+    };
+    drawSet(0, geometry->GetStaticDrawArgsData(), geometry->GetStaticObjectData(), geometry->GetStaticInstanceBuffer(), false);
+    drawSet(1, geometry->GetTerrainDrawArgsData(), geometry->GetTerrainObjectData(), geometry->GetTerrainInstanceBuffer(), true);
+    drawSet(2, geometry->GetDynamicDrawArgsData(), geometry->GetDynamicObjectData(), geometry->GetDynamicInstanceBuffer(), false);
+    return count;
 }
 
 void PrepareSunShadowCascades(SunShadowPassState& state)
@@ -285,10 +383,6 @@ framegraph::VirtualResourceHandle setupSunShadowPass(
             materialBuffer.Upload(context);
             auto* nvDevice = command->getDevice();
             auto& cache = framegraph::GetPassResourceCache();
-            auto* loader = GEnv.Render->GetShaderLoader();
-            const auto* vs = loader->GetCachedReflection("sun_shadow", ".vs");
-            const auto* ps = loader->GetCachedReflection("sun_shadow", ".ps");
-            auto indexBuffer = GetOrCreateDrawIndexBuffer("SunShadow", nvDevice);
             u32 counts[3] = {};
             u32 skinnedCounts[3] = {};
             bool detailDraws[3] = {};
@@ -297,56 +391,11 @@ framegraph::VirtualResourceHandle setupSunShadowPass(
                 fb.setDepthAttachment(nvrhi::FramebufferAttachment().setTexture(texture).setArraySlice(cascade));
                 string32 cacheName; xr_sprintf(cacheName, "SunShadow%u", cascade);
                 auto framebuffer = cache.GetOrCreateFramebuffer(cacheName, fb, nvDevice);
-                auto drawSet = [&](u32 group, const xr_vector<IndirectDrawArgs>& original,
-                    const xr_vector<GPUObjectData>& objects, nvrhi::IBuffer* instances, bool terrain) {
-                    if (original.empty() || !instances) return;
-                    R_ASSERT(original.size() == objects.size());
-                    xr_vector<IndirectDrawArgs> visible;
-                    visible.reserve(original.size());
-                    for (u32 i = 0; i < original.size(); ++i) {
-                        if (!state.frustum[cascade].testSphere_dirty(objects[i].position, objects[i].radius)) continue;
-                        auto args = original[i];
-                        args.instanceCount = 1; args.startInstanceLocation = i;
-                        visible.push_back(args);
-                    }
-                    if (visible.empty()) return;
-                    const u64 bytes = visible.size() * sizeof(IndirectDrawArgs);
-                    auto& buffer = state.drawArgs[cascade][group];
-                    if (!buffer || buffer->getDesc().byteSize < bytes) {
-                        nvrhi::BufferDesc desc;
-                        desc.byteSize = original.size() * sizeof(IndirectDrawArgs);
-                        desc.isDrawIndirectArgs = true; desc.debugName = "SunShadowDrawArgs";
-                        desc.initialState = nvrhi::ResourceStates::IndirectArgument; desc.keepInitialState = true;
-                        buffer = nvDevice->createBuffer(desc);
-                    }
-                    command->writeBuffer(buffer, visible.data(), bytes);
-                    SunShadowDrawConstants constants;
-                    constants.viewProjection = state.viewProjection[cascade];
-                    constants.options.set(terrain ? 1.f : 0.f, 0.f, 0.f, 0.f);
-                    command->writeBuffer(state.constants, &constants, sizeof(constants));
-                    framegraph::BindingSetBuilder bsb(*vs, *ps, nvDevice, "SunShadow");
-                    bsb.ConstantBuffer("SunShadowDraw", state.constants);
-                    bsb.BufferSRV("g_InstanceData", instances);
-                    bsb.BufferSRV("g_Materials", materialBuffer.GetBuffer());
-                    auto bindings = cache.GetOrCreateBindingSet(bsb.Build(), state.layout, nvDevice);
-                    R_ASSERT2(bindings, "Sun shadow binding set creation failed");
-                    nvrhi::GraphicsState draw;
-                    draw.pipeline = state.pipeline; draw.framebuffer = framebuffer;
-                    draw.bindings = { bindings, data.device->GetBackend()->GetBindlessDescriptorTable() };
-                    draw.vertexBuffers = { {geometry->GetMegaVertexBuffer(), 0, 0}, {indexBuffer, 1, 0} };
-                    draw.indexBuffer = { geometry->GetMegaIndexBuffer(), nvrhi::Format::R32_UINT, 0 };
-                    draw.indirectParams = buffer;
-                    draw.viewport.addViewportAndScissorRect(nvrhi::Viewport(0.f, float(state.resolution), 0.f, float(state.resolution), 0.f, 1.f));
-                    command->setGraphicsState(draw);
-                    command->drawIndexedIndirect(0, u32(visible.size()));
-                    counts[cascade] += u32(visible.size());
-                };
-                drawSet(0, geometry->GetStaticDrawArgsData(), geometry->GetStaticObjectData(), geometry->GetStaticInstanceBuffer(), false);
-                drawSet(1, geometry->GetTerrainDrawArgsData(), geometry->GetTerrainObjectData(), geometry->GetTerrainInstanceBuffer(), true);
-                drawSet(2, geometry->GetDynamicDrawArgsData(), geometry->GetDynamicObjectData(), geometry->GetDynamicInstanceBuffer(), false);
+                counts[cascade] = DrawWorldShadowMap(context, data.device, geometry,
+                    state.viewProjection[cascade], state.frustum[cascade], framebuffer, state);
                 skinnedCounts[cascade] = DrawSkinnedSunShadows(context, data.device, geometry, data.collector,
                     data.overlays, state.viewProjection[cascade], state.frustum[cascade], framebuffer, *data.skinning);
-                detailDraws[cascade] = DrawDetailSunShadows(context, data.device, data.details, state, cascade, framebuffer);
+                detailDraws[cascade] = DrawDetailShadowMap(context, data.device, data.details, state, state.viewProjection[cascade], state.frustum[cascade], framebuffer);
             }
             if (strstr(Core.Params, "-shadow_trace") && Device.dwTimeGlobal >= state.nextTrace) {
                 state.nextTrace = Device.dwTimeGlobal + 1000;

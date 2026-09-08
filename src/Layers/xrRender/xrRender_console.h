@@ -31,6 +31,10 @@ enum
     ssao_mode_hbao,
 };
 
+extern ECORE_API int ps_r_local_shadows;
+extern ECORE_API int ps_r_local_shadow_cache;
+extern ECORE_API int ps_r_local_shadow_resolution;
+extern ECORE_API int ps_r_local_shadow_faces;
 extern ECORE_API int ps_r_sun_shadows;
 extern ECORE_API int ps_r_sun_camera_only;
 extern ECORE_API int ps_r_detail_shadows;

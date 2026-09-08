@@ -266,6 +266,10 @@ public:
     nvrhi::ITexture* GetSunShadowTexture() const {
         return m_sunShadowMap.is_valid() ? m_framegraph->GetPhysicalTexture(m_sunShadowMap) : nullptr;
     }
+    framegraph::VirtualResourceHandle GetLocalShadowMap() const { return m_localShadowMap; }
+    nvrhi::ITexture* GetLocalShadowTexture() const {
+        return m_localShadowMap.is_valid() ? m_framegraph->GetPhysicalTexture(m_localShadowMap) : nullptr;
+    }
     framegraph::VirtualResourceHandle GetSkyBackground() const { return m_skyBackground; }
     nvrhi::ITexture* GetSkyBackgroundTexture() const {
         return m_skyBackground.is_valid() ? m_framegraph->GetPhysicalTexture(m_skyBackground) : nullptr;
@@ -436,6 +440,7 @@ private:
     // FrameGraph
     xr_unique_ptr<framegraph::FrameGraph> m_framegraph;
     framegraph::VirtualResourceHandle m_sunShadowMap;
+    framegraph::VirtualResourceHandle m_localShadowMap;
     framegraph::VirtualResourceHandle m_skyBackground;
 
     // Shader phase cache (Week 16 - for precompilation phase detection)
@@ -585,8 +590,8 @@ private:
     // ═══════════════════════════════════════════════════
     // Populated once per frame, reused across passes
     xr_vector<ISpatial*> m_lstRenderables;
-    xr_vector<ISpatial*> m_sunCasterCandidates;
-    xr_vector<ISpatial*> m_sunCasterQuery;
+    xr_vector<ISpatial*> m_shadowCasterCandidates;
+    xr_vector<ISpatial*> m_shadowCasterQuery;
 
     // Frame setup
     void SetupFrame();

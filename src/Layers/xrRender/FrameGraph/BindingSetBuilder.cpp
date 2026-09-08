@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "BindingSetBuilder.h"
+#include "Layers/xrRender/ClusteredLightManager.h"
 #include "Layers/xrRender/r_FrameGraphRenderer.h"
 #include "Layers/xrRender/RenderContext/RenderDevice.h"
 #include "ShaderCache.h"
@@ -290,13 +291,14 @@ nvrhi::BindingSetDesc BindingSetBuilder::Build()
     // The same world shadow map is shared by every reflected forward material,
     // including terrain, skinned meshes, details and shader variants.
     for (const auto& resource : m_lists->srvs) {
-        if (!NameMatches(resource.name, "g_ShadowMapArray")) continue;
+        const bool local = NameMatches(resource.name, "g_LocalShadowMap");
+        if (!local && !NameMatches(resource.name, "g_ShadowMapArray")) continue;
         auto found = std::find_if(m_desc.bindings.begin(), m_desc.bindings.end(), [&](const auto& item) {
             return item.type == nvrhi::ResourceType::Texture_SRV && item.slot == resource.slot;
         });
         if (found == m_desc.bindings.end()) {
             auto* renderer = static_cast<FrameGraphRenderer*>(GEnv.Render);
-            auto* texture = renderer->GetSunShadowTexture();
+            auto* texture = local ? renderer->GetLocalShadowTexture() : renderer->GetSunShadowTexture();
             if (!texture) // Material setup without a world uses the neutral globals.
                 texture = GetPassResourceCache().GetDummyShadowMap(renderer->GetRenderDevice()->GetNVRHIDevice());
             m_desc.bindings.push_back(nvrhi::BindingSetItem::Texture_SRV(resource.slot, texture));
@@ -312,6 +314,12 @@ nvrhi::BindingSetDesc BindingSetBuilder::Build()
             R_ASSERT2(texture, "World fog requires the rendered sky background");
             m_desc.bindings.push_back(nvrhi::BindingSetItem::Texture_SRV(resource.slot, texture));
         }
+    }
+    for (const auto& resource : m_lists->srvs) {
+        if (!NameMatches(resource.name, "g_LocalShadowMatrices")) continue;
+        auto* buffer = fg::ClusteredLightManager::Instance().GetShadowMatricesBuffer();
+        R_ASSERT2(buffer, "Local shadow matrices must exist before forward material binding");
+        m_desc.bindings.push_back(nvrhi::BindingSetItem::StructuredBuffer_SRV(resource.slot, buffer));
     }
     AddSamplers();
 

@@ -38,6 +38,7 @@ u32 MaterialBuffer::RegisterMaterial(const MaterialData& material)
     if (!IsInitialized() || m_materialCount >= MAX_MATERIALS)
         return UINT32_MAX;
 
+    ++m_shadowRevision;
     u32 id = m_materialCount++;
     Set(id, material);
     m_uploadCount = m_materialCount;
@@ -48,6 +49,10 @@ void MaterialBuffer::UpdateMaterial(u32 materialID, const MaterialData& material
 {
     if (!IsInitialized() || materialID >= m_materialCount)
         return;
+    const auto* previous = Get(materialID);
+    if (!previous || previous->diffuseIndex != material.diffuseIndex || previous->alphaRef != material.alphaRef ||
+        ((previous->flags ^ material.flags) & MAT_FLAG_ALPHA_TEST))
+        ++m_shadowRevision;
     Set(materialID, material);
 }
 
