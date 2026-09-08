@@ -433,6 +433,7 @@ void FrameGraphRenderer::Render() {
     //  RESET FRAMEGRAPH FOR NEW FRAME
     // ═══════════════════════════════════════════════════════
     m_sunShadowMap = {};
+    m_skyBackground = {};
     m_framegraph->ResetForNextFrame();
 
     // Shader hot-reload check (throttled to avoid per-frame filesystem polling)
@@ -558,7 +559,7 @@ void FrameGraphRenderer::Render() {
             for (const auto& timing : m_gpuProfiler->GetPassTimings()) {
                 const char* name = timing.name.c_str();
                 if (!timing.pending && name && (strstr(name, "SSAO") || strstr(name, "Antialiasing") ||
-                    strstr(name, "Exposure") || strstr(name, "SceneTonemap")))
+                    strstr(name, "Exposure") || strstr(name, "SceneTonemap") || strstr(name, "SkyBackgroundCopy")))
                     m_graphicsTrace->w_printf("gpu,%u,%u,%u,%u,%s,%.6f\n", Device.dwFrame,
                         Device.dwTimeGlobal, ps_r_aa, ps_r_ssao, name, timing.timeMs);
             }
@@ -601,6 +602,7 @@ void FrameGraphRenderer::RenderMenu() {
     }
     
     m_sunShadowMap = {};
+    m_skyBackground = {};
     m_framegraph->ResetForNextFrame();
 
     const u32 width = Device.dwWidth;
@@ -1175,9 +1177,9 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     colorDesc.height = height;
     colorDesc.format = nvrhi::Format::RGBA16_FLOAT;
     colorDesc.isRenderTarget = true;
-    colorDesc.debugName = "rt_SceneColor";
+    colorDesc.debugName = "rt_SkyBackground";
 
-    auto skyColorHandle = m_framegraph->CreateTexture("rt_SceneColor", colorDesc);
+    auto skyColorHandle = m_framegraph->CreateTexture("rt_SkyBackground", colorDesc);
 
     FGEnvironmentRender* fgEnv = nullptr;
     if (g_pGamePersistent)
@@ -1191,6 +1193,22 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
         width,
         height
     );
+
+    // Preserve the unobstructed sky for X-Ray's fog-squared background blend.
+    // Forward geometry uses its own distance, including transparent surfaces.
+    m_skyBackground = skyOutput;
+    colorDesc.debugName = "rt_SceneColor";
+    auto sceneColorInput = m_framegraph->CreateTexture("rt_SceneColor", colorDesc);
+    const auto skyCopyPass = m_framegraph->AddPass("SkyBackgroundCopy");
+    m_framegraph->PassRead(skyCopyPass, skyOutput, framegraph::ResourceState::CopySource);
+    m_framegraph->PassWrite(skyCopyPass, sceneColorInput, framegraph::ResourceState::CopyDest);
+    m_framegraph->SetPassCallback(skyCopyPass,
+        [skyOutput, sceneColorInput](fg::RenderContext& ctx, const framegraph::FrameGraph& graph) {
+            auto* src = graph.GetPhysicalTexture(skyOutput);
+            auto* dst = graph.GetPhysicalTexture(sceneColorInput);
+            R_ASSERT2(src && dst, "Sky background copy textures are missing");
+            ctx.GetCommandList()->copyTexture(dst, nvrhi::TextureSlice(), src, nvrhi::TextureSlice());
+        });
 
     // ═══════════════════════════════════════════════════════
     //  FORWARD COLOR PASS (Single-RT, Reuses Depth)
@@ -1268,7 +1286,7 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
         *m_framegraph,
         m_device,
         depthBuffer,
-        skyOutput,
+        sceneColorInput,
         normalBuffer,
         baseColorBuffer,
         ambientBuffer,
@@ -1743,7 +1761,8 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     // ═══════════════════════════════════════════════════════
     //  DEBUG PREVIEW PASS (Render Inspector RT visualization)
     // ═══════════════════════════════════════════════════════
-    m_framegraph->GetRTRegistry().RegisterRT("rt_SceneColor", skyColorHandle);
+    m_framegraph->GetRTRegistry().RegisterRT("rt_SceneColor", sceneColorInput);
+    m_framegraph->GetRTRegistry().RegisterRT("rt_SkyBackground", skyOutput);
     m_framegraph->GetRTRegistry().RegisterRT("rt_Depth", depthBuffer);
     m_framegraph->GetRTRegistry().RegisterRT("rt_Normal", transparentOutputs.normal);
     m_framegraph->GetRTRegistry().RegisterRT("rt_BaseColor", baseColorBuffer);

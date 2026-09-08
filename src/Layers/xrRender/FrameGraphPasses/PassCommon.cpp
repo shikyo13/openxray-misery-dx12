@@ -15,6 +15,12 @@ void ReadSunShadowMap(framegraph::FrameGraph& graph, framegraph::PassHandle pass
     if (shadow.is_valid()) graph.PassRead(pass, shadow, framegraph::ResourceState::ShaderResource);
 }
 
+void ReadSkyBackground(framegraph::FrameGraph& graph, framegraph::PassHandle pass)
+{
+    const auto sky = static_cast<FrameGraphRenderer*>(GEnv.Render)->GetSkyBackground();
+    if (sky.is_valid()) graph.PassRead(pass, sky, framegraph::ResourceState::ShaderResource);
+}
+
 nvrhi::BufferHandle GetOrCreateDrawIndexBuffer(const char* passName, nvrhi::IDevice* device)
 {
     auto& cache = framegraph::GetPassResourceCache();

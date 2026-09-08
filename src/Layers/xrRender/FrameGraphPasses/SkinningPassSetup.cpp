@@ -654,6 +654,7 @@ framegraph::DefaultOutputLayout setupSkinningPass(
         [&, width, height, gpuCulling, skinnedDrawArgs, state, overlayMgr](FrameGraph& builder, PassHandle passHandle, SkinningPassData& data) {
             RenderPassBuilder passBuilder(builder, passHandle);
             ReadSunShadowMap(builder, passHandle);
+            ReadSkyBackground(builder, passHandle);
 
             data.width = width;
             data.height = height;

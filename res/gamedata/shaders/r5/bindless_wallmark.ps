@@ -32,7 +32,8 @@ PS_OUTPUT main(PS_INPUT input)
         clip(diffuseSample.a - mat.alphaRef);
     }
 
-    output.color = diffuseSample;
+    output.color = float4(apply_world_fog(diffuseSample.rgb,
+        distance_fog_amount(input.worldPos), input.position.xy), diffuseSample.a);
     output.normal = float4(normalize(input.normal), 1.0);
     output.baseColor = float4(diffuseSample.rgb, 0.0);
     return output;

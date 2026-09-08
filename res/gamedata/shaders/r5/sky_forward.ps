@@ -28,8 +28,9 @@ float4 main(PS_INPUT I) : SV_TARGET {
     float blendFactor = I.color.a;
     float3 sky = lerp(sky0, sky1, blendFactor);
 
-    // Apply sky color tint from environment
-    // sky *= I.color.rgb;
+    // X-Ray's sky shaders use twice the authored environment tint.
+    // Exposure is applied later, once, alongside the rest of the scene.
+    sky *= I.color.rgb * 2.0;
 
     // Output HDR sky color (exposure applied uniformly in tonemap pass)
     return float4(sky, 1.0f);

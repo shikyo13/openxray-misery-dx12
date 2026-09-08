@@ -235,10 +235,26 @@ float3 reconstruct_world_pos(float2 svPosXY, float depth)
 	return world.xyz / world.w;
 }
 
-f_forward output_forward_color(float3 albedo, float3 normal, float3 worldPos, float metallic, float roughness)
+float distance_fog_amount(float3 worldPos)
+{
+	return saturate(length(worldPos - eye_position) * fog_params.w + fog_params.x);
+}
+
+Texture2D<float4> g_SkyBackground : register(t26);
+
+float3 apply_world_fog(float3 color, float fog, float2 svPosition)
+{
+	// Original combine_1 blends fogged geometry into the sky with fog squared.
+	// Sampling a preserved background also works for independently blended geometry.
+	if (fog <= 0.0) return color;
+	float3 sky = g_SkyBackground.Load(int3(int2(svPosition), 0)).rgb;
+	return lerp(lerp(color, fog_color.rgb, fog), sky, fog * fog);
+}
+
+f_forward output_forward_color(float3 albedo, float3 normal, float3 worldPos, float metallic, float roughness, float4 svPosition)
 {
 	f_forward res;
-	res.color = float4(albedo, 1.0);
+	res.color = float4(apply_world_fog(albedo, distance_fog_amount(worldPos), svPosition.xy), 1.0);
 	res.normal = float4(normalize(normal), roughness);
 	res.baseColor = float4(albedo, metallic);
 	res.ambient = 0;
@@ -252,7 +268,8 @@ f_forward output_forward_pbr(
 	float metallic,
 	float roughness,
 	float ao,
-	float4 svPosition = float4(0, 0, 0, 0))
+	float4 svPosition = float4(0, 0, 0, 0),
+	bool isHud = false)
 {
 	f_forward res;
 
@@ -286,10 +303,12 @@ f_forward output_forward_pbr(
 	}
 #endif
 
-	res.color = float4(finalColor, 1.0);
+	float fog = isHud ? 0.0 : distance_fog_amount(worldPos);
+	res.color = float4(apply_world_fog(finalColor, fog, svPosition.xy), 1.0);
 	res.normal = float4(N, roughness);
 	res.baseColor = float4(albedo, metallic);
-	res.ambient = float4(ambient, 0);
+	// SSAO follows this pass and must not darken the fog contribution.
+	res.ambient = float4(ambient * (1.0 - fog) * (1.0 - fog * fog), 0);
 	return res;
 }
 

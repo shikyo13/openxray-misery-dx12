@@ -302,6 +302,17 @@ nvrhi::BindingSetDesc BindingSetBuilder::Build()
             m_desc.bindings.push_back(nvrhi::BindingSetItem::Texture_SRV(resource.slot, texture));
         }
     }
+    for (const auto& resource : m_lists->srvs) {
+        if (!NameMatches(resource.name, "g_SkyBackground")) continue;
+        const auto found = std::find_if(m_desc.bindings.begin(), m_desc.bindings.end(), [&](const auto& item) {
+            return item.type == nvrhi::ResourceType::Texture_SRV && item.slot == resource.slot;
+        });
+        if (found == m_desc.bindings.end()) {
+            auto* texture = static_cast<FrameGraphRenderer*>(GEnv.Render)->GetSkyBackgroundTexture();
+            R_ASSERT2(texture, "World fog requires the rendered sky background");
+            m_desc.bindings.push_back(nvrhi::BindingSetItem::Texture_SRV(resource.slot, texture));
+        }
+    }
     AddSamplers();
 
     std::sort(m_desc.bindings.begin(), m_desc.bindings.end(),

@@ -8,6 +8,7 @@ namespace xray::render::framegraph { class FrameGraph; }
 namespace xray::render::fg::passes {
 
 void ReadSunShadowMap(framegraph::FrameGraph& graph, framegraph::PassHandle pass);
+void ReadSkyBackground(framegraph::FrameGraph& graph, framegraph::PassHandle pass);
 
 inline void DrawIndexedIndirectCountOrFallback(
     nvrhi::ICommandList* cmdList,

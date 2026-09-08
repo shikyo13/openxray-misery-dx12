@@ -260,7 +260,7 @@ void FGEnvironmentRender::InitSkyResources()
             .setElementStride(sizeof(passes::SkyVertex)),
         nvrhi::VertexAttributeDesc()
             .setName("COLOR")
-            .setFormat(nvrhi::Format::RGBA8_UNORM)
+            .setFormat(nvrhi::Format::BGRA8_UNORM)
             .setOffset(offsetof(passes::SkyVertex, color))
             .setElementStride(sizeof(passes::SkyVertex)),
         nvrhi::VertexAttributeDesc()
@@ -304,7 +304,14 @@ void FGEnvironmentRender::DrawSky(nvrhi::ICommandList* cmdList, nvrhi::IFramebuf
     if (!m_skyInitialized)
         return;
 
-    CEnvDescriptor& env = environment->CurrentEnv;
+    auto& env = environment->CurrentEnv;
+
+    if (strstr(Core.Params, "-weather_trace") && Device.dwFrame % 120 == 0)
+        Msg("* [Weather] frame=%u fog_near=%.3f fog_far=%.3f fog_rgb=%.4f,%.4f,%.4f sky_rgb=%.4f,%.4f,%.4f blend=%.4f wind_velocity=%.3f wind_radians=%.4f",
+            Device.dwFrame, env.fog_near, env.fog_far,
+            env.fog_color.x, env.fog_color.y, env.fog_color.z,
+            env.sky_color.x, env.sky_color.y, env.sky_color.z, environment->CurrentEnv.weight,
+            env.wind_velocity, env.wind_direction);
 
     Fmatrix mSky;
     mSky.rotateY(env.sky_rotation);

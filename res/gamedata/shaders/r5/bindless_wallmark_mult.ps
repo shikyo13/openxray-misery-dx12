@@ -29,7 +29,11 @@ PS_OUTPUT main(PS_INPUT input)
 
     clip(diffuseSample.a - 0.5 / 255.0);
 
-    output.color = diffuseSample;
+    // This material uses 2 * source * destination blending, whose identity is
+    // 0.5. Fade toward that identity so it cannot multiply the sky through fog.
+    float fog = distance_fog_amount(input.worldPos);
+    float visibility = (1.0 - fog) * (1.0 - fog * fog);
+    output.color = lerp(float4(0.5, 0.5, 0.5, 0.5), diffuseSample, visibility);
     output.normal = float4(normalize(input.normal), 1.0);
     output.baseColor = float4(diffuseSample.rgb, 0.0);
     return output;

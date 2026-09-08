@@ -145,11 +145,26 @@ inline void FillGlobalConstants(GlobalConstants& cb) {
         _cos(Device.fTimeGlobal)      // cos(time)
     );
 
-    // Fog (use X-Ray's global fog state if available, otherwise defaults)
-    // TODO: Hook into X-Ray's CFogOfWar or environment system
-    cb.fog_plane.set(0.0f, 1.0f, 0.0f, 0.0f);  // Plane equation
-    cb.fog_params.set(0.0f, 1000.0f, 0.001f, 0.0f);  // near, far, density
-    cb.fog_color.set(0.5f, 0.5f, 0.6f, 1.0f);  // Grayish-blue fog
+    // No environment means no fog (for example, the standalone menu).
+    cb.fog_plane.set(0.0f, 0.0f, 0.0f, 1.0f);
+    cb.fog_params.set(0.0f, 0.0f, 0.0f, 0.0f);
+    cb.fog_color.set(0.0f, 0.0f, 0.0f, 0.0f);
+    if (g_pGamePersistent) {
+        const auto& env = g_pGamePersistent->Environment().CurrentEnv;
+        const float range = env.fog_far - env.fog_near;
+        if (range > EPS_S) {
+            const float inverseRange = 1.0f / range;
+            // Same distance-fog constants as X-Ray's cl_fog_params binder.
+            cb.fog_params.set(-env.fog_near * inverseRange, inverseRange, inverseRange, inverseRange);
+            cb.fog_color.set(env.fog_color.x, env.fog_color.y, env.fog_color.z, 0.0f);
+            // Visibility for legacy forward shaders. Use the view plane,
+            // independent of the reverse-Z projection used by this renderer.
+            cb.fog_plane.set(-Device.vCameraDirection.x * inverseRange,
+                -Device.vCameraDirection.y * inverseRange,
+                -Device.vCameraDirection.z * inverseRange,
+                (env.fog_far + Device.vCameraDirection.dotproduct(Device.vCameraPosition)) * inverseRange);
+        }
+    }
 
     // Lighting - defaults, will be overridden by FillSunConstants if sun is available
     cb.L_ambient.set(0.2f, 0.2f, 0.2f, 1.0f);  // Ambient (placeholder)

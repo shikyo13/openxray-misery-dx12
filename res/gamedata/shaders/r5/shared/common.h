@@ -33,7 +33,7 @@ cbuffer	static_globals : register(b2)
 	float4		timers;
 
 	float4		fog_plane;
-	float4		fog_params;		// x=near*(1/(far-near)), ?,?, w = -1/(far-near)
+	float4		fog_params;		// x=-near/(far-near), yzw=1/(far-near)
 	float4		fog_color;
 
 	float4		L_ambient;		// L_ambient.w = skynbox-lerp-factor

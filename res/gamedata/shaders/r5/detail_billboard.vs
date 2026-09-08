@@ -130,9 +130,16 @@ v2p_billboard main(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceI
 	float2 perpendicular_dir = float2(-global_wind_dir.y, global_wind_dir.x);
 	float2 wind_dir = normalize(global_wind_dir + perpendicular_dir * fbm_turbulence);
 
-	float displacement = fbm_wind_strength * grass_wind_displacement * height_factor;
-	world_pos.x += displacement * wind_dir.x;
-	world_pos.z += displacement * wind_dir.y;
+    // Authored weather can use wind velocities in the hundreds. Convert wind
+    // force into bounded angular bending, never unbounded world-space stretch.
+    // Rotation preserves each vertex's distance from the root; the base stays fixed.
+    float bend_angle = atan(max(fbm_wind_strength * grass_wind_displacement, 0.0)) * height_factor;
+    float3 bend_axis = float3(wind_dir.y, 0.0, -wind_dir.x);
+    float bend_sin, bend_cos;
+    sincos(bend_angle, bend_sin, bend_cos);
+    float3 bent = rotated * bend_cos + cross(bend_axis, rotated) * bend_sin
+        + bend_axis * dot(bend_axis, rotated) * (1.0 - bend_cos);
+    world_pos.xyz = raw.pos + bent;
 
 	float2 uv = float2(v.u, v.v);
 
@@ -162,7 +169,9 @@ v2p_billboard main(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceI
 	float3 N;
 	N.x = faceN.x * c - faceN.z * s;
 	N.y = faceN.y;
-	N.z = faceN.x * s + faceN.z * c;
+    N.z = faceN.x * s + faceN.z * c;
+    N = N * bend_cos + cross(bend_axis, N) * bend_sin
+        + bend_axis * dot(bend_axis, N) * (1.0 - bend_cos);
 
 #if defined(USE_R2_STATIC_SUN) && !defined(USE_LM_HEMI)
 	O.tcdh = float4(uv, hemi, sun);

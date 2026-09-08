@@ -38,8 +38,7 @@ VS_OUTPUT main(VS_INPUT v) {
     o.tc0 = v.tc0;
     o.tc1 = v.tc1;
 
-    // Pass through color with HDR scaling
-    // Note: Vanilla uses tonemap texture here, we'll apply exposure in PS
+    // Preserve the authored tint; scene exposure is applied after world rendering.
     o.color = v.color;
 
     return o;

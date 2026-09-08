@@ -55,5 +55,9 @@ float4 main(VS_OUTPUT input) : SV_Target0
     float minEdge = min(edgeDist.x, min(edgeDist.y, edgeDist.z));
     float edgeFade = saturate(minEdge * 4.0);
 
-    return float4(decalColor.rgb, decalColor.a * decal.opacity * edgeFade);
+    // The receiving surface already includes fog. Fade decal opacity so it
+    // cannot draw a sharp, unfogged mark over a fully obscured surface.
+    float fog = distance_fog_amount(worldPos);
+    float visibility = (1.0 - fog) * (1.0 - fog * fog);
+    return float4(decalColor.rgb, decalColor.a * decal.opacity * edgeFade * visibility);
 }

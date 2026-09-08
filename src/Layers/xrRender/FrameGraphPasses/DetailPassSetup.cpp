@@ -73,6 +73,7 @@ DefaultOutputLayout setupDetailPass(
             FrameGraph& builder, PassHandle passHandle, DetailPassData& data) {
             RenderPassBuilder passBuilder(builder, passHandle);
             ReadSunShadowMap(builder, passHandle);
+            ReadSkyBackground(builder, passHandle);
 
             data.width = width;
             data.height = height;
@@ -127,7 +128,8 @@ DefaultOutputLayout setupDetailPass(
                 data.detailManager->windSpeed = _max(
                     g_pGamePersistent->Environment().CurrentEnv.wind_velocity * ps_r3_grass_wind_multiplier,
                     ps_r3_grass_wind_min);
-                float wind_rad = deg2rad(g_pGamePersistent->Environment().CurrentEnv.wind_direction);
+                // CEnvDescriptor already stores radians; shaders receive degrees below.
+                float wind_rad = g_pGamePersistent->Environment().CurrentEnv.wind_direction;
                 data.detailManager->windDirection.set(_cos(wind_rad), _sin(wind_rad));
             }
 
@@ -163,7 +165,7 @@ DefaultOutputLayout setupDetailPass(
             float windAngleDeg = 0.0f;
             float windSpeed = dm->windSpeed;
             if (g_pGamePersistent)
-                windAngleDeg = g_pGamePersistent->Environment().CurrentEnv.wind_direction;
+                windAngleDeg = rad2deg(g_pGamePersistent->Environment().CurrentEnv.wind_direction);
 
             FGDetailManager::DetailFrameConstants frameConstants;
             const float quant = 16384.0f;
