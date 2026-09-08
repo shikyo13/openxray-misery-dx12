@@ -241,6 +241,7 @@ f_forward output_forward_color(float3 albedo, float3 normal, float3 worldPos, fl
 	res.color = float4(albedo, 1.0);
 	res.normal = float4(normalize(normal), roughness);
 	res.baseColor = float4(albedo, metallic);
+	res.ambient = 0;
 	return res;
 }
 
@@ -288,6 +289,7 @@ f_forward output_forward_pbr(
 	res.color = float4(finalColor, 1.0);
 	res.normal = float4(N, roughness);
 	res.baseColor = float4(albedo, metallic);
+	res.ambient = float4(ambient, 0);
 	return res;
 }
 

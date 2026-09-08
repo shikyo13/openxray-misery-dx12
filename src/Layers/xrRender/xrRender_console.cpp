@@ -90,6 +90,11 @@ u32 ps_r_sun_shafts = 2;
 const xr_token qsun_shafts_token[] = {{"st_opt_off", 0}, {"st_opt_low", 1}, {"st_opt_medium", 2}, {"st_opt_high", 3}, {nullptr, 0}};
 
 u32 ps_r_ssao = 3;
+float ps_r_ssao_radius = .8f;
+float ps_r_ssao_strength = 1.f;
+int ps_r_ssao_debug = 0;
+u32 ps_r_aa = 1;
+const xr_token qaa_fg_token[] = {{"off", 0}, {"fxaa", 1}, {nullptr, 0}};
 const xr_token qssao_token[] = {{"st_opt_off", 0}, {"st_opt_low", 1}, {"st_opt_medium", 2}, {"st_opt_high", 3},
     {"st_opt_ultra", 4},
 {nullptr, 0}};
@@ -896,6 +901,10 @@ void xrRender_initconsole()
     CMD3(CCC_Token, "r2_sun_shafts", &ps_r_sun_shafts, qsun_shafts_token);
     CMD3(CCC_SSAO_Mode, "r2_ssao_mode", &ps_r_ssao_mode, qssao_mode_token);
     CMD3(CCC_Token, "r2_ssao", &ps_r_ssao, qssao_token);
+    CMD4(CCC_Float, "r_ssao_radius", &ps_r_ssao_radius, .1f, 3.f);
+    CMD4(CCC_Float, "r_ssao_strength", &ps_r_ssao_strength, 0.f, 3.f);
+    CMD4(CCC_Integer, "r_ssao_debug", &ps_r_ssao_debug, 0, 1);
+    CMD3(CCC_Token, "r_aa", &ps_r_aa, qaa_fg_token);
     CMD3(CCC_Mask, "r2_ssao_blur", &ps_r2_ls_flags_ext, R2FLAGEXT_SSAO_BLUR); // Need restart
     CMD3(CCC_Mask, "r2_ssao_opt_data", &ps_r2_ls_flags_ext, R2FLAGEXT_SSAO_OPT_DATA); // Need restart
     CMD3(CCC_Mask, "r2_ssao_half_data", &ps_r2_ls_flags_ext, R2FLAGEXT_SSAO_HALF_DATA); // Need restart

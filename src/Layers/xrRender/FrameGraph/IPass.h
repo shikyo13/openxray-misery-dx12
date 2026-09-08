@@ -25,6 +25,7 @@ struct DefaultOutputLayout {
     VirtualResourceHandle normal;      // RT1: World normal.xyz + Roughness.a (RGBA16_FLOAT)
     VirtualResourceHandle baseColor;   // RT2: Unlit diffuse albedo.rgb + Metallic.a (RGBA8_UNORM)
     VirtualResourceHandle depth;       // Depth/Stencil (D32)
+    VirtualResourceHandle ambient;     // RT3: Ambient lighting before screen-space occlusion
     VirtualResourceHandle distortion;  // Distortion buffer (RG = UV offset, A = intensity)
 };
 

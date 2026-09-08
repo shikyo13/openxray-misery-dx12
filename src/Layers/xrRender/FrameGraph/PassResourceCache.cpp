@@ -4,6 +4,7 @@
 #include "PassResourceCache.h"
 #include "BindingLayoutBuilder.h"
 #include "ShaderCache.h"
+#include "Layers/xrRender/xrRender_console.h"
 
 namespace xray::render::framegraph {
 
@@ -70,11 +71,12 @@ nvrhi::SamplerHandle PassResourceCache::GetOrCreateSampler(
 }
 
 nvrhi::ISampler* PassResourceCache::GetAnisoWrapSampler(nvrhi::IDevice* device) {
-    if (!m_commonAnisoWrap) {
+    const float anisotropy = float(clampr(fg::ps_r__tf_Anisotropic, 1, 16));
+    if (!m_commonAnisoWrap || m_commonAnisoWrap->getDesc().maxAnisotropy != anisotropy) {
         nvrhi::SamplerDesc desc;
         desc.setAllAddressModes(nvrhi::SamplerAddressMode::Repeat);
         desc.setAllFilters(true);
-        desc.setMaxAnisotropy(16.0f);
+        desc.setMaxAnisotropy(anisotropy);
         m_commonAnisoWrap = device->createSampler(desc);
     }
     return m_commonAnisoWrap;

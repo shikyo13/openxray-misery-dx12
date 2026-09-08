@@ -57,6 +57,8 @@
 #include "ClusteredLightManager.h"
 #include "light.h"
 #include "FrameGraphPasses/MotionVectorPassSetup.h"
+#include "FrameGraphPasses/AmbientOcclusionPassSetup.h"
+#include "FrameGraphPasses/AntialiasingPassSetup.h"
 #include "FrameGraphPasses/ReSTIRGIPassSetup.h"
 #include "FrameGraphPasses/RibbonPassSetup.h"
 #include "FrameGraphPasses/TrailPassSetup.h"
@@ -306,6 +308,8 @@ void FrameGraphRenderer::Shutdown() {
     if (!m_device) return;
 
     Msg("* [FrameGraphRenderer] Shutting down");
+    if (m_graphicsTrace) FS.w_close(m_graphicsTrace);
+    m_graphicsTraceTicks = 0;
 
     m_HWOCC.occq_destroy();
     m_PSLibrary.OnDestroy();
@@ -386,10 +390,24 @@ void FrameGraphRenderer::Render() {
     if (!m_enabled) return;
 
     VERIFY(m_framegraph != nullptr);
+    const bool graphicsTrace = strstr(Core.Params, "-graphics_trace") != nullptr;
+    if (graphicsTrace) {
+        if (!m_graphicsTrace) {
+            m_graphicsTrace = FS.w_open("$logs$", "dx12_graphics.csv");
+            R_ASSERT2(m_graphicsTrace, "Could not open graphics timing trace");
+            m_graphicsTrace->w_printf("kind,frame,time_global_ms,aa,ao,label,value_ms\n");
+        }
+        const u64 ticks = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (m_graphicsTraceTicks) m_graphicsTrace->w_printf("cpu,%u,%u,%u,%u,RenderInterval,%.6f\n",
+            Device.dwFrame, Device.dwTimeGlobal, ps_r_aa, ps_r_ssao, double(ticks - m_graphicsTraceTicks) / 1.e6);
+        m_graphicsTraceTicks = ticks;
+    }
+
 
     if (m_gpuProfiler)
     {
-        m_gpuProfiler->SetEnabled(xray::profiler::IsEnabled());
+        m_gpuProfiler->SetEnabled(xray::profiler::IsEnabled() || graphicsTrace);
         m_gpuProfiler->FrameStart();
     }
 
@@ -534,6 +552,15 @@ void FrameGraphRenderer::Render() {
     if (m_gpuProfiler)
     {
         m_gpuProfiler->FrameEnd();
+        if (m_graphicsTrace) {
+            // Readback is asynchronous; compare settled settings windows.
+            for (const auto& timing : m_gpuProfiler->GetPassTimings()) {
+                const char* name = timing.name.c_str();
+                if (!timing.pending && name && (strstr(name, "SSAO") || strstr(name, "Antialiasing")))
+                    m_graphicsTrace->w_printf("gpu,%u,%u,%u,%u,%s,%.6f\n", Device.dwFrame,
+                        Device.dwTimeGlobal, ps_r_aa, ps_r_ssao, name, timing.timeMs);
+            }
+        }
     }
 
     // ═══════════════════════════════════════════════════════
@@ -1016,6 +1043,10 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     baseColorDesc.isRenderTarget = true;
     baseColorDesc.isTransient = true;
     framegraph::VirtualResourceHandle baseColorBuffer = m_framegraph->CreateTexture("rt_BaseColor", baseColorDesc);
+    auto ambientDesc = baseColorDesc;
+    ambientDesc.debugName = "rt_Ambient";
+    ambientDesc.format = nvrhi::Format::RGBA16_FLOAT;
+    auto ambientBuffer = m_framegraph->CreateTexture("rt_Ambient", ambientDesc);
 
     // ═══════════════════════════════════════════════════════
     //  TEMPORAL HI-Z PYRAMID BUILD (From Previous Frame)
@@ -1238,6 +1269,7 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
         skyOutput,
         normalBuffer,
         baseColorBuffer,
+        ambientBuffer,
         m_geometryCollector.get(),
         m_materialCache.get(),
         width,
@@ -1352,10 +1384,13 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
             transparentConfig.variantPartition = m_gpuCullingManager->GetTransparentPartition().ToConfig();
     }
 
+    auto aoOutputs = passes::setupAmbientOcclusionPass(*m_framegraph, m_device, detailOutputs,
+        width, height, m_blackboard->get_or_add<passes::AmbientOcclusionPassState>());
+
     auto transparentOutputs = passes::setupTransparentPass(
         *m_framegraph,
         m_device,
-        detailOutputs,
+        aoOutputs,
         transparentConfig,
         width, height,
         m_blackboard->get_or_add<passes::TransparentPassState>()
@@ -1647,6 +1682,9 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
             }
         }
     }
+
+    sceneColor = passes::setupAntialiasingPass(*m_framegraph, m_device, sceneColor,
+        width, height, m_blackboard->get_or_add<passes::AntialiasingPassState>());
 
     // ═══════════════════════════════════════════════════════
     //  EXPOSURE PASS (Auto-Exposure / Eye Adaptation)

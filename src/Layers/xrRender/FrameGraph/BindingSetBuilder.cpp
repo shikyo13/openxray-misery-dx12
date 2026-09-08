@@ -6,6 +6,7 @@
 #include "ShaderReflection.h"
 #include "PassResourceCache.h"
 #include "BindingLayoutBuilder.h"
+#include "Layers/xrRender/xrRender_console.h"
 
 namespace xray::render::framegraph {
 
@@ -66,6 +67,12 @@ void Collect(BindingSetBuilder::ReflectedLists& lists,
 const BindingSetBuilder::ReflectedLists& GetOrBuildReflectedLists(
     const ExtractedReflection* a, const ExtractedReflection* b, nvrhi::IDevice* device)
 {
+    // Reflected sampler bindings must follow live texture-filtering settings.
+    static int anisotropy = -1;
+    if (anisotropy != fg::ps_r__tf_Anisotropic) {
+        s_reflectedListsCache.clear();
+        anisotropy = fg::ps_r__tf_Anisotropic;
+    }
     const ReflectionKey key{ a, b };
     auto it = s_reflectedListsCache.find(key);
     if (it != s_reflectedListsCache.end())

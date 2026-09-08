@@ -139,6 +139,7 @@ static void renderBindlessForward(
     nvrhi::ITexture* colorRT,
     nvrhi::ITexture* normalRT,
     nvrhi::ITexture* baseColorRT,
+    nvrhi::ITexture* ambientRT,
     nvrhi::ITexture* depthRT,
     const BindlessForwardConfig& config,
     MaterialCache* materialCache,
@@ -173,6 +174,8 @@ static void renderBindlessForward(
         fbDesc.addColorAttachment(normalRT);
     if (baseColorRT)
         fbDesc.addColorAttachment(baseColorRT);
+    if (ambientRT)
+        fbDesc.addColorAttachment(ambientRT);
     fbDesc.setDepthAttachment(depthRT);
     auto& cache = framegraph::GetPassResourceCache();
     auto framebuffer = cache.GetOrCreateFramebuffer("ForwardColor", fbDesc, nvDevice);
@@ -377,6 +380,7 @@ framegraph::DefaultOutputLayout setupForwardColorPass(
     framegraph::VirtualResourceHandle colorInput,
     framegraph::VirtualResourceHandle normalInput,
     framegraph::VirtualResourceHandle baseColorInput,
+    framegraph::VirtualResourceHandle ambientInput,
     const GeometryCollector* geometry,
     MaterialCache* materialCache,
     u32 width,
@@ -392,6 +396,7 @@ framegraph::DefaultOutputLayout setupForwardColorPass(
         fbInfo.colorFormats.push_back(nvrhi::Format::RGBA16_FLOAT);
         fbInfo.colorFormats.push_back(nvrhi::Format::RGBA16_FLOAT);
         fbInfo.colorFormats.push_back(nvrhi::Format::RGBA8_UNORM);
+        fbInfo.colorFormats.push_back(nvrhi::Format::RGBA16_FLOAT);
         fbInfo.depthFormat = nvrhi::Format::D32;
         InitializeForwardResources(device, fbInfo, *state);
     }
@@ -402,7 +407,7 @@ framegraph::DefaultOutputLayout setupForwardColorPass(
         // ═══════════════════════════════════════════════════════
         //  SETUP LAMBDA (Declares resource usage)
         // ═══════════════════════════════════════════════════════
-        [&, width, height, colorInput, normalInput, baseColorInput, drawArgsInput, bindlessConfig, state](FrameGraph& builder, PassHandle passHandle, ForwardColorPassData& data) {
+        [&, width, height, colorInput, normalInput, baseColorInput, ambientInput, drawArgsInput, bindlessConfig, state](FrameGraph& builder, PassHandle passHandle, ForwardColorPassData& data) {
             data.width = width;
             data.height = height;
             data.device = device;
@@ -419,6 +424,7 @@ framegraph::DefaultOutputLayout setupForwardColorPass(
             data.normal = passBuilder.write(normalInput, ResourceState::RenderTarget);
             if (baseColorInput.is_valid())
                 data.baseColor = passBuilder.write(baseColorInput, ResourceState::RenderTarget);
+            data.ambient = passBuilder.write(ambientInput, ResourceState::RenderTarget);
 
             if (drawArgsInput.is_valid()) {
                 data.drawArgsBuffer = passBuilder.read(drawArgsInput, ResourceState::IndirectArgument);
@@ -427,6 +433,7 @@ framegraph::DefaultOutputLayout setupForwardColorPass(
             data.outputs.albedo = data.color;
             data.outputs.normal = data.normal;
             data.outputs.baseColor = data.baseColor;
+            data.outputs.ambient = data.ambient;
             data.outputs.depth = data.depth;
         },
 
@@ -441,6 +448,7 @@ framegraph::DefaultOutputLayout setupForwardColorPass(
             auto* colorRT = fg.GetPhysicalTexture(data.color);
             auto* normalRT = fg.GetPhysicalTexture(data.normal);
             auto* baseColorRT = data.baseColor.is_valid() ? fg.GetPhysicalTexture(data.baseColor) : nullptr;
+            auto* ambientRT = fg.GetPhysicalTexture(data.ambient);
 
             if (!depthRT || !colorRT)
                 return;
@@ -452,6 +460,7 @@ framegraph::DefaultOutputLayout setupForwardColorPass(
                     cmdList->clearTextureFloat(normalRT, nvrhi::AllSubresources, nvrhi::Color(0.0f));
                 if (baseColorRT)
                     cmdList->clearTextureFloat(baseColorRT, nvrhi::AllSubresources, nvrhi::Color(0.0f));
+                cmdList->clearTextureFloat(ambientRT, nvrhi::AllSubresources, nvrhi::Color(0.0f));
             }
 
             // Check if we have geometry to render
@@ -477,6 +486,7 @@ framegraph::DefaultOutputLayout setupForwardColorPass(
                 colorRT,
                 normalRT,
                 baseColorRT,
+                ambientRT,
                 depthRT,
                 data.bindlessConfig,
                 data.materialCache,
@@ -489,6 +499,7 @@ framegraph::DefaultOutputLayout setupForwardColorPass(
     outputs.albedo = passData.color;
     outputs.normal = passData.normal;
     outputs.baseColor = passData.baseColor;
+    outputs.ambient = passData.ambient;
     outputs.depth = passData.depth;
     return outputs;
 }

@@ -62,6 +62,7 @@ DefaultOutputLayout setupDetailPass(
         fbInfo.colorFormats.push_back(nvrhi::Format::RGBA16_FLOAT);
         fbInfo.colorFormats.push_back(nvrhi::Format::RGBA16_FLOAT);
         fbInfo.colorFormats.push_back(nvrhi::Format::RGBA8_UNORM);
+        fbInfo.colorFormats.push_back(nvrhi::Format::RGBA16_FLOAT);
         fbInfo.depthFormat = nvrhi::Format::D32;
         detailManager->CreateGraphicsPipeline(device, fbInfo);
     }
@@ -85,10 +86,12 @@ DefaultOutputLayout setupDetailPass(
             data.outputNormal = passBuilder.readWrite(forwardInputs.normal, ResourceState::RenderTarget);
             if (forwardInputs.baseColor.is_valid())
                 data.baseColor = passBuilder.readWrite(forwardInputs.baseColor, ResourceState::RenderTarget);
+            data.ambient = passBuilder.readWrite(forwardInputs.ambient, ResourceState::RenderTarget);
 
             data.outputs.albedo = data.outputColor;
             data.outputs.normal = data.outputNormal;
             data.outputs.baseColor = data.baseColor;
+            data.outputs.ambient = data.ambient;
             data.outputs.depth = data.depth;
         },
         [](const DetailPassData& data, const FrameGraph& fg, fg::RenderContext* ctx)
@@ -130,6 +133,7 @@ DefaultOutputLayout setupDetailPass(
 
             nvrhi::ITexture* normalTexture = fg.GetPhysicalTexture(data.outputNormal);
             auto* baseColorRT = data.baseColor.is_valid() ? fg.GetPhysicalTexture(data.baseColor) : nullptr;
+            auto* ambientRT = fg.GetPhysicalTexture(data.ambient);
 
             nvrhi::FramebufferDesc fbDesc;
             fbDesc.addColorAttachment(colorTexture);
@@ -137,6 +141,7 @@ DefaultOutputLayout setupDetailPass(
                 fbDesc.addColorAttachment(normalTexture);
             if (baseColorRT)
                 fbDesc.addColorAttachment(baseColorRT);
+            fbDesc.addColorAttachment(ambientRT);
             fbDesc.setDepthAttachment(depthTexture);
 
             nvrhi::FramebufferHandle framebuffer = data.device->GetNVRHIDevice()->createFramebuffer(fbDesc);
@@ -333,6 +338,7 @@ DefaultOutputLayout setupDetailPass(
     outputs.albedo = passData.outputColor;
     outputs.normal = passData.outputNormal;
     outputs.baseColor = passData.baseColor;
+    outputs.ambient = passData.ambient;
     outputs.depth = passData.depth;
     return outputs;
 }

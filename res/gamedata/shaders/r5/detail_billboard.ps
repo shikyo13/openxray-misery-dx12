@@ -36,7 +36,7 @@ float3 ComputeBillboardSSS(float3 worldNormal, float3 lightDir, float heightPara
 f_forward main(p_billboard I)
 {
 	Texture2D atlas_tex = GetBindlessTexture(build_details_index);
-	float4 texel = atlas_tex.Sample(smp_linear, I.tcdh.xy);
+	float4 texel = atlas_tex.Sample(smp_base, I.tcdh.xy);
 
 	clip(texel.a - 96.0 / 255.0);
 
@@ -50,7 +50,7 @@ f_forward main(p_billboard I)
 	if (build_details_pbr_index != 0)
 	{
 		Texture2D pbr_tex = GetBindlessTexture(build_details_pbr_index);
-		float4 pbr = pbr_tex.Sample(smp_linear, I.tcdh.xy);
+		float4 pbr = pbr_tex.Sample(smp_base, I.tcdh.xy);
 		metallic = pbr.r;
 		roughness = pbr.g;
 		ao = pbr.b;

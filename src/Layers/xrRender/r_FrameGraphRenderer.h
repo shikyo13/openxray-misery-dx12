@@ -571,6 +571,8 @@ private:
 
     // Profiler (GPU timing + ImGui overlay)
     xr_unique_ptr<xray::profiler::GPUProfiler> m_gpuProfiler;
+    IWriter* m_graphicsTrace = nullptr;
+    u64 m_graphicsTraceTicks = 0;
     xr_unique_ptr<xray::profiler::StatsOverlay> m_statsOverlay;
 
     // ═══════════════════════════════════════════════════
