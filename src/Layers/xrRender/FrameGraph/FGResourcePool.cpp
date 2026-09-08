@@ -1,5 +1,7 @@
 #include "stdafx.h"
 #include "FGResourcePool.h"
+#include "PassResourceCache.h"
+#include "xrEngine/device.h"
 
 // FrameGraph Resource Pool Implementation
 // Week 4: FrameGraph Integration with ResourceManager
@@ -157,6 +159,26 @@ bool FGResourcePool::AreTexturesCompatible(
 // ═══════════════════════════════════════════════════
 //  POOL MANAGEMENT
 // ═══════════════════════════════════════════════════
+
+void FGResourcePool::RetireUnusedTextures() {
+    auto* textures = m_resourceManager->GetTextureManager();
+    for (auto it = m_texturePool.begin(); it != m_texturePool.end();) {
+        const bool overBudget = textures->GetMemoryUsage() > textures->GetMemoryBudget();
+        if (it->inUse || (!overBudget && m_currentFrame - it->lastUsedFrame < 120)) { ++it; continue; }
+        const auto* meta = textures->GetMetadata(it->handle);
+        if (meta && meta->nvrhiTexture)
+            GetPassResourceCache().ReleaseTextureReferences(meta->nvrhiTexture.Get());
+        if (strstr(Core.Params, "-graphics_trace"))
+            Msg("* [FGResourcePool] retired frame=%u name=%s width=%u height=%u layers=%u bytes=%llu",
+                Device.dwFrame, it->desc.debugName.c_str(), it->desc.width, it->desc.height,
+                it->desc.arraySize, it->desc.CalculateMemorySize());
+        textures->Release(it->handle);
+        --m_stats.texturesActive;
+        m_stats.memoryAllocated -= it->desc.CalculateMemorySize();
+        it = m_texturePool.erase(it);
+    }
+    ++m_currentFrame;
+}
 
 void FGResourcePool::Reset() {
     // Release all pooled textures

@@ -206,6 +206,7 @@ public:
     // Set memory budget (total VRAM for textures)
     void SetMemoryBudget(u64 bytes);
     u64 GetMemoryBudget() const { return m_memoryBudget; }
+    u64 GetMemoryUsage() const { return m_memoryUsed; }
 
     // Request specific number of mips (for LOD)
     void RequestMips(TextureHandle handle, u32 mipCount);
@@ -283,8 +284,10 @@ private:
     //  MEMORY MANAGEMENT
     // ═══════════════════════════════════════════════════
 
-    u64 m_memoryBudget = 2ULL * 1024 * 1024 * 1024;  // 2GB default
+    u64 m_memoryBudget = 2ULL * 1024 * 1024 * 1024;  // Fallback when native budgeting is unavailable.
     u64 m_memoryUsed = 0;
+    bool m_autoMemoryBudget = true;
+    float m_budgetRefreshSeconds = 0.f;
 
     // ═══════════════════════════════════════════════════
     //  STREAMING (Week 2)
@@ -309,6 +312,7 @@ private:
     // Eviction (Week 2)
     bool CheckMemoryBudget(u64 requiredBytes) const;
     bool EnforceMemoryBudget(u64 requiredBytes);
+    void RefreshMemoryBudget();
     bool EvictTextures(u64 bytesNeeded);
     void EvictTextureInternal(TextureHandle handle);
 

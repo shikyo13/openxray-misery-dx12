@@ -223,6 +223,7 @@ void FrameGraph::Compile() {
     {
         ZoneScopedN("Compile::AllocateResources");
         AllocateResources();
+        if (m_resourcePool) m_resourcePool->RetireUnusedTextures();
     }
 
     m_compiled = true;

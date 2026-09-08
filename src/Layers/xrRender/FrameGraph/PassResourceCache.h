@@ -148,6 +148,7 @@ public:
     // ═══════════════════════════════════════════════════════
     void Clear();
     void ClearFramebufferDependent();
+    void ReleaseTextureReferences(nvrhi::ITexture* texture);
 
     // Statistics
     struct Stats {

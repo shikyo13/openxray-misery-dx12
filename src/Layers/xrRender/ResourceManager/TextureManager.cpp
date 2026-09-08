@@ -3,6 +3,8 @@
 #include "DDSLoader.h"
 #include "TextureStreaming.h"
 #include "../RenderContext/RenderDevice.h"
+#include "xrEngine/IRenderBackend.h"
+#include "xrEngine/device.h"
 
 // Modern Texture Manager Implementation
 // Week 1 - Day 1-2: Tasks 1.4, 2.2
@@ -140,6 +142,8 @@ TextureManager::TextureManager(RenderDevice* device)
 
     // Create streaming manager
     m_streamingManager = xr_make_unique<StreamingManager>(device, this);
+
+    RefreshMemoryBudget();
 
     // Msg("! [TextureManager] Created with budget: %llu MB",
     //     m_memoryBudget / (1024 * 1024));
@@ -456,6 +460,7 @@ bool TextureManager::IsResident(TextureHandle handle) const {
 // ═══════════════════════════════════════════════════
 
 void TextureManager::SetMemoryBudget(u64 bytes) {
+    m_autoMemoryBudget = false;
     m_memoryBudget = bytes;
     // Msg("! [TextureManager] Memory budget set to: %llu MB",
     //     m_memoryBudget / (1024 * 1024));
@@ -542,6 +547,26 @@ void TextureManager::Evict(TextureHandle handle) {
 // ═══════════════════════════════════════════════════
 //  MEMORY BUDGET ENFORCEMENT (Week 2 - Day 3)
 // ═══════════════════════════════════════════════════
+
+void TextureManager::RefreshMemoryBudget() {
+    if (!m_autoMemoryBudget) return;
+    auto* backend = m_device->GetBackend();
+    IRenderBackend::VideoMemoryInfo info;
+    if (!backend || !backend->QueryVideoMemoryInfo(info)) return;
+
+    // DXGI usage includes allocations outside this manager (geometry, static
+    // shadow caches, temporal SDKs, heaps). Leave room for those and a margin
+    // for transient work instead of treating all VRAM as texture capacity.
+    const u64 unmanaged = info.usage > m_memoryUsed ? info.usage - m_memoryUsed : 0;
+    const u64 margin = _max(256ULL * 1024 * 1024, info.budget / 10);
+    m_memoryBudget = info.budget - _min(info.budget, unmanaged + margin);
+    if (strstr(Core.Params, "-graphics_trace")) {
+        u64 metadata = 0;
+        for (const auto& texture : m_textures) if (texture.isAlive) metadata += texture.memoryUsed;
+        Msg("* [TextureBudget] frame=%u native_budget=%llu native_usage=%llu managed=%llu metadata=%llu allowance=%llu",
+            Device.dwFrame, info.budget, info.usage, m_memoryUsed, metadata, m_memoryBudget);
+    }
+}
 
 bool TextureManager::CheckMemoryBudget(u64 requiredBytes) const {
     return (m_memoryUsed + requiredBytes) <= m_memoryBudget;
@@ -674,6 +699,11 @@ void TextureManager::EvictTextureInternal(TextureHandle handle) {
 // ═══════════════════════════════════════════════════
 
 void TextureManager::Update(float deltaTime) {
+    m_budgetRefreshSeconds += deltaTime;
+    if (m_budgetRefreshSeconds >= 1.f) {
+        m_budgetRefreshSeconds = 0.f;
+        RefreshMemoryBudget();
+    }
     // Update timers
     for (auto& meta : m_textures) {
         if (!meta.isAlive) continue;

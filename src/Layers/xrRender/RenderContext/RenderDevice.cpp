@@ -106,6 +106,7 @@ bool RenderDevice::InitializeFromBackend(IRenderBackend* backend) {
         void Shutdown() override {} // Don't shutdown the referenced backend
         void WaitForIdle() override { m_ref->WaitForIdle(); }
         DeviceState GetDeviceState() const override { return m_ref->GetDeviceState(); }
+        bool QueryVideoMemoryInfo(VideoMemoryInfo& out) const override { return m_ref->QueryVideoMemoryInfo(out); }
         nvrhi::IDevice* GetDevice() const override { return m_ref->GetDevice(); }
         nvrhi::ICommandList* GetCommandList() const override { return m_ref->GetCommandList(); }
         nvrhi::ITexture* GetBackBuffer() override { return m_ref->GetBackBuffer(); }

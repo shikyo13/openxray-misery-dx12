@@ -47,6 +47,8 @@ public:
 
     // Reset pool (free all transient resources)
     void Reset();
+    // Called after this frame's allocations have marked reused textures in use.
+    void RetireUnusedTextures();
 
     // ═══════════════════════════════════════════════════
     //  STATISTICS

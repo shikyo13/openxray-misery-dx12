@@ -500,6 +500,24 @@ void PassResourceCache::ClearFramebufferDependent() {
     m_bindingSets.clear();
 }
 
+void PassResourceCache::ReleaseTextureReferences(nvrhi::ITexture* texture) {
+    // Command lists retain their own NVRHI references until GPU completion.
+    // Remove only cached objects owning this retired texture; keep pipelines.
+    for (auto it = m_bindingSets.begin(); it != m_bindingSets.end();) {
+        const auto* desc = it->second->getDesc();
+        const bool usesTexture = desc && std::any_of(desc->bindings.begin(), desc->bindings.end(),
+            [texture](const auto& item) { return item.resourceHandle == texture; });
+        if (usesTexture) it = m_bindingSets.erase(it); else ++it;
+    }
+    for (auto it = m_framebuffers.begin(); it != m_framebuffers.end();) {
+        const auto& desc = it->second->getDesc();
+        const bool usesTexture = desc.depthAttachment.texture == texture || desc.shadingRateAttachment.texture == texture ||
+            std::any_of(desc.colorAttachments.begin(), desc.colorAttachments.end(),
+                [texture](const auto& attachment) { return attachment.texture == texture; });
+        if (usesTexture) it = m_framebuffers.erase(it); else ++it;
+    }
+}
+
 void PassResourceCache::ResetStats() {
     m_stats = Stats{};
 }

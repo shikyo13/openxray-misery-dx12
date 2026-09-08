@@ -100,6 +100,12 @@ public:
     };
     virtual bool GetSubmitThreadTimings(SubmitThreadTimings& out) const { return false; }
 
+    struct VideoMemoryInfo {
+        u64 budget = 0;
+        u64 usage = 0;
+    };
+    virtual bool QueryVideoMemoryInfo(VideoMemoryInfo& out) const { return false; }
+
     // ═══════ Capabilities ═══════
     struct Capabilities {
         // Modern features

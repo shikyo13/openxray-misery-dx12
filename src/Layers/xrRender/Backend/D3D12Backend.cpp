@@ -732,6 +732,20 @@ void D3D12Backend::SetMarker(pcstr name) {
     // PIX marker for D3D12
 }
 
+bool D3D12Backend::QueryVideoMemoryInfo(VideoMemoryInfo& out) const {
+    out = {};
+    if (!m_adapter) return false;
+    IDXGIAdapter3* adapter = nullptr;
+    if (FAILED(m_adapter->QueryInterface(IID_PPV_ARGS(&adapter)))) return false;
+    DXGI_QUERY_VIDEO_MEMORY_INFO info{};
+    const HRESULT result = adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info);
+    adapter->Release();
+    if (FAILED(result) || !info.Budget) return false;
+    out.budget = info.Budget;
+    out.usage = info.CurrentUsage;
+    return true;
+}
+
 DeviceState D3D12Backend::GetDeviceState() const {
     if (!m_initialized || !m_d3d12Device)
         return DeviceState::Lost;
