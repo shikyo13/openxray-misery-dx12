@@ -26,7 +26,7 @@ namespace xray::render::framegraph {
 
 namespace xray::render::fg::passes {
 
-void setupDetailCullPass(
+framegraph::VirtualResourceHandle setupDetailCullPass(
     framegraph::FrameGraph& fg,
     fg::RenderDevice* device,
     fg::FGDetailManager* detailManager,

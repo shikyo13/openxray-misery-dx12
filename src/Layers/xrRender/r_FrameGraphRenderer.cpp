@@ -560,7 +560,7 @@ void FrameGraphRenderer::Render() {
             for (const auto& timing : m_gpuProfiler->GetPassTimings()) {
                 const char* name = timing.name.c_str();
                 if (!timing.pending && name && (strstr(name, "SSAO") || strstr(name, "Antialiasing") ||
-                    strstr(name, "Exposure") || strstr(name, "SceneTonemap") || strstr(name, "SkyBackgroundCopy") || strstr(name, "Bloom.")))
+                    strstr(name, "Exposure") || strstr(name, "SceneTonemap") || strstr(name, "SkyBackgroundCopy") || strstr(name, "Bloom.") || strstr(name, "Sun shadow") || strstr(name, "Detail")))
                     m_graphicsTrace->w_printf("gpu,%u,%u,%u,%u,%s,%.6f\n", Device.dwFrame,
                         Device.dwTimeGlobal, ps_r_aa, ps_r_ssao, name, timing.timeMs);
             }
@@ -1278,8 +1278,24 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
         );
     }
 
+    // ═══════════════════════════════════════════════════════
+    //  DETAIL PREPARATION (instances, visibility and shared wind)
+    // ═══════════════════════════════════════════════════════
+    auto detailWind = passes::setupDetailCullPass(
+        *m_framegraph,
+        m_device,
+        m_detailManager.get(),
+        hizOutput.pyramid,
+        hizOutput.width,
+        hizOutput.height,
+        hizOutput.mipLevels,
+        m_hasPrevFrameData ? &m_prevViewProj : nullptr,
+        m_gpuProfiler.get(),
+        &m_blackboard->get_or_add<passes::DetailPassState>()
+    );
+
     m_sunShadowMap = passes::setupSunShadowPass(*m_framegraph, m_device, m_gpuCullingManager.get(),
-        m_materialCache.get(), drawArgsBuffer, m_blackboard->get_or_add<passes::SunShadowPassState>(),
+        m_materialCache.get(), drawArgsBuffer, detailWind, m_detailManager.get(), m_blackboard->get_or_add<passes::SunShadowPassState>(),
         m_geometryCollector.get(), m_blackboard->get_or_add<passes::SkinningPassState>(), m_overlayManager.get());
     m_framegraph->GetRTRegistry().RegisterRT("rt_SunShadow", m_sunShadowMap);
 
@@ -1334,45 +1350,6 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
         &m_blackboard->get_or_add<passes::SkinningPassState>(),
         m_overlayManager.get()
     );
-
-    // ═══════════════════════════════════════════════════════
-    //  DETAIL CULL PASS (Async Compute)
-    // ═══════════════════════════════════════════════════════
-    passes::setupDetailCullPass(
-        *m_framegraph,
-        m_device,
-        m_detailManager.get(),
-        hizOutput.pyramid,
-        hizOutput.width,
-        hizOutput.height,
-        hizOutput.mipLevels,
-        m_hasPrevFrameData ? &m_prevViewProj : nullptr,
-        m_gpuProfiler.get(),
-        &m_blackboard->get_or_add<passes::DetailPassState>()
-    );
-
-    // ═══════════════════════════════════════════════════════
-    //  PERLIN4D NOISE GENERATION (Compute — updates shared noise texture)
-    // ═══════════════════════════════════════════════════════
-    if (m_detailManager && m_detailManager->perlin4dPipeline)
-    {
-        struct Perlin4DGenData { FGDetailManager* dm = nullptr; };
-        m_framegraph->addCallbackPass<Perlin4DGenData>(
-            "Perlin4DGen",
-            [&](framegraph::FrameGraph& builder, framegraph::PassHandle passHandle, Perlin4DGenData& data)
-            {
-                framegraph::RenderPassBuilder passBuilder(builder, passHandle);
-                passBuilder.sideEffects();
-                data.dm = m_detailManager.get();
-            },
-            [](const Perlin4DGenData& data, const framegraph::FrameGraph&, fg::RenderContext* ctx)
-            {
-                auto* cmdList = ctx->GetCommandList();
-                auto* device  = cmdList->getDevice();
-                data.dm->DispatchPerlin4DCompute(cmdList, device, Device.fTimeGlobal);
-            }
-        );
-    }
 
     // ═══════════════════════════════════════════════════════
     //  DETAIL DRAW PASS (Graphics)

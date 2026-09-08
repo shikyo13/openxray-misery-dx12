@@ -65,6 +65,7 @@ cbuffer DetailGlobals : register(b3)
 	float grass_blade_height;
 	uint build_details_index;
 	uint build_details_pbr_index;
+	float4 detail_shadow_range; // camera position, authored-detail shadow distance
 };
 
 // Perlin4D 3D volume — bound directly at t12 (not bindless, since bindless is Texture2D only)
@@ -76,9 +77,15 @@ StructuredBuffer<PulledVertex> pulled_vertices : register(t36);
 StructuredBuffer<InstanceData> all_instances : register(t37);
 StructuredBuffer<GPUSlotData> slot_data : register(t38);
 
-v2p_billboard main(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceID)
+#ifdef DETAIL_SHADOW
+struct DetailVertexOutput { float4 hpos : SV_Position; float3 uvAlpha : TEXCOORD0; };
+#else
+#define DetailVertexOutput v2p_billboard
+#endif
+
+DetailVertexOutput main(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceID)
 {
-	v2p_billboard O;
+	DetailVertexOutput O;
 
 	uint src_idx = visible_indices[instance_id];
 	InstanceData raw = all_instances[src_idx];
@@ -91,7 +98,7 @@ v2p_billboard main(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceI
 
 	if (vertex_id >= mdl.pulledIndexCount)
 	{
-		O = (v2p_billboard)0;
+		O = (DetailVertexOutput)0;
 		O.hpos = asfloat(0x7FC00000);
 		return O;
 	}
@@ -135,6 +142,7 @@ v2p_billboard main(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceI
     // force into bounded angular bending, never unbounded world-space stretch.
     // Rotation preserves each vertex's distance from the root; the base stays fixed.
     float bend_angle = atan(max(fbm_wind_strength * grass_wind_displacement, 0.0)) * height_factor;
+    if ((asuint(mdl.flags) & 1u) != 0) bend_angle = 0.0;
     float3 bend_axis = float3(wind_dir.y, 0.0, -wind_dir.x);
     float bend_sin, bend_cos;
     sincos(bend_angle, bend_sin, bend_cos);
@@ -142,6 +150,14 @@ v2p_billboard main(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceI
         + bend_axis * dot(bend_axis, rotated) * (1.0 - bend_cos);
     world_pos.xyz = raw.pos + bent;
 
+#ifdef DETAIL_SHADOW
+    float threshold = (asuint(mdl.flags) & 1u) != 0 ? 0.5 : 96.0 / 255.0;
+    // Fade alpha coverage over the outer fifth of the selected caster range.
+    float fade = saturate((length(raw.pos - detail_shadow_range.xyz) / detail_shadow_range.w - 0.8) * 5.0);
+    O.uvAlpha = float3(v.u, v.v, lerp(threshold, 1.001, fade));
+    O.hpos = mul(g_detail_VP, world_pos);
+    return O;
+#else
 	float2 uv = float2(v.u, v.v);
 
 	const float slot_size = 2.0;
@@ -189,4 +205,5 @@ v2p_billboard main(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceI
 	O.bladeHash = float(bh & 0xFFFFu) / 65535.0;
 	O.hpos = mul(g_detail_VP, world_pos);
 	return O;
+#endif
 }

@@ -47,6 +47,69 @@ namespace xray::render::fg::passes
 {
 using namespace framegraph;
 
+void UpdateDetailWind(FGDetailManager* wind)
+{
+    if (g_pGamePersistent)
+    {
+        const auto& env = g_pGamePersistent->Environment().CurrentEnv;
+        // Convert authored velocity (m/s, sometimes hundreds in mods) to
+        // bounded bending pressure with a 10 m/s response scale.
+        const float pressure = 1.0f - std::exp(-_max(env.wind_velocity, 0.0f) * 0.1f);
+        const float target = _max(pressure * ps_r3_grass_wind_multiplier, ps_r3_grass_wind_min);
+        const float dt = _max(Device.fTimeDelta, 0.0f);
+        if (!wind->windStateReady) {
+            wind->windSpeed = target;
+            wind->windAngle = env.wind_direction;
+            wind->windStateReady = true;
+        } else {
+            const float blend = 1.0f - std::exp(-_max(ps_r3_grass_wind_lerp_rate, 0.1f) * dt);
+            wind->windSpeed += (target - wind->windSpeed) * blend;
+            wind->windAngle += std::remainder(env.wind_direction - wind->windAngle, PI_MUL_2) * blend;
+        }
+        wind->windDirection.set(_cos(wind->windAngle), _sin(wind->windAngle));
+        // Integrate a continuous, bounded scroll rate. Multiplying absolute
+        // time by a changing wind speed jumps to unrelated noise samples.
+        wind->windNoisePhase = std::fmod(wind->windNoisePhase + dt *
+            (0.25f + 0.75f * clampr(wind->windSpeed, 0.0f, 1.0f)), 200.0f);
+        if (strstr(Core.Params, "-weather_trace") && Device.dwFrame % 120 == 0)
+            Msg("* [GrassWind] frame=%u velocity=%.3f pressure=%.4f phase=%.4f radians=%.4f",
+                Device.dwFrame, env.wind_velocity, wind->windSpeed, wind->windNoisePhase, wind->windAngle);
+    }
+}
+
+FGDetailManager::DetailFrameConstants BuildDetailFrameConstants(FGDetailManager* dm, const Fmatrix& viewProjection)
+{
+    // b3: DetailGlobals
+    float windAngleDeg = rad2deg(dm->windAngle);
+    float windSpeed = dm->windSpeed;
+
+    FGDetailManager::DetailFrameConstants frameConstants;
+    const float quant = 16384.0f;
+    frameConstants.consts.set(1.0f / quant, 1.0f / quant, ps_r__Detail_l_aniso, ps_r__Detail_l_ambient);
+    frameConstants.wave.set(1.0f / 5.0f, 1.0f / 7.0f, 1.0f / 3.0f, Device.fTimeGlobal);
+    frameConstants.dir2D.set(dm->windDirection.x, dm->windDirection.y, 0.0f, 0.0f);
+    frameConstants.dir2D_2.set(-dm->windDirection.y, dm->windDirection.x, 0.0f, 0.0f);
+    frameConstants.viewProj = viewProjection;
+    frameConstants.detail_params.set(
+        float(dm->dtH.x_size()), float(dm->dtH.z_size()),
+        float(dm->dtH.x_offs()), float(dm->dtH.z_offs()));
+    frameConstants.g_wind_direction.set(windAngleDeg, windSpeed, dm->windNoisePhase, 0.0f);
+    frameConstants.grass_wind_displacement = ps_r3_grass_wind_displacement;
+    frameConstants.grass_interaction_displacement = ps_r3_grass_interaction_displacement;
+    frameConstants.interaction_atlas_index = 0;
+    frameConstants.perlin4d_texture_index = dm->perlin4dBindlessIndex;
+    frameConstants.grass_color_tip.set(ps_r3_grass_color_tip.x, ps_r3_grass_color_tip.y, ps_r3_grass_color_tip.z, 0.0f);
+    frameConstants.grass_color_base.set(ps_r3_grass_color_base.x, ps_r3_grass_color_base.y, ps_r3_grass_color_base.z, 0.0f);
+    frameConstants.grass_sss_color.set(ps_r3_grass_sss_color.x, ps_r3_grass_sss_color.y, ps_r3_grass_sss_color.z, ps_r3_grass_sss_intensity);
+    frameConstants.grass_color_variation = ps_r3_grass_color_variation;
+    frameConstants.grass_blade_height = ps_r3_grass_blade_height;
+    frameConstants.buildDetailsIndex = dm->buildDetailsBindlessIndex;
+    frameConstants.buildDetailsPbrIndex = dm->buildDetailsPbrBindlessIndex;
+    frameConstants.shadowRange.set(Device.vCameraPosition.x, Device.vCameraPosition.y,
+        Device.vCameraPosition.z, ps_r_detail_shadow_distance);
+    return frameConstants;
+}
+
 DefaultOutputLayout setupDetailPass(
     FrameGraph& fg,
     fg::RenderDevice* device,
@@ -124,34 +187,6 @@ DefaultOutputLayout setupDetailPass(
             if (!cmdList)
                 return;
 
-            if (g_pGamePersistent)
-            {
-                auto* wind = data.detailManager;
-                const auto& env = g_pGamePersistent->Environment().CurrentEnv;
-                // Convert authored velocity (m/s, sometimes hundreds in mods) to
-                // bounded bending pressure with a 10 m/s response scale.
-                const float pressure = 1.0f - std::exp(-_max(env.wind_velocity, 0.0f) * 0.1f);
-                const float target = _max(pressure * ps_r3_grass_wind_multiplier, ps_r3_grass_wind_min);
-                const float dt = _max(Device.fTimeDelta, 0.0f);
-                if (!wind->windStateReady) {
-                    wind->windSpeed = target;
-                    wind->windAngle = env.wind_direction;
-                    wind->windStateReady = true;
-                } else {
-                    const float blend = 1.0f - std::exp(-_max(ps_r3_grass_wind_lerp_rate, 0.1f) * dt);
-                    wind->windSpeed += (target - wind->windSpeed) * blend;
-                    wind->windAngle += std::remainder(env.wind_direction - wind->windAngle, PI_MUL_2) * blend;
-                }
-                wind->windDirection.set(_cos(wind->windAngle), _sin(wind->windAngle));
-                // Integrate a continuous, bounded scroll rate. Multiplying absolute
-                // time by a changing wind speed jumps to unrelated noise samples.
-                wind->windNoisePhase = std::fmod(wind->windNoisePhase + dt *
-                    (0.25f + 0.75f * clampr(wind->windSpeed, 0.0f, 1.0f)), 200.0f);
-                if (strstr(Core.Params, "-weather_trace") && Device.dwFrame % 120 == 0)
-                    Msg("* [GrassWind] frame=%u velocity=%.3f pressure=%.4f phase=%.4f radians=%.4f",
-                        Device.dwFrame, env.wind_velocity, wind->windSpeed, wind->windNoisePhase, wind->windAngle);
-            }
-
             nvrhi::ITexture* normalTexture = fg.GetPhysicalTexture(data.outputNormal);
             auto* baseColorRT = data.baseColor.is_valid() ? fg.GetPhysicalTexture(data.baseColor) : nullptr;
             auto* ambientRT = fg.GetPhysicalTexture(data.ambient);
@@ -180,32 +215,7 @@ DefaultOutputLayout setupDetailPass(
             auto detailGlobalsCB = cache.GetOrCreateVolatileCB("Detail", "DetailGlobals", sizeof(FGDetailManager::DetailFrameConstants), renderDevice);
             auto dynLightCB = cache.GetOrCreateVolatileCB("Detail", "DynLight", 48, renderDevice);
 
-            // b3: DetailGlobals
-            float windAngleDeg = rad2deg(dm->windAngle);
-            float windSpeed = dm->windSpeed;
-
-            FGDetailManager::DetailFrameConstants frameConstants;
-            const float quant = 16384.0f;
-            frameConstants.consts.set(1.0f / quant, 1.0f / quant, ps_r__Detail_l_aniso, ps_r__Detail_l_ambient);
-            frameConstants.wave.set(1.0f / 5.0f, 1.0f / 7.0f, 1.0f / 3.0f, Device.fTimeGlobal);
-            frameConstants.dir2D.set(dm->windDirection.x, dm->windDirection.y, 0.0f, 0.0f);
-            frameConstants.dir2D_2.set(-dm->windDirection.y, dm->windDirection.x, 0.0f, 0.0f);
-            frameConstants.viewProj = Device.mFullTransform;
-            frameConstants.detail_params.set(
-                float(dm->dtH.x_size()), float(dm->dtH.z_size()),
-                float(dm->dtH.x_offs()), float(dm->dtH.z_offs()));
-            frameConstants.g_wind_direction.set(windAngleDeg, windSpeed, dm->windNoisePhase, 0.0f);
-            frameConstants.grass_wind_displacement = ps_r3_grass_wind_displacement;
-            frameConstants.grass_interaction_displacement = ps_r3_grass_interaction_displacement;
-            frameConstants.interaction_atlas_index = 0;
-            frameConstants.perlin4d_texture_index = dm->perlin4dBindlessIndex;
-            frameConstants.grass_color_tip.set(ps_r3_grass_color_tip.x, ps_r3_grass_color_tip.y, ps_r3_grass_color_tip.z, 0.0f);
-            frameConstants.grass_color_base.set(ps_r3_grass_color_base.x, ps_r3_grass_color_base.y, ps_r3_grass_color_base.z, 0.0f);
-            frameConstants.grass_sss_color.set(ps_r3_grass_sss_color.x, ps_r3_grass_sss_color.y, ps_r3_grass_sss_color.z, ps_r3_grass_sss_intensity);
-            frameConstants.grass_color_variation = ps_r3_grass_color_variation;
-            frameConstants.grass_blade_height = ps_r3_grass_blade_height;
-            frameConstants.buildDetailsIndex = dm->buildDetailsBindlessIndex;
-            frameConstants.buildDetailsPbrIndex = dm->buildDetailsPbrBindlessIndex;
+            const auto frameConstants = BuildDetailFrameConstants(dm, Device.mFullTransform);
             cmdList->writeBuffer(detailGlobalsCB, &frameConstants, sizeof(frameConstants));
 
             u8 dummyLight[48] = {};

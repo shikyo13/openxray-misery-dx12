@@ -2452,6 +2452,7 @@ void FGDetailManager::ProcessStatsReadback(nvrhi::IDevice* device)
 
 void FGDetailManager::BuildDetailModelGPUData()
 {
+    R_ASSERT2(detail_models.size() <= 64, "Detail model IDs must fit the packed six-bit field");
     maxPulledIndexCount = 0;
     for (auto* m : detail_models)
         maxPulledIndexCount = std::max(maxPulledIndexCount, m->number_indices);
@@ -2464,6 +2465,7 @@ void FGDetailManager::BuildDetailModelGPUData()
     {
         CDetail* m = detail_models[i];
         auto& d = cachedModelGPUData[i];
+        modelRootRadii[i] = 0.f;
         d.minScale = m->m_fMinScale;
         d.maxScale = m->m_fMaxScale;
         d.flags = *reinterpret_cast<const float*>(&m->m_Flags.flags);
@@ -2475,6 +2477,7 @@ void FGDetailManager::BuildDetailModelGPUData()
             float umin = FLT_MAX, vmin = FLT_MAX, umax = -FLT_MAX, vmax = -FLT_MAX;
             for (u32 v = 0; v < m->number_vertices; v++)
             {
+                modelRootRadii[i] = std::max(modelRootRadii[i], m->vertices[v].P.magnitude());
                 pxmin = std::min(pxmin, m->vertices[v].P.x);
                 pzmin = std::min(pzmin, m->vertices[v].P.z);
                 pxmax = std::max(pxmax, m->vertices[v].P.x);

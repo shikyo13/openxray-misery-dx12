@@ -26,7 +26,7 @@ struct DetailCullPassData {
     DetailPassState* detailState;
 };
 
-void setupDetailCullPass(
+VirtualResourceHandle setupDetailCullPass(
     FrameGraph& fg,
     fg::RenderDevice* device,
     fg::FGDetailManager* detailManager,
@@ -38,6 +38,15 @@ void setupDetailCullPass(
     xray::profiler::GPUProfiler* gpuProfiler,
     DetailPassState* detailState)
 {
+    if (!detailManager || !detailManager->perlin4dTexture) return {};
+    ResourceDesc noiseDesc;
+    noiseDesc.type = ResourceDesc::Type::Texture3D;
+    noiseDesc.width = noiseDesc.height = noiseDesc.depth = FGDetailManager::PERLIN4D_TEXTURE_SIZE;
+    noiseDesc.format = nvrhi::Format::RGBA16_FLOAT;
+    noiseDesc.isUAV = true;
+    noiseDesc.isTransient = false;
+    auto noise = fg.ImportTexture("DetailWindNoise", detailManager->perlin4dTexture, noiseDesc);
+
     Fmatrix capturedPrevViewProj;
     bool hasPrevViewProj = (prevViewProj != nullptr);
     if (hasPrevViewProj)
@@ -50,7 +59,8 @@ void setupDetailCullPass(
         [&, hiZPyramid, hiZWidth, hiZHeight, hiZMipLevels, capturedPrevViewProj, hasPrevViewProj, gpuProfiler, detailState](
             FrameGraph& builder, PassHandle passHandle, DetailCullPassData& data) {
             RenderPassBuilder passBuilder(builder, passHandle);
-            passBuilder.asyncCompute();
+            // Instance generation and shared wind must finish before shadow and color draws.
+            passBuilder.write(noise, ResourceState::UnorderedAccess);
             passBuilder.sideEffects();
 
             data.device = device;
@@ -112,9 +122,12 @@ void setupDetailCullPass(
                 data.gpuProfiler
             );
 
+            UpdateDetailWind(data.detailManager);
+            data.detailManager->DispatchPerlin4DCompute(cmdList, data.device->GetNVRHIDevice(), Device.fTimeGlobal);
             data.detailManager->ScheduleStatsReadback(cmdList, data.device->GetNVRHIDevice());
         }
     );
+    return noise;
 }
 
 } // namespace xray::render::fg::passes

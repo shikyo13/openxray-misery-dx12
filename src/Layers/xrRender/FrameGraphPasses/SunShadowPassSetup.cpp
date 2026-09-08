@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "SunShadowPassSetup.h"
 #include "SkinningPassSetup.h"
+#include "DetailPassSetup.h"
 #include "PassCommon.h"
 #include "Layers/xrRender/FrameGraph/FrameGraph.h"
 #include "Layers/xrRender/FrameGraph/RenderPassBuilder.h"
@@ -15,6 +16,8 @@
 #include "Layers/xrRender/xrRender_console.h"
 #include "xrEngine/IGame_Persistent.h"
 
+namespace xray::render::fg { extern int ps_r__detail_gpu; }
+
 namespace xray::render::fg::passes {
 namespace {
 struct alignas(16) SunShadowDrawConstants {
@@ -22,6 +25,123 @@ struct alignas(16) SunShadowDrawConstants {
     Fvector4 options; // x: terrain uses an opaque material table
 };
 static_assert(sizeof(SunShadowDrawConstants) == 80);
+
+struct alignas(16) DetailShadowCullConstants {
+    Fvector4 planes[6];
+    u32 slotCount, capacity;
+    float maximumRadius;
+    u32 instanceCapacity;
+    Fvector4 rootRadii[16];
+    Fvector4 cameraRange;
+};
+static_assert(sizeof(DetailShadowCullConstants) == 384);
+
+bool DrawDetailSunShadows(RenderContext* context, RenderDevice* device, FGDetailManager* dm,
+    SunShadowPassState& state, u32 cascade, nvrhi::IFramebuffer* framebuffer)
+{
+    // This path renders MISERY's authored detail meshes. Procedural blades use
+    // different geometry and must not cast the silhouettes of those meshes.
+    if (!ps_r_detail_shadows || ps_r__detail_gpu || !psDeviceFlags.is(rsDrawDetails) || !dm ||
+        !dm->instanceGenPipeline || !dm->slotAABBBuffer || !dm->generatedInstancesBuffer ||
+        !dm->buildDetailsTexture || !dm->pulledIndexBuffer || !dm->maxPulledIndexCount || !dm->slot_count)
+        return false;
+    auto* nv = device->GetNVRHIDevice();
+    auto* command = context->GetCommandList();
+    auto* loader = GEnv.Render->GetShaderLoader();
+    auto& cache = framegraph::GetPassResourceCache();
+    if (!state.detailPipeline) {
+        auto vs = loader->LoadVertexShader("detail_shadow");
+        auto ps = loader->LoadPixelShader("detail_shadow");
+        auto cs = loader->LoadComputeShader("detail_shadow_cull");
+        R_ASSERT2(vs.handle && ps.handle && cs.handle, "Detail sun shadow shader compilation failed");
+        state.detailLayout = cache.GetOrCreateBindingLayoutFromReflection("DetailShadow", *vs.reflection, *ps.reflection, nv);
+        state.detailCullLayout = cache.GetOrCreateBindingLayoutFromReflection("DetailShadowCull", *cs.reflection, nv);
+        nvrhi::GraphicsPipelineDesc desc;
+        desc.VS = vs.handle; desc.PS = ps.handle;
+        desc.bindingLayouts = {state.detailLayout};
+        desc.primType = nvrhi::PrimitiveType::TriangleList;
+        desc.renderState.depthStencilState.depthTestEnable = true;
+        desc.renderState.depthStencilState.depthWriteEnable = true;
+        desc.renderState.depthStencilState.depthFunc = nvrhi::ComparisonFunc::LessOrEqual;
+        desc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::None;
+        desc.renderState.rasterState.depthBias = 64;
+        desc.renderState.rasterState.slopeScaledDepthBias = 1.5f;
+        nvrhi::FramebufferInfoEx fb; fb.depthFormat = nvrhi::Format::D32;
+        state.detailPipeline = cache.GetOrCreatePipeline("DetailShadow", desc, fb, nv);
+        nvrhi::ComputePipelineDesc compute;
+        compute.CS = cs.handle; compute.bindingLayouts = {state.detailCullLayout};
+        state.detailCullPipeline = cache.GetOrCreateComputePipeline("DetailShadowCull", compute, nv);
+        R_ASSERT2(state.detailPipeline && state.detailCullPipeline, "Detail sun shadow pipeline creation failed");
+        state.detailConstants = cache.GetOrCreateVolatileCB("DetailShadow", "DetailGlobals", sizeof(FGDetailManager::DetailFrameConstants), device);
+        state.detailCullConstants = cache.GetOrCreateVolatileCB("DetailShadow", "DetailShadowCull", sizeof(DetailShadowCullConstants), device);
+        nvrhi::BufferDesc args;
+        args.byteSize = 5 * sizeof(u32); args.isDrawIndirectArgs = true;
+        args.canHaveUAVs = true; args.canHaveRawViews = true;
+        args.initialState = nvrhi::ResourceStates::IndirectArgument; args.keepInitialState = true;
+        args.debugName = "DetailShadowDrawArgs";
+        state.detailDrawArgs = nv->createBuffer(args);
+        R_ASSERT(state.detailDrawArgs);
+    }
+    // Detail preparation grows this to the generation capacity before every
+    // regeneration, then shrinks it using the actual complete GPU instance count.
+    if (state.detailCapacity != dm->visibleBufferCapacity) {
+        nvrhi::BufferDesc visible;
+        visible.byteSize = u64(dm->visibleBufferCapacity) * sizeof(u32);
+        visible.structStride = sizeof(u32); visible.canHaveUAVs = true;
+        visible.initialState = nvrhi::ResourceStates::ShaderResource; visible.keepInitialState = true;
+        visible.debugName = "DetailShadowVisible";
+        state.detailVisible = nv->createBuffer(visible);
+        R_ASSERT2(state.detailVisible, "Detail sun shadow visibility allocation failed");
+        state.detailCapacity = dm->visibleBufferCapacity;
+    }
+    DetailShadowCullConstants constants{};
+    R_ASSERT(state.frustum[cascade].p_count == 6);
+    for (u32 p = 0; p < 6; ++p) {
+        const auto& plane = state.frustum[cascade].planes[p];
+        constants.planes[p].set(plane.n.x, plane.n.y, plane.n.z, plane.d);
+    }
+    constants.slotCount = dm->slot_count; constants.capacity = state.detailCapacity;
+    constants.instanceCapacity = dm->generatedInstancesCapacity;
+    constants.cameraRange.set(Device.vCameraPosition.x, Device.vCameraPosition.y,
+        Device.vCameraPosition.z, ps_r_detail_shadow_distance);
+    CopyMemory(constants.rootRadii, dm->modelRootRadii, sizeof(constants.rootRadii));
+    for (float radius : dm->modelRootRadii) constants.maximumRadius = _max(constants.maximumRadius, radius * 4.f);
+    const u32 args[] = {dm->maxPulledIndexCount, 0, 0, 0, 0};
+    command->writeBuffer(state.detailDrawArgs, args, sizeof(args));
+    command->writeBuffer(state.detailCullConstants, &constants, sizeof(constants));
+    const auto* cs = loader->GetCachedReflection("detail_shadow_cull", ".cs");
+    framegraph::BindingSetBuilder cb(*cs, nv, "DetailShadowCull");
+    cb.ConstantBuffer("DetailShadowCull", state.detailCullConstants)
+        .BufferSRV("t_Slots", dm->slotAABBBuffer).BufferSRV("t_Instances", dm->generatedInstancesBuffer)
+        .BufferUAV("u_Visible", state.detailVisible).BufferUAV("u_DrawArgs", state.detailDrawArgs);
+    auto cullBindings = cache.GetOrCreateBindingSet(cb.Build(), state.detailCullLayout, nv);
+    R_ASSERT2(cullBindings, "Detail sun shadow culling bindings failed");
+    nvrhi::ComputeState compute;
+    compute.pipeline = state.detailCullPipeline; compute.bindings = {cullBindings};
+    command->setComputeState(compute);
+    command->dispatch((dm->slot_count + 255) / 256, 1, 1);
+
+    const auto drawConstants = BuildDetailFrameConstants(dm, state.viewProjection[cascade]);
+    command->writeBuffer(state.detailConstants, &drawConstants, sizeof(drawConstants));
+    const auto* vs = loader->GetCachedReflection("detail_shadow", ".vs");
+    const auto* ps = loader->GetCachedReflection("detail_shadow", ".ps");
+    framegraph::BindingSetBuilder db(*vs, *ps, nv, "DetailShadow");
+    db.ConstantBuffer("DetailGlobals", state.detailConstants)
+        .BufferSRV("visible_indices", state.detailVisible).BufferSRV("detail_models", dm->detailModelsBuffer)
+        .BufferSRV("pulled_vertices", dm->pulledVertexBuffer).BufferSRV("all_instances", dm->generatedInstancesBuffer)
+        .Texture("g_Perlin4D", dm->perlin4dTexture)
+        .Texture("t_DetailAtlas", dm->buildDetailsTexture);
+    auto drawBindings = cache.GetOrCreateBindingSet(db.Build(), state.detailLayout, nv);
+    R_ASSERT2(drawBindings, "Detail sun shadow draw bindings failed");
+    nvrhi::GraphicsState draw;
+    draw.pipeline = state.detailPipeline; draw.framebuffer = framebuffer; draw.bindings = {drawBindings};
+    draw.indexBuffer = {dm->pulledIndexBuffer, nvrhi::Format::R16_UINT, 0};
+    draw.indirectParams = state.detailDrawArgs;
+    draw.viewport.addViewportAndScissorRect(nvrhi::Viewport(float(state.resolution), float(state.resolution)));
+    command->setGraphicsState(draw);
+    command->drawIndexedIndirect(0);
+    return true;
+}
 
 void PrepareCascades(SunShadowPassState& state)
 {
@@ -114,6 +234,7 @@ void InitializeShadowPipeline(RenderDevice* device, SunShadowPassState& state)
 framegraph::VirtualResourceHandle setupSunShadowPass(
     framegraph::FrameGraph& graph, RenderDevice* device, GPUCullingManager* geometry,
     MaterialCache* materials, framegraph::VirtualResourceHandle uploadDependency,
+    framegraph::VirtualResourceHandle detailDependency, FGDetailManager* details,
     SunShadowPassState& state, const GeometryCollector* collector, SkinningPassState& skinning,
     decals::OverlayManager* overlays)
 {
@@ -128,11 +249,13 @@ framegraph::VirtualResourceHandle setupSunShadowPass(
         const GeometryCollector* collector;
         SkinningPassState* skinning;
         decals::OverlayManager* overlays;
+        FGDetailManager* details;
     };
     auto& pass = graph.addCallbackPass<PassData>("Sun shadow maps",
         [&](framegraph::FrameGraph& builder, framegraph::PassHandle handle, PassData& data) {
             framegraph::RenderPassBuilder pb(builder, handle);
             if (uploadDependency.is_valid()) pb.read(uploadDependency, framegraph::ResourceState::IndirectArgument);
+            if (detailDependency.is_valid()) pb.read(detailDependency, framegraph::ResourceState::ShaderResource);
             framegraph::ResourceDesc desc;
             desc.type = framegraph::ResourceDesc::Type::Texture2DArray;
             desc.width = desc.height = state.resolution;
@@ -141,6 +264,7 @@ framegraph::VirtualResourceHandle setupSunShadowPass(
             data.texture = pb.createTexture("rt_SunShadow", desc);
             data.device = device; data.geometry = geometry; data.materials = materials; data.state = &state;
             data.collector = collector; data.skinning = &skinning; data.overlays = overlays;
+            data.details = details;
         },
         [](const PassData& data, const framegraph::FrameGraph& graph, RenderContext* context) {
             auto& state = *data.state;
@@ -160,6 +284,7 @@ framegraph::VirtualResourceHandle setupSunShadowPass(
             auto indexBuffer = GetOrCreateDrawIndexBuffer("SunShadow", nvDevice);
             u32 counts[3] = {};
             u32 skinnedCounts[3] = {};
+            bool detailDraws[3] = {};
             for (u32 cascade = 0; cascade < 3; ++cascade) {
                 nvrhi::FramebufferDesc fb;
                 fb.setDepthAttachment(nvrhi::FramebufferAttachment().setTexture(texture).setArraySlice(cascade));
@@ -214,12 +339,15 @@ framegraph::VirtualResourceHandle setupSunShadowPass(
                 drawSet(2, geometry->GetDynamicDrawArgsData(), geometry->GetDynamicObjectData(), geometry->GetDynamicInstanceBuffer(), false);
                 skinnedCounts[cascade] = DrawSkinnedSunShadows(context, data.device, geometry, data.collector,
                     data.overlays, state.viewProjection[cascade], state.frustum[cascade], framebuffer, *data.skinning);
+                detailDraws[cascade] = DrawDetailSunShadows(context, data.device, data.details, state, cascade, framebuffer);
             }
             if (strstr(Core.Params, "-shadow_trace") && Device.dwTimeGlobal >= state.nextTrace) {
                 state.nextTrace = Device.dwTimeGlobal + 1000;
                 Msg("* [SunShadow] frame=%u size=%u ranges=%.1f,%.1f,%.1f casters=%u,%u,%u skinned=%u,%u,%u",
                     Device.dwFrame, state.resolution, state.splits.x, state.splits.y, state.splits.z, counts[0], counts[1], counts[2],
                     skinnedCounts[0], skinnedCounts[1], skinnedCounts[2]);
+                Msg("* [DetailShadow] frame=%u draws=%u,%u,%u capacity=%u mode=%d distance=%.1f",
+                    Device.dwFrame, detailDraws[0], detailDraws[1], detailDraws[2], state.detailCapacity, ps_r__detail_gpu, ps_r_detail_shadow_distance);
                 const auto globals = BuildStaticGlobals();
                 Msg("* [SunShadow] weather=%s sun=%.4f,%.4f,%.4f direction=%.4f,%.4f,%.4f ambient=%.4f,%.4f,%.4f hemi=%.4f,%.4f,%.4f/%.4f",
                     g_pGamePersistent->Environment().GetWeather().c_str(),

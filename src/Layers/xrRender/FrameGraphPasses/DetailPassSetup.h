@@ -5,6 +5,7 @@
 #include "Layers/xrRender/FrameGraph/FGResource.h"
 #include "Layers/xrRender/FrameGraph/IPass.h"
 #include <nvrhi/nvrhi.h>
+#include "Layers/xrRender/FGDetailManager.h"
 
 struct Fmatrix;
 
@@ -28,6 +29,9 @@ namespace xray::render::framegraph {
 }
 
 namespace xray::render::fg::passes {
+
+void UpdateDetailWind(FGDetailManager* wind);
+FGDetailManager::DetailFrameConstants BuildDetailFrameConstants(FGDetailManager* dm, const Fmatrix& viewProjection);
 
 struct DetailPassState {
     bool detailDataUploaded = false;

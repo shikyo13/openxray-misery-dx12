@@ -86,6 +86,7 @@ public:
         float grass_blade_height;
         u32 buildDetailsIndex;
         u32 buildDetailsPbrIndex;
+        Fvector4 shadowRange;
     };
 
     struct DetailCullParams
@@ -180,6 +181,7 @@ public:
     nvrhi::BufferHandle pulledIndexBuffer;
     u32 maxPulledIndexCount = 0;
     xr_vector<DetailModelGPU> cachedModelGPUData;
+    float modelRootRadii[64] = {};
 
     nvrhi::BufferHandle visibleInstancesBuffer[LOD_COUNT];
     nvrhi::BufferHandle drawArgsBuffer[LOD_COUNT];
