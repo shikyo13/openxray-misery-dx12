@@ -169,7 +169,7 @@ GPULightData ClusteredLightManager::BuildGPULightData(const light* L)
         std::memcpy(&texIdxBits, &texIdx, sizeof(float));
         gpu.spotParamsAndType.set(offset, 1.0f, texIdxBits, 0.0f);
 
-        // The same projection defines cookies and depth shadows.
+        // Match the shadow view and XY projection; cookie sampling ignores Z.
         {
             Fvector L_dir, L_up, L_right;
             L_dir.set(L->direction);
@@ -303,6 +303,24 @@ void ClusteredLightManager::Upload(nvrhi::ICommandList* cmdList)
 {
     if (!m_lightDataBuffer || m_numLights == 0)
         return;
+
+    if (strstr(Core.Params, "-light_trace") && Device.dwFrame % 60 == 0) {
+        Fvector probe = Device.vCameraPosition;
+        probe.mad(Device.vCameraDirection, 5.f);
+        for (u32 i = 0; i < m_numLights; ++i) {
+            const auto* source = m_lightSources[i];
+            if (source->flags.type != IRender_Light::SPOT) continue;
+            const auto& gpu = m_lightsCPU[i];
+            u32 cookie; std::memcpy(&cookie, &gpu.spotParamsAndType.z, sizeof(cookie));
+            Fvector projected; gpu.spotVP.transform(projected, probe);
+            Msg("* [SpotLight] frame=%u time=%u index=%u position=%.3f,%.3f,%.3f camera_distance=%.3f direction=%.3f,%.3f,%.3f facing=%.4f range=%.3f rgb=%.3f,%.3f,%.3f cone=%.3f cookie=%u name=%s shadow=%.0f probe=%.3f,%.3f,%.3f",
+                Device.dwFrame, Device.dwTimeGlobal, i, source->position.x, source->position.y, source->position.z,
+                source->position.distance_to(Device.vCameraPosition), source->direction.x, source->direction.y, source->direction.z,
+                source->direction.dotproduct(Device.vCameraDirection), source->range, source->color.r, source->color.g, source->color.b,
+                source->cone, cookie, source->spot_texture_name.empty() ? "" : source->spot_texture_name.c_str(),
+                gpu.spotParamsAndType.w, projected.x, projected.y, projected.z);
+        }
+    }
 
     cmdList->writeBuffer(m_lightDataBuffer, m_lightsCPU.data(),
         m_numLights * sizeof(GPULightData));

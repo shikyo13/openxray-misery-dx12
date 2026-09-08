@@ -96,8 +96,14 @@ void PrepareLocalShadows(LocalShadowPassState& state)
             Fmatrix view, projection, vp;
             view.build_camera_dir(light->position, direction, up);
             const float nearPlane = clampr(light->virtual_size, .01f, light->range * .1f);
+            const float farPlane = light->range + EPS_S;
             projection.build_projection(point ? PI_DIV_2 : light->cone + deg2rad(3.5f),
-                1.f, nearPlane, light->range + EPS_S);
+                1.f, nearPlane, farPlane);
+            // The engine's camera projection uses reversed Z. These maps share
+            // the sun-shadow LESS_EQUAL pipeline, clear depth 1 and comparison
+            // sampler, so use ordinary depth: near -> 0, far -> 1.
+            projection._33 = farPlane / (farPlane - nearPlane);
+            projection._43 = -nearPlane * projection._33;
             vp.mul(projection, view);
             state.matrices.push_back(vp);
             CFrustum frustum; frustum.CreateFromMatrix(vp, FRUSTUM_P_ALL);
