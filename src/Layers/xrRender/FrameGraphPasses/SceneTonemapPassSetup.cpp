@@ -6,11 +6,12 @@
 #include "Layers/xrRender/FrameGraph/ShaderLoader.h"
 #include "Layers/xrRender/RenderContext/RenderContext.h"
 #include "Layers/xrRender/RenderContext/RenderDevice.h"
+#include "Layers/xrRender/xrRender_console.h"
 
 namespace xray::render::fg::passes {
 using namespace framegraph;
 VirtualResourceHandle setupSceneTonemapPass(FrameGraph& graph, fg::RenderDevice* device,
-    VirtualResourceHandle color, VirtualResourceHandle exposure,
+    VirtualResourceHandle color, VirtualResourceHandle exposure, VirtualResourceHandle bloom,
     u32 width, u32 height, SceneTonemapPassState& state)
 {
     auto& cache = GetPassResourceCache();
@@ -25,6 +26,7 @@ VirtualResourceHandle setupSceneTonemapPass(FrameGraph& graph, fg::RenderDevice*
         state.pipeline = cache.GetOrCreateComputePipeline("SceneTonemap", pipeline, nv);
         R_ASSERT2(state.pipeline, "Scene tone mapping pipeline creation failed");
     }
+    state.constants = cache.GetOrCreateVolatileCB("SceneTonemap", "SceneTonemapParams", 16, device);
     ResourceDesc desc;
     desc.debugName = "rt_SceneTonemap";
     desc.width = width;
@@ -34,21 +36,24 @@ VirtualResourceHandle setupSceneTonemapPass(FrameGraph& graph, fg::RenderDevice*
     desc.isUAV = true;
     auto target = graph.CreateTexture(desc.debugName.c_str(), desc);
     struct PassData {
-        VirtualResourceHandle color, exposure, output;
+        VirtualResourceHandle color, exposure, bloom, output;
         SceneTonemapPassState* state;
         fg::RenderDevice* device;
         u32 width, height;
+        Fvector4 constants;
     };
     auto& data = graph.addCallbackPass<PassData>("SceneTonemap",
         [&](FrameGraph& builder, PassHandle pass, PassData& data) {
             RenderPassBuilder pb(builder, pass);
             data.color = pb.read(color);
             data.exposure = pb.read(exposure);
+            if (bloom.is_valid()) data.bloom = pb.read(bloom);
             data.output = pb.write(target, ResourceState::UnorderedAccess);
             data.state = &state;
             data.device = device;
             data.width = width;
             data.height = height;
+            data.constants.set(ps_r_bloom_strength, float(ps_r_bloom_debug), 0.f, 0.f);
         },
         [](const PassData& data, const FrameGraph& graph, fg::RenderContext* ctx) {
             auto* nv = data.device->GetNVRHIDevice();
@@ -56,9 +61,12 @@ VirtualResourceHandle setupSceneTonemapPass(FrameGraph& graph, fg::RenderDevice*
             BindingSetBuilder bindings(*reflection, nv, "SceneTonemap");
             bindings.Texture("t_Color", graph.GetPhysicalTexture(data.color))
                 .Texture("t_Exposure", graph.GetPhysicalTexture(data.exposure))
+                .Texture("t_Bloom", graph.GetPhysicalTexture(data.bloom.is_valid() ? data.bloom : data.color))
+                .ConstantBuffer("SceneTonemapParams", data.state->constants)
                 .TextureUAV("u_Output", graph.GetPhysicalTexture(data.output));
             auto set = GetPassResourceCache().GetOrCreateBindingSet(bindings.Build(), data.state->layout, nv);
             R_ASSERT2(set, "Scene tone mapping binding set creation failed");
+            ctx->GetCommandList()->writeBuffer(data.state->constants, &data.constants, sizeof(data.constants));
             ctx->SetComputePipeline(data.state->pipeline);
             ctx->SetComputeBindingSet(0, set);
             ctx->Dispatch((data.width + 7) / 8, (data.height + 7) / 8, 1);

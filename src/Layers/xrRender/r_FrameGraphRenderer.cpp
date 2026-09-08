@@ -60,6 +60,7 @@
 #include "FrameGraphPasses/AmbientOcclusionPassSetup.h"
 #include "FrameGraphPasses/AntialiasingPassSetup.h"
 #include "FrameGraphPasses/SceneTonemapPassSetup.h"
+#include "FrameGraphPasses/BloomPassSetup.h"
 #include "FrameGraphPasses/ReSTIRGIPassSetup.h"
 #include "FrameGraphPasses/RibbonPassSetup.h"
 #include "FrameGraphPasses/TrailPassSetup.h"
@@ -559,7 +560,7 @@ void FrameGraphRenderer::Render() {
             for (const auto& timing : m_gpuProfiler->GetPassTimings()) {
                 const char* name = timing.name.c_str();
                 if (!timing.pending && name && (strstr(name, "SSAO") || strstr(name, "Antialiasing") ||
-                    strstr(name, "Exposure") || strstr(name, "SceneTonemap") || strstr(name, "SkyBackgroundCopy")))
+                    strstr(name, "Exposure") || strstr(name, "SceneTonemap") || strstr(name, "SkyBackgroundCopy") || strstr(name, "Bloom.")))
                     m_graphicsTrace->w_printf("gpu,%u,%u,%u,%u,%s,%.6f\n", Device.dwFrame,
                         Device.dwTimeGlobal, ps_r_aa, ps_r_ssao, name, timing.timeMs);
             }
@@ -1720,8 +1721,10 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
 
     m_exposureTexture = exposureOutput.exposureTexture;
 
+    auto bloom = passes::setupBloomPass(*m_framegraph, m_device, sceneColor,
+        m_exposureTexture, width, height, m_blackboard->get_or_add<passes::BloomPassState>());
     sceneColor = passes::setupSceneTonemapPass(*m_framegraph, m_device, sceneColor,
-        m_exposureTexture, width, height, m_blackboard->get_or_add<passes::SceneTonemapPassState>());
+        m_exposureTexture, bloom, width, height, m_blackboard->get_or_add<passes::SceneTonemapPassState>());
     sceneColor = passes::setupAntialiasingPass(*m_framegraph, m_device, sceneColor,
         width, height, m_blackboard->get_or_add<passes::AntialiasingPassState>());
 
