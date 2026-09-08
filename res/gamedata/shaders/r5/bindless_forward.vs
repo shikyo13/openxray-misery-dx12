@@ -71,8 +71,10 @@ struct InstanceData
     float4x4 world;     // World transform (64 bytes)
     uint materialID;    // Bindless material ID
     uint flags;         // Instance flags
-    float objectHemi, pad1; // Negative for static geometry; otherwise object lighting.
+    float hemiScale, hemiBias;
 };
+
+static const uint GPU_INSTANCE_TREE_HEMI = 0x8;
 
 StructuredBuffer<InstanceData> g_InstanceData : register(t14);
 StructuredBuffer<uint> g_CompactBatchIndices : register(t15);
@@ -120,8 +122,9 @@ VS_OUTPUT main(VS_INPUT input)
 #ifndef WATER_TEMPORAL
     float hemi = input.normal.a;
 #ifndef BINDLESS_TERRAIN
-    hemi = (g_Materials[materialID].flags & MAT_FLAG_VERTEX_HEMI) ? hemi : 1.0;
-    if (instanceData.objectHemi >= 0) hemi = instanceData.objectHemi;
+    bool vertexHemi = (instanceData.flags & GPU_INSTANCE_TREE_HEMI) ||
+        (g_Materials[materialID].flags & MAT_FLAG_VERTEX_HEMI);
+    hemi = (vertexHemi ? hemi : 1.0) * instanceData.hemiScale + instanceData.hemiBias;
 #endif
     output.hemisphere = float3(input.texcoord1, hemi);
 #endif

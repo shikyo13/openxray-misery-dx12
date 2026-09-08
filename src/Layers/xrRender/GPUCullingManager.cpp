@@ -11,6 +11,7 @@
 #include "Layers/xrRender/xrRender_console.h"
 #include "Layers/xrRender/FrameGraphPasses/ParticlePassSetup.h"
 #include "Layers/xrRender/FBasicVisual.h"
+#include "Layers/xrRender/FTreeVisual.h"
 #include "Layers/xrRender/Bindless/VertexConverter.h"
 #include "Layers/xrRender/SkeletonCustom.h"  // For CKinematics bone access
 #include "Layers/xrRender/FSkinned.h"
@@ -1875,8 +1876,17 @@ void GPUCullingManager::UploadSceneObjects(fg::RenderContext* ctx, const Geometr
         inst.world = batch.worldMatrix;
         inst.materialID = batch.bindlessMaterialID;
         inst.flags = obj.flags;
-        inst.objectHemi = batch.isStatic ? -1.0f : GetObjectHemi(batch.renderable);
-        inst.pad1 = 0.0f;
+        const float objectHemi = batch.isStatic ? -1.0f : GetObjectHemi(batch.renderable);
+        inst.hemiScale = objectHemi >= 0.0f ? 0.0f : 1.0f;
+        inst.hemiBias = objectHemi >= 0.0f ? objectHemi : 0.0f;
+        if (batch.visual && (batch.visual->getType() == MT_TREE_ST || batch.visual->getType() == MT_TREE_PM)) {
+            const auto* tree = static_cast<const FTreeVisual*>(batch.visual);
+            // Match the deferred tree shader's scale/bias correction after OGF_TREEDEF2 loading.
+            const float correction = ps_r__Tree_SBC * 1.3333f;
+            inst.flags |= GPU_INSTANCE_TREE_HEMI;
+            inst.hemiScale = tree->GetHemiScale() * correction;
+            inst.hemiBias = tree->GetHemiBias() * correction;
+        }
         instanceData.push_back(inst);
     };
 
@@ -1928,8 +1938,8 @@ void GPUCullingManager::UploadSceneObjects(fg::RenderContext* ctx, const Geometr
             inst.world = batch.worldMatrix;
             inst.materialID = batch.terrainMaterialID;  // Terrain material ID
             inst.flags = GPU_OBJECT_OPAQUE;  // Terrain is always opaque
-            inst.objectHemi = -1.0f;
-            inst.pad1 = 0.0f;
+            inst.hemiScale = 1.0f;
+            inst.hemiBias = 0.0f;
             m_terrainInstanceData.push_back(inst);
             continue;
         }

@@ -118,11 +118,14 @@ struct MeshAllocation {
     MeshAllocation() : vertexOffset(0), indexOffset(0), vertexCount(0), indexCount(0), valid(false) {}
 };
 
+// Instance flags retain the object flags in bits 0-2.
+constexpr u32 GPU_INSTANCE_TREE_HEMI = 0x8;
+
 struct GPUInstanceData {
     Fmatrix world;          // World transform (64 bytes)
     u32 materialID;         // Bindless material ID
     u32 flags;              // Instance flags
-    float objectHemi, pad1; // Negative for static geometry; otherwise object lighting.
+    float hemiScale, hemiBias; // Transform vertex hemisphere; dynamic objects use scale 0.
 };
 static_assert(sizeof(GPUInstanceData) == 80, "GPUInstanceData must be 80 bytes for GPU alignment");
 

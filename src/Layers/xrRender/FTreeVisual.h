@@ -21,6 +21,8 @@ protected:
     _5color c_bias;
 public:
     Fmatrix xform;
+    float GetHemiScale() const { return c_scale.hemi; }
+    float GetHemiBias() const { return c_bias.hemi; }
 
 public:
     virtual void Load(LPCSTR N, IReader* data, u32 dwFlags);
