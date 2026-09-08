@@ -352,8 +352,8 @@ TextureHandle TextureManager::CreateTexture(
 
         // Calculate memory
         meta.memoryUsed = desc.CalculateMemorySize();
+        m_memoryUsed += meta.memoryUsed;
         m_stats.texturesResident++;
-        m_stats.totalMemoryUsed += meta.memoryUsed;
 
         // Msg("~ [TextureManager] Created runtime texture '%s': %ux%ux%u, %.2f MB",
         //     desc.debugName.c_str(),
@@ -971,6 +971,16 @@ TextureManager::Statistics TextureManager::GetStatistics() const {
 
 void TextureManager::PrintStatistics() const {
     auto stats = GetStatistics();
+
+    if (strstr(Core.Params, "-graphics_trace")) {
+        u64 residentBytes = 0;
+        for (const auto& meta : m_textures) {
+            if (meta.isAlive)
+                residentBytes += meta.memoryUsed;
+        }
+        Msg("! [TextureManager] Accounting: tracked=%llu metadata=%llu match=%d",
+            m_memoryUsed, residentBytes, m_memoryUsed == residentBytes);
+    }
 
     Msg("! [TextureManager] Statistics:");
     Msg("!   Memory: %llu / %llu MB (%.1f%%)",
