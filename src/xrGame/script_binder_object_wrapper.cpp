@@ -11,6 +11,11 @@
 #include "script_game_object.h"
 #include "xrServer_Objects_ALife.h"
 
+namespace
+{
+    char netRelcaseDefaultKey;
+}
+
 CScriptBinderObjectWrapper::CScriptBinderObjectWrapper(CScriptGameObject* object) : CScriptBinderObject(object) {}
 CScriptBinderObjectWrapper::~CScriptBinderObjectWrapper() {}
 void CScriptBinderObjectWrapper::reinit() { luabind::call_member<void>(this, "reinit"); }
@@ -89,9 +94,48 @@ bool CScriptBinderObjectWrapper::net_SaveRelevant_static(CScriptBinderObject* sc
     return (script_binder_object->CScriptBinderObject::net_SaveRelevant());
 }
 
+void CScriptBinderObjectWrapper::register_net_Relcase_default(lua_State* luaState)
+{
+    // Keep the exact registered fallback alive in this Lua state's registry.
+    // A later script override must never be mistaken for the native default.
+    lua_pushlightuserdata(luaState, &netRelcaseDefaultKey);
+    lua_getglobal(luaState, "object_binder");
+    lua_getfield(luaState, -1, "net_Relcase");
+    R_ASSERT(lua_isfunction(luaState, -1));
+    lua_remove(luaState, -2);
+    lua_rawset(luaState, LUA_REGISTRYINDEX);
+}
+
 void CScriptBinderObjectWrapper::net_Relcase(CScriptGameObject* object)
 {
-    luabind::call_member<void>(this, "net_Relcase", object);
+    const auto& self = luabind::detail::wrap_access::ref(*this);
+    lua_State* luaState = self.state();
+    self.get(luaState);
+    R_ASSERT(!lua_isnil(luaState, -1));
+    // Use luabind's normal selection each time: class, instance and runtime
+    // overrides retain their existing dispatch and error behavior.
+    luabind::detail::do_call_member_selection(luaState, "net_Relcase");
+    if (lua_isnil(luaState, -1))
+    {
+        lua_pop(luaState, 1);
+        throw luabind::unresolved_name("Attempt to call nonexistent function", "net_Relcase");
+    }
+    lua_pushlightuserdata(luaState, &netRelcaseDefaultKey);
+    lua_rawget(luaState, LUA_REGISTRYINDEX);
+    const bool nativeDefault = lua_rawequal(luaState, -1, -2) != 0;
+    lua_pop(luaState, 1);
+    if (nativeDefault)
+    {
+        lua_pop(luaState, 1);
+        // Execute the original native callback without a Lua round trip and
+        // repeated conversion of the same removed object for every observer.
+        CScriptBinderObject::net_Relcase(object);
+    }
+    else
+    {
+        self.get(luaState);
+        luabind::detail::call_member_impl<void>(luaState, std::true_type{}, luabind::meta::index_list<1>{}, object);
+    }
 }
 
 void CScriptBinderObjectWrapper::net_Relcase_static(

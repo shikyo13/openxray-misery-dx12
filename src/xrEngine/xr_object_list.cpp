@@ -143,6 +143,8 @@ void CObjectList::SingleUpdate(IGameObject* O)
 
     // Msg ("[%d][0x%08x]IAmNotACrowAnyMore (CObjectList::SingleUpdate)", Device.dwFrame, dynamic_cast<void*>(O));
 
+    const bool traceFrame = strstr(Core.Params, "-frame_trace") != nullptr;
+    const u64 updateStart = traceFrame ? CPU::QPC() : 0;
     if (xray::memstats::ObjectClassProfiling())
     {
         xray::memstats::ScopedNamed _memCls(xray::memstats::Table::ObjectClass, O->cNameSect().c_str());
@@ -150,6 +152,12 @@ void CObjectList::SingleUpdate(IGameObject* O)
     }
     else
         O->UpdateCL();
+    if (traceFrame) {
+        const double elapsedMs = double(CPU::QPC() - updateStart) * 1000.0 / CPU::qpc_freq;
+        if (elapsedMs >= 8.0)
+            Msg("* [ObjectTrace] frame=%u time=%u id=%u section=%s name=%s duration_ms=%.3f",
+                Device.dwFrame, Device.dwTimeGlobal, O->ID(), O->cNameSect_str(), O->cName().c_str(), elapsedMs);
+    }
 
     VERIFY3(O->GetDbgUpdateFrame() == Device.dwFrame, "Broken sequence of calls to 'UpdateCL'", O->cName().c_str());
 
@@ -230,6 +238,18 @@ void CObjectList::clear_crow_vec(Objects& o)
 void CObjectList::Update(bool bForce)
 {
     ZoneScoped;
+    const bool traceFrame = strstr(Core.Params, "-frame_trace") != nullptr;
+    u64 traceStart = traceFrame ? CPU::QPC() : 0;
+    const auto traceStep = [&](const char* name) {
+        if (!traceFrame) return;
+        const u64 end = CPU::QPC();
+        const double elapsedMs = double(end - traceStart) * 1000.0 / CPU::qpc_freq;
+        if (elapsedMs >= 8.0)
+            Msg("* [ObjectListTrace] frame=%u time=%u stage=%s active=%u sleeping=%u destroying=%u updated=%u registered=%u duration_ms=%.3f",
+                Device.dwFrame, Device.dwTimeGlobal, name, u32(objects_active.size()), u32(objects_sleeping.size()),
+                u32(destroy_queue.size()), stats.Updated, u32(m_relcase_callbacks.size()), elapsedMs);
+        traceStart = end;
+    };
 
     // Phase 1.5: Clear grass interaction collector for new frame
     g_GrassInteractionCollector.BeginFrame();
@@ -317,6 +337,7 @@ void CObjectList::Update(bool bForce)
         }
     }
 
+    traceStep("updates");
     // Destroy
     if (!destroy_queue.empty())
     {
@@ -328,12 +349,15 @@ void CObjectList::Update(bool bForce)
             {
                 (*oit)->net_Relcase(destroy_queue[it]);
             }
+        traceStep("release_active");
         for (Objects::iterator oit = objects_sleeping.begin(); oit != objects_sleeping.end(); ++oit)
             for (int it = destroy_queue.size() - 1; it >= 0; it--)
                 (*oit)->net_Relcase(destroy_queue[it]);
+        traceStep("release_sleeping");
 
         for (int it = destroy_queue.size() - 1; it >= 0; it--)
             g_pGameLevel->Sound->object_relcase(destroy_queue[it]);
+        traceStep("release_sound");
 
         RELCASE_CALLBACK_VEC::iterator it = m_relcase_callbacks.begin();
         const RELCASE_CALLBACK_VEC::iterator ite = m_relcase_callbacks.end();
@@ -347,6 +371,7 @@ void CObjectList::Update(bool bForce)
             }
         }
 
+        traceStep("release_registered");
         // Destroy
         for (int it = destroy_queue.size() - 1; it >= 0; it--)
         {
@@ -357,10 +382,19 @@ void CObjectList::Update(bool bForce)
                 Msg("Destroying object[%x][%x] [%d][%s] frame[%d]", dynamic_cast<void*>(O), O, O->ID(), O->cName().c_str(),
                     Device.dwFrame);
 #endif // DEBUG
+            const u64 destroyStart = traceFrame ? CPU::QPC() : 0;
+            const shared_str destroyName = traceFrame ? O->cName() : shared_str();
             O->net_Destroy();
             Destroy(O);
+            if (traceFrame) {
+                const double elapsedMs = double(CPU::QPC() - destroyStart) * 1000.0 / CPU::qpc_freq;
+                if (elapsedMs >= 8.0)
+                    Msg("* [ObjectDestroyTrace] frame=%u time=%u name=%s duration_ms=%.3f",
+                        Device.dwFrame, Device.dwTimeGlobal, destroyName.c_str(), elapsedMs);
+            }
         }
         destroy_queue.clear();
+        traceStep("destroy");
     }
 }
 

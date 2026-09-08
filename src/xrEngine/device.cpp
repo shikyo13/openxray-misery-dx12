@@ -304,10 +304,14 @@ void CRenderDevice::ProcessFrame()
         xray::memstats::FrameBegin();
 
         const u64 frameStartNs = SDL_GetTicksNS();
+        const bool traceFrame = strstr(Core.Params, "-frame_trace") != nullptr;
+        u64 moveEndNs = 0, cameraEndNs = 0, renderEndNs = 0, workersEndNs = 0;
 
         FrameMove();
+        if (traceFrame) moveEndNs = SDL_GetTicksNS();
 
         OnCameraUpdated();
+        if (traceFrame) cameraEndNs = SDL_GetTicksNS();
 
         const auto& processSeqParallel = TaskScheduler->AddTask([this]
         {
@@ -319,8 +323,10 @@ void CRenderDevice::ProcessFrame()
         });
 
         DoRender();
+        if (traceFrame) renderEndNs = SDL_GetTicksNS();
 
         TaskScheduler->Wait(processSeqParallel);
+        if (traceFrame) workersEndNs = SDL_GetTicksNS();
 
         int fpsCap = ps_fps_limit;
         if (GEnv.isDedicatedServer)
@@ -342,6 +348,15 @@ void CRenderDevice::ProcessFrame()
 
         const bool recordAlloc = (g_pGameLevel != nullptr) && (dwPrecacheFrame == 0);
         xray::memstats::FrameEnd(recordAlloc);
+        if (traceFrame) {
+            const u64 endNs = SDL_GetTicksNS();
+            if (endNs - frameStartNs >= 24'000'000ull)
+                Msg("* [FrameTrace] frame=%u time=%u total_ms=%.3f move_ms=%.3f camera_ms=%.3f render_ms=%.3f workers_ms=%.3f pacing_ms=%.3f precache=%u paused=%u",
+                    dwFrame, dwTimeGlobal, double(endNs - frameStartNs) / 1.e6,
+                    double(moveEndNs - frameStartNs) / 1.e6, double(cameraEndNs - moveEndNs) / 1.e6,
+                    double(renderEndNs - cameraEndNs) / 1.e6, double(workersEndNs - renderEndNs) / 1.e6,
+                    double(endNs - workersEndNs) / 1.e6, dwPrecacheFrame, Paused() ? 1u : 0u);
+        }
     } // ZoneScoped ends here, ProcessFrame timing captured
 
     xray::profiler::FrameEnd();
