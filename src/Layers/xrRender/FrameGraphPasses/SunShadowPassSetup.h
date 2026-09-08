@@ -21,6 +21,10 @@ struct ShadowMapPassState {
     nvrhi::BindingLayoutHandle detailLayout, detailCullLayout;
     nvrhi::BufferHandle detailConstants, detailCullConstants, detailVisible, detailDrawArgs;
     u32 detailCapacity = 0;
+    // Mode 2 compares original/optimized GPU caster counts; never used in the
+    // normal path. Read only after the captured command list was submitted.
+    nvrhi::BufferHandle detailValidation;
+    u32 detailValidationFrame = 0, detailValidationCount = 0, detailValidationNext = 0;
 };
 struct SunShadowPassState : ShadowMapPassState {
     Fmatrix viewProjection[3];

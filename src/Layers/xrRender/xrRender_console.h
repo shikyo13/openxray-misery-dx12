@@ -48,6 +48,7 @@ extern ECORE_API int ps_r_local_shadow_faces;
 extern ECORE_API int ps_r_sun_shadows;
 extern ECORE_API int ps_r_sun_camera_only;
 extern ECORE_API int ps_r_detail_shadows;
+extern ECORE_API int ps_r_detail_shadow_coarse;
 extern ECORE_API float ps_r_detail_shadow_distance;
 extern ECORE_API u32 ps_r_sun_quality; //	=	0;
 extern ECORE_API u32 ps_r_water_reflection; //	=	0;

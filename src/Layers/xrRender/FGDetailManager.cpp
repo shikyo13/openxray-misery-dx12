@@ -39,6 +39,9 @@ extern int ps_r__detail_gpu;
 extern float ps_current_detail_height;
 extern float ps_current_detail_density;
 
+static constexpr float DETAIL_SLOT_MIN_Y = -50.f;
+static constexpr float DETAIL_SLOT_MAX_Y = 100.f;
+
 static int magic4x4[4][4] = {{0, 14, 3, 13}, {11, 5, 8, 6}, {12, 2, 15, 1}, {7, 9, 4, 10}};
 
 static void bwdithermap(int levels, int magic[16][16])
@@ -192,6 +195,7 @@ void FGDetailManager::Unload()
         FS.r_close(dtFS);
         dtFS = nullptr;
     }
+    generatedMaximumRadius = -1.f;
 }
 
 bool FGDetailManager::BakeHeightmap()
@@ -507,6 +511,23 @@ bool FGDetailManager::LoadHeightmapTexture(nvrhi::IDevice* device)
         Msg("! [FGDetailManager] Heightmap dimension mismatch: expected %ux%u, got %ux%u",
             heightmapWidth, heightmapHeight, ddsData.desc.width, ddsData.desc.height);
         return false;
+    }
+
+    // Root heights come from this texture, including neighboring texels reached
+    // by XZ jitter. Account for any terrain outside the coarse slot Y bounds
+    // before tightening shadow rejection; authored slot heights alone cannot.
+    heightmapVerticalPadding = 0.f;
+    const auto& rootHeights = ddsData.mipLevels[0];
+    for (u32 y = 0; y < heightmapHeight && heightmapVerticalPadding != FLT_MAX; ++y) {
+        const auto* row = reinterpret_cast<const float*>(
+            static_cast<const u8*>(rootHeights.data) + y * rootHeights.rowPitch);
+        for (u32 x = 0; x < heightmapWidth; ++x) {
+            const float height = row[x];
+            if (!std::isfinite(height)) { heightmapVerticalPadding = FLT_MAX; break; }
+            if (height < HEIGHTMAP_NO_TERRAIN * .5f) continue;
+            heightmapVerticalPadding = _max(heightmapVerticalPadding,
+                _max(DETAIL_SLOT_MIN_Y - height, height - DETAIL_SLOT_MAX_Y));
+        }
     }
 
     nvrhi::TextureDesc texDesc;
@@ -1682,8 +1703,8 @@ void FGDetailManager::ComputeSlotAABBs()
             float world_z = sz * DETAIL_SLOT_SIZE;
 
             SlotAABB& aabb = slot_aabbs[slot_idx];
-            aabb.aabb_min = Fvector3(world_x, -50.0f, world_z);
-            aabb.aabb_max = Fvector3(world_x + DETAIL_SLOT_SIZE, 100.0f, world_z + DETAIL_SLOT_SIZE);
+            aabb.aabb_min = Fvector3(world_x, DETAIL_SLOT_MIN_Y, world_z);
+            aabb.aabb_max = Fvector3(world_x + DETAIL_SLOT_SIZE, DETAIL_SLOT_MAX_Y, world_z + DETAIL_SLOT_SIZE);
             aabb.instance_base = 0;
             aabb.instance_count = 0;
             aabb.slot_x = sx;
@@ -2653,6 +2674,19 @@ void FGDetailManager::RegenerateAllInstances(nvrhi::ICommandList* cmdList, nvrhi
     cmdList->setBufferState(perSlotPrefixBuffer, nvrhi::ResourceStates::ShaderResource);
 
     dispatchInstanceGen(1, "Details.Regen.Scatter");
+
+    // Track the scale actually used for this instance generation, rather than
+    // a console value that may change before the next regeneration. Packing
+    // clamps scale to [0,4] and rounds down; wind only rotates each root offset.
+    // Include the XZ root jitter for tests against the unjittered slot bounds.
+    generatedMaximumRadius = 0.f;
+    for (u32 model = 0; model < _min(u32(cachedModelGPUData.size()), 64u); ++model) {
+        const float scale = clampr(cachedModelGPUData[model].maxScale * ps_current_detail_height, 0.f, 4.f);
+        generatedMaximumRadius = _max(generatedMaximumRadius, modelRootRadii[model] * scale);
+    }
+    generatedMaximumRadius += std::sqrt(2.f) * ps_current_detail_density / 1.7f + heightmapVerticalPadding;
+    Msg("* [DetailBounds] generated_maximum_radius=%.4f height=%.4f slot_height_padding=%.4f",
+        generatedMaximumRadius, ps_current_detail_height, heightmapVerticalPadding);
 
     cmdList->setBufferState(generatedInstancesBuffer, nvrhi::ResourceStates::ShaderResource);
     cmdList->setBufferState(slotAABBBuffer, nvrhi::ResourceStates::ShaderResource);

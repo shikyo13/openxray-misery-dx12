@@ -38,6 +38,76 @@ struct alignas(16) DetailShadowCullConstants {
 };
 static_assert(sizeof(DetailShadowCullConstants) == 416);
 
+bool ConfigureDetailShadowWindow(DetailShadowCullConstants& constants, const FGDetailManager& dm)
+{
+    float minX = constants.cameraRange.x - constants.cameraRange.w;
+    float maxX = constants.cameraRange.x + constants.cameraRange.w;
+    float minZ = constants.cameraRange.z - constants.cameraRange.w;
+    float maxZ = constants.cameraRange.z + constants.cameraRange.w;
+    if (constants.lightRange.w > 0.f) {
+        const float reach = constants.lightRange.w + constants.maximumRadius;
+        minX = _max(minX, constants.lightRange.x - reach); maxX = _min(maxX, constants.lightRange.x + reach);
+        minZ = _max(minZ, constants.lightRange.z - reach); maxZ = _min(maxZ, constants.lightRange.z + reach);
+    }
+    const int beginX = _max(0, int(std::floor(minX / DETAIL_SLOT_SIZE)) + dm.dtH.x_offs());
+    const int beginZ = _max(0, int(std::floor(minZ / DETAIL_SLOT_SIZE)) + dm.dtH.z_offs());
+    const int endX = _min(int(dm.dtH.x_size()) - 1, int(std::floor(maxX / DETAIL_SLOT_SIZE)) + dm.dtH.x_offs());
+    const int endZ = _min(int(dm.dtH.z_size()) - 1, int(std::floor(maxZ / DETAIL_SLOT_SIZE)) + dm.dtH.z_offs());
+    if (minX > maxX || minZ > maxZ || beginX > endX || beginZ > endZ) return false;
+    constants.gridStartX = beginX; constants.gridStartZ = beginZ;
+    constants.gridWidth = endX - beginX + 1; constants.gridStride = dm.dtH.x_size();
+    constants.slotCount = constants.gridWidth * (endZ - beginZ + 1);
+    return true;
+}
+
+// A conservative CPU counterpart of detail_shadow_cull's slot tests. The CPU
+// instance counts are stale after GPU generation, so use the authored model IDs
+// and density palettes only to prove that a slot cannot generate any instances.
+bool DetailShadowWindowMayContainCasters(const FGDetailManager& dm,
+    const DetailShadowCullConstants& constants, const CFrustum& frustum)
+{
+    if (!ps_r_detail_shadow_coarse || dm.slotDataCPU.size() != dm.slot_count ||
+        dm.slot_aabbs.size() != dm.slot_count) return true;
+    constexpr float margin = .05f; // Keep borderline CPU/GPU float results.
+    const Fvector camera{constants.cameraRange.x, constants.cameraRange.y, constants.cameraRange.z};
+    const Fvector light{constants.lightRange.x, constants.lightRange.y, constants.lightRange.z};
+    const auto distanceSquared = [](const Fvector& point, const FGDetailManager::SlotAABB& slot) {
+        Fvector closest{clampr(point.x, slot.aabb_min.x, slot.aabb_max.x),
+            clampr(point.y, slot.aabb_min.y, slot.aabb_max.y),
+            clampr(point.z, slot.aabb_min.z, slot.aabb_max.z)};
+        return closest.distance_to_sqr(point);
+    };
+    const float cameraReach = constants.cameraRange.w + margin;
+    const float lightReach = constants.lightRange.w + constants.maximumRadius + margin;
+    const int beginX = constants.gridStartX, beginZ = constants.gridStartZ;
+    const int endX = beginX + constants.gridWidth - 1;
+    const int endZ = beginZ + constants.slotCount / constants.gridWidth - 1;
+    for (int z = beginZ; z <= endZ; ++z) for (int x = beginX; x <= endX; ++x) {
+        const u32 index = u32(z) * dm.dtH.x_size() + u32(x);
+        const auto& data = dm.slotDataCPU[index];
+        bool possible = false;
+        for (u32 layer = 0; layer < 4; ++layer) {
+            const u32 model = (data.packed_ids >> (layer * 8)) & 255u;
+            const u32 palettes = layer < 2 ? data.packed_palette_01 : data.packed_palette_23;
+            const u32 palette = (palettes >> ((layer & 1u) * 16)) & 65535u;
+            if (model != 63 && model < dm.detail_models.size() && palette) { possible = true; break; }
+        }
+        if (!possible) continue;
+        const auto& slot = dm.slot_aabbs[index];
+        if (distanceSquared(camera, slot) > cameraReach * cameraReach) continue;
+        if (constants.lightRange.w > 0.f && distanceSquared(light, slot) > lightReach * lightReach) continue;
+        for (u32 p = 0; p < frustum.p_count; ++p) {
+            const auto& plane = frustum.planes[p];
+            const Fvector corner{plane.n.x < 0.f ? slot.aabb_max.x : slot.aabb_min.x,
+                plane.n.y < 0.f ? slot.aabb_max.y : slot.aabb_min.y,
+                plane.n.z < 0.f ? slot.aabb_max.z : slot.aabb_min.z};
+            if (plane.classify(corner) > constants.maximumRadius + margin) { possible = false; break; }
+        }
+        if (possible) return true;
+    }
+    return false;
+}
+
 bool DrawDetailShadowMapImpl(RenderContext* context, RenderDevice* device, FGDetailManager* dm,
     ShadowMapPassState& state, const Fmatrix& viewProjection, const CFrustum& frustum, nvrhi::IFramebuffer* framebuffer, const Fvector4* lightSphere)
 {
@@ -49,6 +119,24 @@ bool DrawDetailShadowMapImpl(RenderContext* context, RenderDevice* device, FGDet
         return false;
     auto* nv = device->GetNVRHIDevice();
     auto* command = context->GetCommandList();
+    if (state.detailValidationCount && state.detailValidationFrame != Device.dwFrame) {
+        const auto* counts = static_cast<const u32*>(nv->mapBuffer(state.detailValidation, nvrhi::CpuAccessMode::Read));
+        R_ASSERT2(counts, "Detail shadow validation readback failed");
+        u32 mismatches = 0;
+        u64 original = 0, optimized = 0;
+        for (u32 i = 0; i < state.detailValidationCount; ++i) {
+            original += counts[i * 2]; optimized += counts[i * 2 + 1];
+            if (counts[i * 2] != counts[i * 2 + 1]) ++mismatches;
+        }
+        nv->unmapBuffer(state.detailValidation);
+        Msg("* [DetailShadowValidation] frame=%u group=%s faces=%u original=%llu optimized=%llu mismatches=%u",
+            state.detailValidationFrame, lightSphere ? "local" : "sun", state.detailValidationCount,
+            original, optimized, mismatches);
+        state.detailValidationCount = 0;
+        state.detailValidationNext = Device.dwTimeGlobal + 1000;
+        R_ASSERT2(!mismatches, "Optimized detail shadows changed the GPU caster set");
+    }
+    const bool capture = ps_r_detail_shadow_coarse == 2 && Device.dwTimeGlobal >= state.detailValidationNext;
     auto* loader = GEnv.Render->GetShaderLoader();
     auto& cache = framegraph::GetPassResourceCache();
     if (!state.detailPipeline) {
@@ -108,30 +196,22 @@ bool DrawDetailShadowMapImpl(RenderContext* context, RenderDevice* device, FGDet
         Device.vCameraPosition.z, ps_r_detail_shadow_distance);
     CopyMemory(constants.rootRadii, dm->modelRootRadii, sizeof(constants.rootRadii));
     for (float radius : dm->modelRootRadii) constants.maximumRadius = _max(constants.maximumRadius, radius * 4.f);
+    if (lightSphere) constants.lightRange = *lightSphere;
+    DetailShadowCullConstants reference{};
+    bool referenceWindow = false;
+    if (capture) {
+        reference = constants;
+        referenceWindow = ConfigureDetailShadowWindow(reference, *dm);
+    }
+    if (ps_r_detail_shadow_coarse && dm->generatedMaximumRadius >= 0.f)
+        constants.maximumRadius = _min(constants.maximumRadius, dm->generatedMaximumRadius + .01f);
     // The detail database is a regular XZ grid. Restrict dispatch to the root
     // distance window already enforced below, plus the local light's reach.
     // Keep GPU height/mesh/frustum tests; no readback or camera occlusion needed.
-    float minX = Device.vCameraPosition.x - ps_r_detail_shadow_distance;
-    float maxX = Device.vCameraPosition.x + ps_r_detail_shadow_distance;
-    float minZ = Device.vCameraPosition.z - ps_r_detail_shadow_distance;
-    float maxZ = Device.vCameraPosition.z + ps_r_detail_shadow_distance;
-    if (lightSphere) {
-        constants.lightRange = *lightSphere;
-        const float reach = lightSphere->w + constants.maximumRadius;
-        minX = _max(minX, lightSphere->x - reach); maxX = _min(maxX, lightSphere->x + reach);
-        minZ = _max(minZ, lightSphere->z - reach); maxZ = _min(maxZ, lightSphere->z + reach);
-    }
-    const int beginX = _max(0, int(std::floor(minX / DETAIL_SLOT_SIZE)) + dm->dtH.x_offs());
-    const int beginZ = _max(0, int(std::floor(minZ / DETAIL_SLOT_SIZE)) + dm->dtH.z_offs());
-    const int endX = _min(int(dm->dtH.x_size()) - 1, int(std::floor(maxX / DETAIL_SLOT_SIZE)) + dm->dtH.x_offs());
-    const int endZ = _min(int(dm->dtH.z_size()) - 1, int(std::floor(maxZ / DETAIL_SLOT_SIZE)) + dm->dtH.z_offs());
-    if (minX > maxX || minZ > maxZ || beginX > endX || beginZ > endZ) return false;
-    constants.gridStartX = beginX; constants.gridStartZ = beginZ;
-    constants.gridWidth = endX - beginX + 1; constants.gridStride = dm->dtH.x_size();
-    constants.slotCount = constants.gridWidth * (endZ - beginZ + 1);
+    const bool canCull = ConfigureDetailShadowWindow(constants, *dm) &&
+        DetailShadowWindowMayContainCasters(*dm, constants, frustum);
+    if (!canCull && !capture) return false;
     const u32 args[] = {dm->maxPulledIndexCount, 0, 0, 0, 0};
-    command->writeBuffer(state.detailDrawArgs, args, sizeof(args));
-    command->writeBuffer(state.detailCullConstants, &constants, sizeof(constants));
     const auto* cs = loader->GetCachedReflection("detail_shadow_cull", ".cs");
     framegraph::BindingSetBuilder cb(*cs, nv, "DetailShadowCull");
     cb.ConstantBuffer("DetailShadowCull", state.detailCullConstants)
@@ -141,8 +221,35 @@ bool DrawDetailShadowMapImpl(RenderContext* context, RenderDevice* device, FGDet
     R_ASSERT2(cullBindings, "Detail sun shadow culling bindings failed");
     nvrhi::ComputeState compute;
     compute.pipeline = state.detailCullPipeline; compute.bindings = {cullBindings};
-    command->setComputeState(compute);
-    command->dispatch((constants.slotCount + 255) / 256, 1, 1);
+    const auto cull = [&](const DetailShadowCullConstants& parameters, bool active) {
+        command->writeBuffer(state.detailDrawArgs, args, sizeof(args));
+        command->writeBuffer(state.detailCullConstants, &parameters, sizeof(parameters));
+        if (!active) return;
+        command->setComputeState(compute);
+        command->dispatch((parameters.slotCount + 255) / 256, 1, 1);
+    };
+    if (capture) {
+        if (!state.detailValidation) {
+            nvrhi::BufferDesc desc;
+            desc.byteSize = 1024 * 2 * sizeof(u32); desc.cpuAccess = nvrhi::CpuAccessMode::Read;
+            desc.initialState = nvrhi::ResourceStates::CopyDest; desc.keepInitialState = true;
+            desc.debugName = "DetailShadowValidation";
+            state.detailValidation = nv->createBuffer(desc);
+            R_ASSERT(state.detailValidation);
+        }
+        R_ASSERT(state.detailValidationCount < 1024);
+        cull(reference, referenceWindow);
+        command->copyBuffer(state.detailValidation, state.detailValidationCount * 2 * sizeof(u32),
+            state.detailDrawArgs, sizeof(u32), sizeof(u32));
+    }
+    cull(constants, canCull);
+    if (capture) {
+        command->copyBuffer(state.detailValidation, (state.detailValidationCount * 2 + 1) * sizeof(u32),
+            state.detailDrawArgs, sizeof(u32), sizeof(u32));
+        state.detailValidationFrame = Device.dwFrame;
+        ++state.detailValidationCount;
+    }
+    if (!canCull) return false;
 
     const auto drawConstants = BuildDetailFrameConstants(dm, viewProjection);
     command->writeBuffer(state.detailConstants, &drawConstants, sizeof(drawConstants));

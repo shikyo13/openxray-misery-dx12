@@ -165,6 +165,7 @@ public:
     nvrhi::BufferHandle generatedInstancesBuffer;
     nvrhi::BufferHandle detailModelsBuffer;
     u32 generatedInstancesCapacity = 0;
+    float generatedMaximumRadius = -1.f;
 
     nvrhi::ShaderHandle instanceGenComputeShader;
     nvrhi::BindingLayoutHandle instanceGenBindingLayout;
@@ -282,6 +283,7 @@ public:
     float heightmapWorldMinX = 0.f;
     float heightmapWorldMinZ = 0.f;
     float heightmapTexelSize = 0.f;
+    float heightmapVerticalPadding = 0.f;
 
     nvrhi::TextureHandle heightmapTexture;
 
