@@ -48,7 +48,7 @@ uint ComputeBinIndex(float luminance)
     float normalized = saturate((logLum - g_min_log_luminance) / g_log_luminance_range);
 
     // Map to bin index (0-63)
-    return (uint)(normalized * 63.0);
+    return min((uint)(normalized * 64.0), 63u);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -77,15 +77,9 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint group_index : SV_GroupIn
         // Compute luminance
         float luminance = ComputeLuminance(color.rgb);
 
-        // Skip very dark pixels (effectively transparent/sky)
-        if (luminance > 0.0001)
-        {
-            // Get bin index
-            uint binIndex = ComputeBinIndex(luminance);
-
-            // Atomically increment local histogram
-            InterlockedAdd(gs_histogram[binIndex], 1);
-        }
+        // Dark surfaces contribute to the authored scene average as well.
+        uint binIndex = ComputeBinIndex(luminance);
+        InterlockedAdd(gs_histogram[binIndex], 1);
     }
 
     // Wait for all threads to finish - ALL threads must hit this barrier

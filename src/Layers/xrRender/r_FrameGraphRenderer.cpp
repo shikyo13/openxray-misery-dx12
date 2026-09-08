@@ -59,6 +59,7 @@
 #include "FrameGraphPasses/MotionVectorPassSetup.h"
 #include "FrameGraphPasses/AmbientOcclusionPassSetup.h"
 #include "FrameGraphPasses/AntialiasingPassSetup.h"
+#include "FrameGraphPasses/SceneTonemapPassSetup.h"
 #include "FrameGraphPasses/ReSTIRGIPassSetup.h"
 #include "FrameGraphPasses/RibbonPassSetup.h"
 #include "FrameGraphPasses/TrailPassSetup.h"
@@ -556,7 +557,8 @@ void FrameGraphRenderer::Render() {
             // Readback is asynchronous; compare settled settings windows.
             for (const auto& timing : m_gpuProfiler->GetPassTimings()) {
                 const char* name = timing.name.c_str();
-                if (!timing.pending && name && (strstr(name, "SSAO") || strstr(name, "Antialiasing")))
+                if (!timing.pending && name && (strstr(name, "SSAO") || strstr(name, "Antialiasing") ||
+                    strstr(name, "Exposure") || strstr(name, "SceneTonemap")))
                     m_graphicsTrace->w_printf("gpu,%u,%u,%u,%u,%s,%.6f\n", Device.dwFrame,
                         Device.dwTimeGlobal, ps_r_aa, ps_r_ssao, name, timing.timeMs);
             }
@@ -1683,9 +1685,6 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
         }
     }
 
-    sceneColor = passes::setupAntialiasingPass(*m_framegraph, m_device, sceneColor,
-        width, height, m_blackboard->get_or_add<passes::AntialiasingPassState>());
-
     // ═══════════════════════════════════════════════════════
     //  EXPOSURE PASS (Auto-Exposure / Eye Adaptation)
     // ═══════════════════════════════════════════════════════
@@ -1702,6 +1701,11 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     );
 
     m_exposureTexture = exposureOutput.exposureTexture;
+
+    sceneColor = passes::setupSceneTonemapPass(*m_framegraph, m_device, sceneColor,
+        m_exposureTexture, width, height, m_blackboard->get_or_add<passes::SceneTonemapPassState>());
+    sceneColor = passes::setupAntialiasingPass(*m_framegraph, m_device, sceneColor,
+        width, height, m_blackboard->get_or_add<passes::AntialiasingPassState>());
 
     auto sceneWithUI = passes::setupUIPass(
         *m_framegraph,

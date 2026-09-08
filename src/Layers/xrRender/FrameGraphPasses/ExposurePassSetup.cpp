@@ -10,6 +10,7 @@
 #include "Layers/xrRender/RenderContext/RenderContext.h"
 #include "Layers/xrRender/RenderContext/RenderDevice.h"
 #include "Layers/xrRender/FrameGraph/ShaderLoader.h"
+#include "Layers/xrRender/xrRender_console.h"
 
 namespace fg
 {
@@ -29,14 +30,16 @@ ExposureConfig GetDefaultExposureConfig()
     ExposureConfig config;
     config.minLogLuminance = -10.0f;
     config.maxLogLuminance = 4.0f;
-    config.lowPercentile = 0.5f;
-    config.highPercentile = 0.98f;
-    config.adaptSpeedUp = 3.0f;
-    config.adaptSpeedDown = 1.0f;
-    config.minExposure = 0.001f;
-    config.maxExposure = 64.0f;
+    config.lowPercentile = 0.0f;
+    config.highPercentile = 1.0f;
+    config.adaptSpeedUp = ps_r2_tonemap_adaptation;
+    config.adaptSpeedDown = ps_r2_tonemap_adaptation;
+    config.minExposure = 1.0f / 128.0f;
+    config.maxExposure = 20.0f;
     config.exposureCompensation = 0.0f;
-    config.calibrationConstant = 12.5f;
+    config.middleGray = ps_r2_tonemap_middlegray;
+    config.amount = ps_r2_ls_flags.test(R2FLAG_TONEMAP) ? ps_r2_tonemap_amount : 0.0f;
+    config.lowLuminance = ps_r2_tonemap_low_lum;
     return config;
 }
 
@@ -193,7 +196,8 @@ ExposureOutput setupExposurePass(
     exposureDesc.isRenderTarget = false;
     exposureDesc.isUAV = true;
 
-    VirtualResourceHandle exposureHandle = fg.CreateTexture("exposure_rt", exposureDesc);
+    exposureDesc.isTransient = false;
+    VirtualResourceHandle exposureHandle = fg.ImportTexture("exposure_rt", state.exposureTexture, exposureDesc);
 
     // Create histogram buffer resource
     ResourceDesc histogramDesc;
@@ -203,7 +207,8 @@ ExposureOutput setupExposurePass(
     histogramDesc.structStride = sizeof(u32);
     histogramDesc.isUAV = true;
 
-    VirtualResourceHandle histogramHandle = fg.CreateBuffer("luminance_rt", histogramDesc);
+    histogramDesc.isTransient = false;
+    VirtualResourceHandle histogramHandle = fg.ImportBuffer("luminance_rt", state.histogramBuffer, histogramDesc);
 
     auto& passData = fg.addCallbackPass<ExposurePassData>(
         "Exposure",
@@ -222,7 +227,7 @@ ExposureOutput setupExposurePass(
             data.sceneColor = passBuilder.read(hdrSceneColor);
 
             // Write exposure output
-            data.exposureTexture = passBuilder.write(exposureHandle, ResourceState::UnorderedAccess);
+            data.exposureTexture = passBuilder.readWrite(exposureHandle, ResourceState::UnorderedAccess);
 
             // Write histogram (intermediate)
             data.histogramBuffer = passBuilder.write(histogramHandle, ResourceState::UnorderedAccess);
@@ -234,6 +239,14 @@ ExposureOutput setupExposurePass(
 
             nvrhi::ICommandList* cmdList = ctx->GetCommandList();
             auto* ps = data.passState;
+
+            // The first adaptation dispatch reads history. Initialize it on the
+            // same command list before dispatch, never from uninitialized VRAM.
+            if (!ps->historyValid) {
+                const float initialExposure = 1.0f;
+                cmdList->writeTexture(ps->exposureTexture, 0, 0, &initialExposure, sizeof(float));
+                ps->historyValid = true;
+            }
 
             if (ps->computeEnabled && ps->histogramPipeline && ps->adaptPipeline) {
                 nvrhi::IDevice* nvDevice = data.device->GetNVRHIDevice();
@@ -274,7 +287,7 @@ ExposureOutput setupExposurePass(
                     }
 
                     {
-                        AdaptCB adaptCB;
+                        AdaptCB adaptCB{};
                         adaptCB.minLogLum = data.config.minLogLuminance;
                         adaptCB.logLumRange = data.config.maxLogLuminance - data.config.minLogLuminance;
                         adaptCB.lowPercentile = data.config.lowPercentile;
@@ -285,8 +298,9 @@ ExposureOutput setupExposurePass(
                         adaptCB.exposureCompensation = data.config.exposureCompensation;
                         adaptCB.minExposure = data.config.minExposure;
                         adaptCB.maxExposure = data.config.maxExposure;
-                        adaptCB.calibrationConstant = data.config.calibrationConstant;
-                        adaptCB.padding = 0.0f;
+                        adaptCB.middleGray = data.config.middleGray;
+                        adaptCB.amount = data.config.amount;
+                        adaptCB.lowLuminance = data.config.lowLuminance;
 
                         cmdList->writeBuffer(adaptCBHandle, &adaptCB, sizeof(adaptCB));
 

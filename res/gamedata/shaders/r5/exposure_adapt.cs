@@ -26,8 +26,12 @@ cbuffer ExposureAdaptParams : register(b5)  // b5 to avoid conflicts with common
 
     float g_min_exposure;          // Minimum exposure clamp
     float g_max_exposure;          // Maximum exposure clamp
-    float g_calibration_constant;  // Reflected-light meter constant K (12.5)
+    float g_middle_gray;
+    float g_amount;
+    float g_low_luminance;
     float g_padding;
+    float g_padding2;
+    float g_padding3;
 };
 
 // ═══════════════════════════════════════════════════════
@@ -101,19 +105,12 @@ float ComputeAverageLuminance()
 
 float ComputeTargetExposure(float avgLuminance)
 {
-    // Standard exposure equation:
-    // EV100 = log2(L * S / K)
-    // where L = luminance, S = ISO 100 sensitivity, K = calibration constant
-    //
-    // Exposure = 1 / (2^EV100) for proper exposure
-    // Simplified: exposure = K / (L * 100) for ISO 100 reference
-
-    // Avoid division by zero
-    float lum = max(avgLuminance, 0.0001);
-
-    // Calculate exposure to achieve middle gray (18% reflectance)
-    // The formula K / (luminance * 100) gives exposure for ISO 100
-    float exposure = g_calibration_constant / (lum * 100.0);
+    // Match r2_rendertarget_phase_luminance / bloom_luminance_3:
+    // MiddleGray = lerp((1, 0, 1), (middlegray, 1, lowlum), amount).
+    // The content's r2_tonemap settings are authored for these units.
+    float numerator = lerp(1.0, g_middle_gray, g_amount);
+    float denominator = avgLuminance * g_amount + lerp(1.0, g_low_luminance, g_amount);
+    float exposure = numerator / max(denominator, 0.0001);
 
     // Apply exposure compensation (in EV stops)
     exposure *= exp2(g_exposure_compensation);

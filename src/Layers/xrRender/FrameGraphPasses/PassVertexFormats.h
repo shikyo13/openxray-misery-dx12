@@ -78,8 +78,13 @@ struct AdaptCB {
     float exposureCompensation;
     float minExposure;
     float maxExposure;
-    float calibrationConstant;
+    float middleGray;
+    float amount;
+    float lowLuminance;
     float padding;
+    float padding2;
+    float padding3;
 };
+static_assert(sizeof(AdaptCB) == 64);
 
 } // namespace xray::render::fg::passes

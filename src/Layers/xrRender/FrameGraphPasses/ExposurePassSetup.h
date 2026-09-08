@@ -34,8 +34,7 @@ namespace xray::render::fg::passes {
 //
 // OUTPUT:
 // - 1x1 R32_FLOAT texture containing exposure value
-// - Sky pass reads this via s_tonemap.Load(int3(0,0,0)).x
-// - Tonemap pass uses same exposure for HDR->LDR conversion
+// - SceneTonemap applies this to the scene before antialiasing and UI.
 //
 // REFERENCES:
 // - Krzysztof Narkowicz: "Automatic Exposure" (2016)
@@ -51,6 +50,7 @@ struct ExposurePassState {
     nvrhi::BindingLayoutHandle adaptLayout;
     bool initialized = false;
     bool computeEnabled = false;
+    bool historyValid = false;
     float currentExposure = 1.0f;
 };
 
@@ -60,20 +60,22 @@ struct ExposureConfig {
     float maxLogLuminance = 4.0f;    // Maximum log2 luminance (EV)
 
     // Percentile clamping (skip extreme values)
-    float lowPercentile = 0.5f;      // Skip darkest 50% of pixels
-    float highPercentile = 0.98f;    // Skip brightest 2% of pixels
+    float lowPercentile = 0.0f;
+    float highPercentile = 1.0f;
 
-    // Eye adaptation speed (f-stops per second)
+    // Exponential eye adaptation rate (per second).
     float adaptSpeedUp = 3.0f;       // Speed when brightening
     float adaptSpeedDown = 1.0f;     // Speed when darkening (slower)
 
     // Exposure limits
-    float minExposure = 0.001f;      // Minimum exposure value
-    float maxExposure = 64.0f;       // Maximum exposure value
+    float minExposure = 1.0f / 128.0f;
+    float maxExposure = 20.0f;
 
-    // Calibration
+    // Authored X-Ray exposure controls (not a photographic EV100 calibration).
     float exposureCompensation = 0.0f;  // Manual EV adjustment
-    float calibrationConstant = 12.5f;  // Reflected-light meter constant K
+    float middleGray = 1.0f;
+    float amount = 0.7f;
+    float lowLuminance = 0.4f;
 };
 
 struct ExposurePassData {

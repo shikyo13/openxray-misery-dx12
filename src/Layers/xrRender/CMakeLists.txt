@@ -134,6 +134,8 @@ target_sources(xrRender PRIVATE
     FrameGraphPasses/DistortionApplyPassSetup.cpp
     FrameGraphPasses/ExposurePassSetup.h
     FrameGraphPasses/ExposurePassSetup.cpp
+    FrameGraphPasses/SceneTonemapPassSetup.h
+    FrameGraphPasses/SceneTonemapPassSetup.cpp
     FrameGraphPasses/TonemapPassSetup.h
     FrameGraphPasses/TonemapPassSetup.cpp
     FrameGraphPasses/UIPassSetup.h
