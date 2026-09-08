@@ -138,6 +138,8 @@ target_sources(xrRender PRIVATE
     FrameGraphPasses/SceneTonemapPassSetup.cpp
     FrameGraphPasses/BloomPassSetup.h
     FrameGraphPasses/BloomPassSetup.cpp
+    FrameGraphPasses/SunShaftPassSetup.h
+    FrameGraphPasses/SunShaftPassSetup.cpp
     FrameGraphPasses/TonemapPassSetup.h
     FrameGraphPasses/TonemapPassSetup.cpp
     FrameGraphPasses/UIPassSetup.h
