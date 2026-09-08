@@ -43,6 +43,7 @@ public:
     const particles_systems::library_interface& particles_systems_library() override;
 
     void DrawSky(nvrhi::ICommandList* cmdList, nvrhi::IFramebuffer* framebuffer, CEnvironment* environment, u32 width, u32 height);
+    nvrhi::ITexture* GetSkyTexture(CEnvironment* environment, u32 index);
     void DrawSun(nvrhi::ICommandList* cmdList, nvrhi::IFramebuffer* framebuffer, CEnvironment* environment, u32 width, u32 height);
 
 private:

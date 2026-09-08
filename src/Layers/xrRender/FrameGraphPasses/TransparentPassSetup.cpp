@@ -15,6 +15,8 @@
 #include "Layers/xrRender/FrameGraph/BindingSetBuilder.h"
 #include "PassCommon.h"
 #include "Layers/xrRender/ClusteredLightManager.h"
+#include "Layers/xrRender/fgEnvironmentRender.h"
+#include "Layers/xrRender/xrRender_console.h"
 
 namespace xray::render::fg::passes {
 
@@ -31,8 +33,8 @@ void InitializeTransparentResources(fg::RenderDevice* device, const nvrhi::Frame
     if (!shaderLoader)
         return;
 
-    auto vsResult = shaderLoader->LoadVertexShader("bindless_forward", "main");
-    auto psResult = shaderLoader->LoadPixelShader("bindless_forward", "main");
+    auto vsResult = shaderLoader->LoadVertexShader("bindless_transparent", "main");
+    auto psResult = shaderLoader->LoadPixelShader("bindless_transparent", "main");
     if (!vsResult.handle || !psResult.handle)
         return;
 
@@ -111,6 +113,34 @@ framegraph::DefaultOutputLayout setupTransparentPass(
     fbInfo.depthFormat = nvrhi::Format::D32;
     InitializeTransparentResources(device, fbInfo, state);
 
+    // Keep the opaque scene immutable and composite into a separate target.
+    // Water refraction must never sample the target receiving its own draws.
+    ResourceDesc copyDesc;
+    copyDesc.width = width;
+    copyDesc.height = height;
+    copyDesc.format = nvrhi::Format::RGBA16_FLOAT;
+    copyDesc.debugName = "Water.CompositeColor";
+    copyDesc.isRenderTarget = true;
+    auto compositeColor = fg.CreateTexture("Water.CompositeColor", copyDesc);
+    copyDesc.format = nvrhi::Format::D32;
+    copyDesc.debugName = "Water.DepthCopy";
+    copyDesc.isRenderTarget = false;
+    copyDesc.isDepthStencil = true;
+    auto waterDepth = fg.CreateTexture("Water.DepthCopy", copyDesc);
+    auto copyPass = fg.AddPass("Water.CopyInputs");
+    fg.PassRead(copyPass, inputs.albedo, ResourceState::CopySource);
+    fg.PassRead(copyPass, inputs.depth, ResourceState::CopySource);
+    fg.PassWrite(copyPass, compositeColor, ResourceState::CopyDest);
+    fg.PassWrite(copyPass, waterDepth, ResourceState::CopyDest);
+    fg.SetPassCallback(copyPass, [sourceColor = inputs.albedo, sourceDepth = inputs.depth, compositeColor, waterDepth]
+        (fg::RenderContext& ctx, const FrameGraph& graph) {
+        auto* cmd = ctx.GetCommandList();
+        cmd->copyTexture(graph.GetPhysicalTexture(compositeColor), nvrhi::TextureSlice(),
+            graph.GetPhysicalTexture(sourceColor), nvrhi::TextureSlice());
+        cmd->copyTexture(graph.GetPhysicalTexture(waterDepth), nvrhi::TextureSlice(),
+            graph.GetPhysicalTexture(sourceDepth), nvrhi::TextureSlice());
+    });
+
     auto& passData = fg.addCallbackPass<TransparentPassData>(
         "Transparent Pass",
 
@@ -122,9 +152,11 @@ framegraph::DefaultOutputLayout setupTransparentPass(
             data.passState = &state;
 
             RenderPassBuilder passBuilder(builder, passHandle);
+            data.waterScene = passBuilder.read(inputs.albedo, ResourceState::ShaderResource);
+            data.waterDepth = passBuilder.read(waterDepth, ResourceState::ShaderResource);
             ReadWorldShadowMaps(builder, passHandle);
             ReadSkyBackground(builder, passHandle);
-            data.color = passBuilder.readWrite(inputs.albedo, ResourceState::RenderTarget);
+            data.color = passBuilder.readWrite(compositeColor, ResourceState::RenderTarget);
             data.normal = passBuilder.readWrite(inputs.normal, ResourceState::RenderTarget);
             data.depth = passBuilder.read(inputs.depth, ResourceState::DepthStencilRead);
             if (inputs.baseColor.is_valid())
@@ -178,10 +210,32 @@ framegraph::DefaultOutputLayout setupTransparentPass(
             auto& variantTexBuffer = bindless::VariantTextureBuffer::Instance();
 
             auto* shaderLoader = GEnv.Render->GetShaderLoader();
-            auto* vsReflection = shaderLoader->GetCachedReflection("bindless_forward", ".vs");
-            auto* psReflection = shaderLoader->GetCachedReflection("bindless_forward", ".ps");
+            auto* vsReflection = shaderLoader->GetCachedReflection("bindless_transparent", ".vs");
+            auto* psReflection = shaderLoader->GetCachedReflection("bindless_transparent", ".ps");
 
             framegraph::BindingSetBuilder bsb(*vsReflection, *psReflection, nvDevice, "Transparent");
+            struct WaterConstants {
+                Fmatrix inverseVP;
+                Fvector4 options;
+            };
+            static_assert(sizeof(WaterConstants) == 80);
+            WaterConstants water{};
+            water.inverseVP = Device.mInvFullTransform;
+            auto& environment = g_pGamePersistent->Environment();
+            const auto& env = environment.CurrentEnv;
+            water.options.set(ps_r2_ls_flags.test(R2FLAG_SOFT_WATER) ? 1.f : 0.f,
+                _cos(env.sky_rotation), _sin(env.sky_rotation), env.weight);
+            auto waterCB = cache.GetOrCreateVolatileCB("TransparentPass", "WaterParams", sizeof(water), data.device);
+            cmdList->writeBuffer(waterCB, &water, sizeof(water));
+            auto* environmentRenderer = static_cast<FGEnvironmentRender*>(&*environment.m_pRender);
+            bsb.ConstantBuffer("WaterParams", waterCB);
+            bsb.Texture("g_WaterDepth", fg.GetPhysicalTexture(data.waterDepth));
+            bsb.Texture("g_WaterScene", fg.GetPhysicalTexture(data.waterScene));
+            bsb.Texture("g_WaterSky0", environmentRenderer->GetSkyTexture(&environment, 0));
+            bsb.Texture("g_WaterSky1", environmentRenderer->GetSkyTexture(&environment, 1));
+            if (strstr(Core.Params, "-graphics_trace") && Device.dwFrame % 120 == 0)
+                Msg("* [WaterSurface] frame=%u soft=%u sky_weight=%.4f rotation=%.4f size=%ux%u",
+                    Device.dwFrame, water.options.x > .5f ? 1u : 0u, env.weight, env.sky_rotation, data.width, data.height);
             bsb.ConstantBuffer("static_globals", staticGlobalsCB);
             bsb.BufferSRV("g_Materials", matBuffer.GetBuffer());
             bsb.BufferSRV("g_InstanceData", cfg.instanceBuffer);

@@ -18,6 +18,10 @@ struct PS_INPUT
     float3 tangent : TEXCOORD3;
     float3 bitangent : TEXCOORD4;
     nointerpolation uint materialID : TEXCOORD5;  // Direct material ID (no indirection)
+#ifdef WATER_SURFACES
+    float4 waterLight : COLOR0;
+    float sunOcclusion : TEXCOORD6;
+#endif
 };
 
 struct PS_OUTPUT
@@ -27,6 +31,10 @@ struct PS_OUTPUT
     float4 baseColor : SV_Target2;
     float4 ambient : SV_Target3;
 };
+
+#ifdef WATER_SURFACES
+#include "water_surface.h"
+#endif
 
 // Lighting uses static_globals from common.h (b2):
 // - L_sun_color, L_sun_dir_w (sun)
@@ -51,6 +59,10 @@ PS_OUTPUT main(PS_INPUT input)
 
     // Get material data directly using material ID
     MaterialData mat = g_Materials[input.materialID];
+#ifdef WATER_SURFACES
+    if (mat.flags & MAT_FLAG_WATER)
+        return ShadeWater(input, mat);
+#endif
 
 
     // Sample textures using SM6 bindless (ResourceDescriptorHeap)

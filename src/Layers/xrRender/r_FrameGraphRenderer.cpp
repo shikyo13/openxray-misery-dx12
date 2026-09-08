@@ -564,7 +564,7 @@ void FrameGraphRenderer::Render() {
             for (const auto& timing : m_gpuProfiler->GetPassTimings()) {
                 const char* name = timing.name.c_str();
                 if (!timing.pending && name && (strstr(name, "SSAO") || strstr(name, "Antialiasing") ||
-                    strstr(name, "Exposure") || strstr(name, "SceneTonemap") || strstr(name, "SkyBackgroundCopy") || strstr(name, "Bloom.") || strstr(name, "SunShafts.") || strstr(name, "Sun shadow") || strstr(name, "Local shadow") || strstr(name, "Detail")))
+                    strstr(name, "Exposure") || strstr(name, "SceneTonemap") || strstr(name, "SkyBackgroundCopy") || strstr(name, "Bloom.") || strstr(name, "SunShafts.") || strstr(name, "Water.") || strstr(name, "Transparent Pass") || strstr(name, "Sun shadow") || strstr(name, "Local shadow") || strstr(name, "Detail")))
                     m_graphicsTrace->w_printf("gpu,%u,%u,%u,%u,%s,%.6f\n", Device.dwFrame,
                         Device.dwTimeGlobal, ps_r_aa, ps_r_ssao, name, timing.timeMs);
             }

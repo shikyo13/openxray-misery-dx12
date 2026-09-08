@@ -295,6 +295,22 @@ void FGEnvironmentRender::InitSkyResources()
     m_skyInitialized = true;
 }
 
+nvrhi::ITexture* FGEnvironmentRender::GetSkyTexture(CEnvironment* environment, u32 index)
+{
+    InitSkyResources();
+    auto* renderer = static_cast<FrameGraphRenderer*>(GEnv.Render);
+    auto* resources = renderer->GetRenderDevice()->GetFGResourceManager();
+    auto* textures = resources ? resources->GetTextureManager() : nullptr;
+    if (textures && environment && index < 2 && environment->Current[index]) {
+        const auto& name = environment->Current[index]->sky_texture_name;
+        if (name.size()) {
+            auto* texture = textures->GetNVRHITexture(textures->LoadTexture(name.c_str()));
+            if (texture) return texture;
+        }
+    }
+    return m_skyPlaceholderCube.Get();
+}
+
 void FGEnvironmentRender::DrawSky(nvrhi::ICommandList* cmdList, nvrhi::IFramebuffer* framebuffer, CEnvironment* environment, u32 width, u32 height)
 {
     if (!environment || !cmdList || !framebuffer)

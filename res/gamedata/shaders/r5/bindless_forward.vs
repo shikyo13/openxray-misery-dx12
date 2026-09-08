@@ -11,6 +11,10 @@
 #define SM_6_0
 #include "common.h"
 #include "bindless_common.h"
+#ifdef WATER_SURFACES
+#include "shared/waterconfig.h"
+#include "shared/watermove.h"
+#endif
 
 // UnifiedVertex format (48 bytes):
 //   Position:  float3    at offset  0 (12 bytes)
@@ -42,6 +46,10 @@ struct VS_OUTPUT
     float3 tangent  : TEXCOORD3;
     float3 bitangent: TEXCOORD4;
     nointerpolation uint materialID : TEXCOORD5;  // Direct material ID (no indirection)
+#ifdef WATER_SURFACES
+    float4 waterLight : COLOR0; // Authored RGB lighting and hemisphere occlusion.
+    float sunOcclusion : TEXCOORD6;
+#endif
 };
 
 // ═══════════════════════════════════════════════════════
@@ -89,11 +97,18 @@ VS_OUTPUT main(VS_INPUT input)
 
     // Transform position
     float4 worldPos = mul(worldMatrix, float4(input.position.xyz, 1.0));
+#ifdef WATER_SURFACES
+    if (g_Materials[materialID].flags & MAT_FLAG_WATER)
+        worldPos = watermove(worldPos);
+    output.waterLight = float4(input.color.rgb, input.normal.a);
+    output.sunOcclusion = input.color.a;
+#endif
     output.worldPos = worldPos.xyz;
     float3 clipPos = worldPos.xyz;
 #ifndef BINDLESS_TERRAIN
     // Terrain IDs address g_TerrainMaterials, not the regular material table.
-    if (g_Materials[materialID].flags & MAT_FLAG_ALPHA_BLEND)
+    if ((g_Materials[materialID].flags & MAT_FLAG_ALPHA_BLEND) &&
+        !(g_Materials[materialID].flags & MAT_FLAG_WATER))
         clipPos += (eye_position - clipPos) * 0.002;
 #endif
     output.position = mul(m_VP, float4(clipPos, 1.0));

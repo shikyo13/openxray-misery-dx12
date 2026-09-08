@@ -46,6 +46,8 @@ struct TransparentPassState {
 };
 
 struct TransparentPassData {
+    framegraph::VirtualResourceHandle waterDepth;
+    framegraph::VirtualResourceHandle waterScene;
     framegraph::VirtualResourceHandle depth;
     framegraph::VirtualResourceHandle color;
     framegraph::VirtualResourceHandle normal;

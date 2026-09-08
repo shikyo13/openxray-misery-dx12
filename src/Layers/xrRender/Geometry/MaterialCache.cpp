@@ -1407,8 +1407,10 @@ u32 MaterialCache::PreRegisterBindlessMaterial(dxRender_Visual* visual)
         if (matInfo.transparent) {
             matData.flags |= MAT_FLAG_ALPHA_BLEND;
         }
-        if (strstr(visual->shaderName.c_str(), "water") != nullptr)
-            matData.flags |= MAT_FLAG_WATER;
+        if (strstr(visual->shaderName.c_str(), "water") != nullptr) {
+            matData.flags |= MAT_FLAG_WATER | MAT_FLAG_ALPHA_BLEND;
+            matData.flags &= ~MAT_FLAG_ALPHA_TEST;
+        }
         matData.shaderVariant = matInfo.shaderVariant;
         matData.flags |= MAT_FLAG_HAS_NORMAL;
     }
@@ -1560,6 +1562,8 @@ void MaterialCache::FinalizePendingMaterials(fg::RenderContext* ctx)
 
         auto& texDescMgr = TextureDescr;
         shared_str bumpName = texDescMgr.GetBumpName(diffuseName);
+        if (matData.flags & MAT_FLAG_WATER)
+            bumpName = "water\\water_normal";
         if (bumpName.size() && bumpName[0]) {
             resources::TextureHandle handle = texManager->LoadTexture(bumpName.c_str());
             if (handle.IsValid()) {
@@ -1612,6 +1616,18 @@ void MaterialCache::FinalizePendingMaterials(fg::RenderContext* ctx)
             }
         }
 
+        if (matData.flags & MAT_FLAG_WATER) {
+            // The native water shader uses the authored RGB normal and shoreline foam.
+            auto foam = texManager->LoadTexture("water\\water_foam");
+            auto* texture = foam.IsValid() ? texManager->GetNVRHITexture(foam) : nullptr;
+            if (texture) {
+                matData.detailIndex = backend->RegisterBindlessTexture(texture);
+                updated = true;
+            }
+            if (strstr(Core.Params, "-graphics_trace"))
+                Msg("* [WaterMaterial] id=%u base='%s' diffuse=%u normal=%u foam=%u flags=%u",
+                    materialID, diffuseName.c_str(), matData.diffuseIndex, matData.normalIndex, matData.detailIndex, matData.flags);
+        }
         if (updated) {
             materialBuffer.UpdateMaterial(materialID, matData);
             processedCount++;
