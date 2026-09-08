@@ -108,6 +108,17 @@ void FrameGraphRenderer::level_Load(IReader* fs)
             // D3D12: Compile NVRHI shaders directly (NO legacy ref_shader!)
             if (true) {
                 CompileLevelShader(i, n_sh, firstTexture);
+                // The third level texture is the hemisphere/sun lightmap used by
+                // uber_deffer. Preserve it instead of dropping the entire list.
+                string256 hemiName{};
+                if (_GetItemCount(n_tlist) >= 3) {
+                    _GetItem(n_tlist, 2, hemiName);
+                    if (strncmp(hemiName, "lmap", 4) == 0) {
+                        string_path levelTexture;
+                        FS.update_path(levelTexture, "$level$", hemiName);
+                        m_CompiledLevelShaders[i].hemiTextureName = levelTexture;
+                    }
+                }
             }
         }
         chunk->close();

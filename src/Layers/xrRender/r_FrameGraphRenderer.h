@@ -79,6 +79,7 @@ class MaterialCache;
 struct CompiledLevelShader {
     shared_str shaderName;
     shared_str textureName;
+    shared_str hemiTextureName;
     nvrhi::ShaderHandle vsHandle;
     nvrhi::ShaderHandle psHandle;
     xr_unique_ptr<framegraph::ExtractedReflection> vsReflection;
@@ -508,6 +509,7 @@ private:
     bool m_fsrActive = false;
     int m_lastWaterTemporal = -1;
     int m_lastSSGI = -1, m_lastSSGIDebug = -1;
+    int m_lastHemi = -1;
     float m_lastSSGIRadius = 0.f, m_lastSSGIStrength = 0.f;
     Fvector2 m_dlssJitter{};
     u32 m_renderWidth = 0, m_renderHeight = 0;

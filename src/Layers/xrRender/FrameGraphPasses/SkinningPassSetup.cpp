@@ -15,6 +15,7 @@
 #include "Layers/xrRender/RenderContext/RenderDevice.h"
 #include "Layers/xrRender/SkeletonCustom.h"
 #include "Layers/xrRender/FSkinned.h"
+#include "Layers/xrRender/LightTrack.h"
 #include "Layers/xrRender/SkeletonX.h"
 #include "Layers/xrRender/Backend/D3D12Backend.h"
 #include "Layers/xrRender/Bindless/MaterialBuffer.h"
@@ -722,6 +723,7 @@ static void DrawSkinnedBatch(
 
     DynamicTransforms dynTransData = {};
     FillDynamicTransforms(dynTransData, worldMatrix);
+    dynTransData.L_material.y = GetObjectHemi(batch.renderable);
     cmdList->writeBuffer(ctx.dynTransformsCB, &dynTransData, sizeof(dynTransData));
 
     SkinnedMaterialCB matIdData = {};

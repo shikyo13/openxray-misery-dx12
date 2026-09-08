@@ -1,6 +1,7 @@
 // xrRender/GPUCullingManager.cpp
 #include "stdafx.h"
 #include "GPUCullingManager.h"
+#include "LightTrack.h"
 #include "xrCore/Profiler/Profiler.h"
 #include "Layers/xrRender/FrameGraph/FrameGraph.h"
 #include "Layers/xrRender/FrameGraph/RenderPassBuilder.h"
@@ -1874,7 +1875,7 @@ void GPUCullingManager::UploadSceneObjects(fg::RenderContext* ctx, const Geometr
         inst.world = batch.worldMatrix;
         inst.materialID = batch.bindlessMaterialID;
         inst.flags = obj.flags;
-        inst.pad0 = 0.0f;
+        inst.objectHemi = batch.isStatic ? -1.0f : GetObjectHemi(batch.renderable);
         inst.pad1 = 0.0f;
         instanceData.push_back(inst);
     };
@@ -1927,7 +1928,7 @@ void GPUCullingManager::UploadSceneObjects(fg::RenderContext* ctx, const Geometr
             inst.world = batch.worldMatrix;
             inst.materialID = batch.terrainMaterialID;  // Terrain material ID
             inst.flags = GPU_OBJECT_OPAQUE;  // Terrain is always opaque
-            inst.pad0 = 0.0f;
+            inst.objectHemi = -1.0f;
             inst.pad1 = 0.0f;
             m_terrainInstanceData.push_back(inst);
             continue;
@@ -2310,7 +2311,7 @@ void GPUCullingManager::UploadSkinnedObjects(fg::RenderContext* ctx, const Geome
                 rec.splatOffset = sr.offset;
                 rec.splatCount = sr.count;
             }
-            rec.pad = 0;
+            rec.hemi = GetObjectHemi(batch.renderable);
             bucket.records.push_back(rec);
             bucket.materialIDs.push_back(batch.bindlessMaterialID);
         } else {

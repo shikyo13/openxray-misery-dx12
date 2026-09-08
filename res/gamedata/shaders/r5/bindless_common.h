@@ -36,6 +36,8 @@ struct MaterialData
     float alphaRef;
     uint flags;
     uint shaderVariant;
+    uint hemiIndex;
+    uint3 padding;
 };
 
 // Material flags
@@ -49,6 +51,7 @@ struct MaterialData
 #define MAT_FLAG_HAS_PBR_LAYER (1 << 7)
 #define MAT_FLAG_ALPHA_BLEND   (1 << 8)
 #define MAT_FLAG_WATER         (1 << 9)
+#define MAT_FLAG_VERTEX_HEMI   (1 << 10)
 
 // ═══════════════════════════════════════════════════════
 //  TERRAIN MATERIAL DATA (matches C++ TerrainMaterialData)

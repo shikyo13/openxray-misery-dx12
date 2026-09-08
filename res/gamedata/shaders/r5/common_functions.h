@@ -269,7 +269,8 @@ f_forward output_forward_pbr(
 	float roughness,
 	float ao,
 	float4 svPosition = float4(0, 0, 0, 0),
-	bool isHud = false)
+	bool isHud = false,
+	float authoredHemi = 1.0)
 {
 	f_forward res;
 
@@ -283,7 +284,8 @@ f_forward output_forward_pbr(
 		metallic, roughness, (uint)pbr_diffuse_mode
 	);
 
-	float3 ambientColor = L_ambient.rgb + L_hemi_color.rgb * L_hemi_color.w;
+	float skyVisibility = hemi_mode == 0 ? 1.0 : saturate(authoredHemi);
+	float3 ambientColor = L_ambient.rgb + L_hemi_color.rgb * L_hemi_color.w * skyVisibility;
 	float3 ambient = PBRAmbient(
 		albedo, N, V,
 		metallic, roughness, ao,
@@ -309,6 +311,10 @@ f_forward output_forward_pbr(
 	res.baseColor = float4(albedo, metallic);
 	// SSAO follows this pass and must not darken the fog contribution.
 	res.ambient = float4(ambient * (1.0 - fog) * (1.0 - fog * fog), 0);
+	if (hemi_mode == 2) {
+		res.color.rgb = skyVisibility;
+		res.ambient = 0;
+	}
 	return res;
 }
 

@@ -8,6 +8,7 @@
 // Forward declarations of X-Ray engine globals
 extern ECORE_API float ps_r2_sun_lumscale_hemi;
 extern ENGINE_API int ps_fg_pbr_diffuse_mode;
+extern ENGINE_API int ps_r_hemi;
 extern ENGINE_API Fvector4 ps_dev_param_1;
 extern ENGINE_API Fvector4 ps_dev_param_2;
 extern ENGINE_API Fvector4 ps_dev_param_3;
@@ -104,7 +105,7 @@ struct alignas(16) StaticGlobals {
     Fvector4 L_hemi_color;
 
     Fvector3 eye_position;
-    float padding3;
+    float hemi_mode;
 
     Fvector4 pos_decompression_params;
     Fvector4 pos_decompression_params2;
@@ -196,7 +197,7 @@ inline void FillGlobalConstants(GlobalConstants& cb, u32 width = Device.dwWidth,
 
     // Clear padding to avoid uninitialized memory warnings
     cb.hud_fov = psHUD_FOV;
-    cb.padding3 = 0.0f;
+    cb.hemi_mode = float(ps_r_hemi);
 
     // ═══════════════════════════════════════════════════════
     //  FORWARD+ EXTENSIONS (Phase 1.3)

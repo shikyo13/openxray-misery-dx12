@@ -122,7 +122,7 @@ struct GPUInstanceData {
     Fmatrix world;          // World transform (64 bytes)
     u32 materialID;         // Bindless material ID
     u32 flags;              // Instance flags
-    float pad0, pad1;       // Padding to 80 bytes
+    float objectHemi, pad1; // Negative for static geometry; otherwise object lighting.
 };
 static_assert(sizeof(GPUInstanceData) == 80, "GPUInstanceData must be 80 bytes for GPU alignment");
 
@@ -401,7 +401,7 @@ public:
         u32 boneOffset;
         u32 splatOffset;
         u32 splatCount;
-        u32 pad;
+        float hemi;
     };
     static_assert(sizeof(SkinnedDrawRecord) == 80, "SkinnedDrawRecord must be 80 bytes");
 

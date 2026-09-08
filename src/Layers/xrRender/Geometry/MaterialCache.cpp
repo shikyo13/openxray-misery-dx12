@@ -993,6 +993,8 @@ void MaterialCache::Clear()
     {
         if (resources::TextureManager* texMgr = m_resourceManager->GetTextureManager())
         {
+            for (auto& [name, handle] : m_hemiTextures)
+                if (handle.IsValid()) texMgr->Release(handle);
             for (auto& [key, pso] : m_cache)
             {
                 if (!pso) continue;
@@ -1004,6 +1006,7 @@ void MaterialCache::Clear()
         }
     }
     m_cache.clear();
+    m_hemiTextures.clear();
     m_textureHandleCache.clear();
     m_detailScaleCache.clear();
     m_shaderHandles.clear();
@@ -1376,7 +1379,8 @@ u32 MaterialCache::PreRegisterBindlessMaterial(dxRender_Visual* visual)
     if (!materialBuffer.IsInitialized())
         return UINT32_MAX;
 
-    const auto nameKey = std::make_pair(visual->shaderName, visual->textureName);
+    const auto nameKey = std::make_tuple(visual->shaderName, visual->textureName,
+        visual->hemiTextureName, visual->vertexHemi);
     const auto known = m_materialIDByNames.find(nameKey);
     if (known != m_materialIDByNames.end()) {
         visual->bindless_material_id = known->second;
@@ -1415,6 +1419,8 @@ u32 MaterialCache::PreRegisterBindlessMaterial(dxRender_Visual* visual)
         matData.flags |= MAT_FLAG_HAS_NORMAL;
     }
 
+    if (visual->vertexHemi) matData.flags |= MAT_FLAG_VERTEX_HEMI;
+
     u32 materialID = materialBuffer.RegisterMaterial(matData);
 
     visual->bindless_material_id = materialID;
@@ -1425,6 +1431,7 @@ u32 MaterialCache::PreRegisterBindlessMaterial(dxRender_Visual* visual)
     pending.materialID = materialID;
     pending.visual = visual;
     pending.textureName = visual->textureName;
+    pending.hemiTextureName = visual->hemiTextureName;
     m_pendingMaterials.push_back(pending);
 
     static u32 logCount = 0;
@@ -1535,6 +1542,22 @@ void MaterialCache::FinalizePendingMaterials(fg::RenderContext* ctx)
 
         MaterialData matData = *existingMat;
         bool updated = false;
+
+        if (pending.hemiTextureName.size()) {
+            auto found = m_hemiTextures.find(pending.hemiTextureName);
+            if (found == m_hemiTextures.end()) {
+                auto handle = texManager->LoadTexture(pending.hemiTextureName.c_str());
+                R_ASSERT3(handle.IsValid() && texManager->GetNVRHITexture(handle),
+                    "Authored hemisphere texture failed to load", pending.hemiTextureName.c_str());
+                found = m_hemiTextures.emplace(pending.hemiTextureName, handle).first;
+            }
+            matData.hemiIndex = backend->RegisterBindlessTexture(texManager->GetNVRHITexture(found->second));
+            R_ASSERT2(matData.hemiIndex != INVALID_TEXTURE_INDEX, "Authored hemisphere descriptor failed");
+            updated = true;
+            if (strstr(Core.Params, "-graphics_trace"))
+                Msg("* [AuthoredHemi] material=%u texture='%s' descriptor=%u", materialID,
+                    pending.hemiTextureName.c_str(), matData.hemiIndex);
+        }
 
         shared_str diffuseName;
         if (visual) {

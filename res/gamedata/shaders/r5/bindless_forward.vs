@@ -49,6 +49,9 @@ struct VS_OUTPUT
     float3 tangent  : TEXCOORD3;
     float3 bitangent: TEXCOORD4;
     nointerpolation uint materialID : TEXCOORD5;  // Direct material ID (no indirection)
+#ifndef WATER_TEMPORAL
+    float3 hemisphere : TEXCOORD10; // Lightmap UV and authored/object hemisphere.
+#endif
 #ifdef WATER_SURFACES
     float4 waterLight : COLOR0; // Authored RGB lighting and hemisphere occlusion.
     float sunOcclusion : TEXCOORD6;
@@ -68,7 +71,7 @@ struct InstanceData
     float4x4 world;     // World transform (64 bytes)
     uint materialID;    // Bindless material ID
     uint flags;         // Instance flags
-    float pad0, pad1;   // Padding to 80 bytes
+    float objectHemi, pad1; // Negative for static geometry; otherwise object lighting.
 };
 
 StructuredBuffer<InstanceData> g_InstanceData : register(t14);
@@ -114,6 +117,14 @@ VS_OUTPUT main(VS_INPUT input)
     output.sunOcclusion = input.color.a;
 #endif
     output.worldPos = worldPos.xyz;
+#ifndef WATER_TEMPORAL
+    float hemi = input.normal.a;
+#ifndef BINDLESS_TERRAIN
+    hemi = (g_Materials[materialID].flags & MAT_FLAG_VERTEX_HEMI) ? hemi : 1.0;
+    if (instanceData.objectHemi >= 0) hemi = instanceData.objectHemi;
+#endif
+    output.hemisphere = float3(input.texcoord1, hemi);
+#endif
     float3 clipPos = worldPos.xyz;
 #ifndef BINDLESS_TERRAIN
     // Terrain IDs address g_TerrainMaterials, not the regular material table.

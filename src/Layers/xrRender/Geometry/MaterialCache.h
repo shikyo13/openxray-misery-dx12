@@ -1,5 +1,7 @@
 #pragma once
 
+#include <tuple>
+
 #include "Layers/xrRender/RenderContext/RenderContext.h"
 #include "Layers/xrRender/RenderContext/PipelineState.h"
 #include "Layers/xrRender/FrameGraph/ShaderReflection.h"
@@ -293,12 +295,14 @@ private:
 
     u32 m_visualMaterialEpoch = 1;
 
-    xr_map<std::pair<shared_str, shared_str>, u32> m_materialIDByNames;
+    xr_map<std::tuple<shared_str, shared_str, shared_str, bool>, u32> m_materialIDByNames;
+    xr_map<shared_str, resources::TextureHandle> m_hemiTextures;
 
     struct PendingMaterial {
         u32 materialID;
         dxRender_Visual* visual;
         shared_str textureName;
+        shared_str hemiTextureName;
     };
     xr_vector<PendingMaterial> m_pendingMaterials;
 

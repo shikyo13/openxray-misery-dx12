@@ -136,6 +136,16 @@ bool DDSLoader::LoadFromFile(const char* filePath, DDSData& outData) {
 
     // Helper lambda to try finding file in VFS directories
     auto TryFindFile = [&](const char* ext) -> bool {
+        // Level-qualified VFS names keep baked lightmaps from different levels
+        // distinct in the texture cache even when their local names match.
+        if (basePath[0] == '/' || basePath[0] == '\\' || (basePath[0] && basePath[1] == ':')) {
+            string_path qualified;
+            strconcat(sizeof(qualified), qualified, basePath, ext);
+            if (FS.exist(qualified)) {
+                xr_strcpy(resolvedPath, qualified);
+                return true;
+            }
+        }
         // Try $game_textures$ first (most common)
         if (FS.exist(resolvedPath, "$game_textures$", basePath, ext)) {
             return true;

@@ -22,6 +22,8 @@ struct MaterialData
     float alphaRef;
     uint flags;
     uint shaderVariant;
+    uint hemiIndex;
+    uint3 padding;
 };
 
 #define MAT_FLAG_ALPHA_TEST (1 << 0)

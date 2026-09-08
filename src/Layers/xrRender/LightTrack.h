@@ -6,6 +6,9 @@
 
 namespace xray::render::fg
 {
+// Reuse the engine's bounded, smoothed object-light tracking for DX12 ambient.
+float GetObjectHemi(IRenderable* object);
+
 const float lt_inc = 4.f;
 const float lt_dec = 2.f;
 const int lt_hemisamples = 26;

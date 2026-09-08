@@ -86,13 +86,14 @@ bool GetParticleBlendIndex(const char* shaderName, u32& outIndex)
     return true;
 }
 
-bool GetCompiledShaderNames(int shaderID, shared_str& outShaderName, shared_str& outTextureName)
+bool GetCompiledShaderNames(int shaderID, shared_str& outShaderName, shared_str& outTextureName, shared_str& outHemiTextureName)
 {
     auto* compiled = fg::RImplementation.getCompiledShader(shaderID);
     if (!compiled)
         return false;
     outShaderName = compiled->shaderName;
     outTextureName = compiled->textureName;
+    outHemiTextureName = compiled->hemiTextureName;
     return true;
 }
 

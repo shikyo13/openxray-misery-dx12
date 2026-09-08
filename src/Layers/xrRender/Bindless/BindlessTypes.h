@@ -42,9 +42,10 @@ inline const char* GetTextureTypeName(TextureType type) {
 // GPU-side material representation - must match HLSL exactly!
 // Uses SM6 bindless texture indices from ResourceDescriptorHeap
 //
-// Layout (32 bytes total):
+// Layout (48 bytes total):
 //   Bytes 0-15:  Texture descriptor indices (4× u32)
 //   Bytes 16-31: Material properties
+//   Bytes 32-47: Authored hemisphere lightmap and reserved padding
 
 struct alignas(16) MaterialData {
     // Descriptor heap indices (UINT32_MAX = invalid/not present)
@@ -58,8 +59,10 @@ struct alignas(16) MaterialData {
     float alphaRef;      // Alpha test threshold (0.5 typical)
     u32 flags;           // Material flags (see MaterialFlags)
     u32 shaderVariant;   // Index into ShaderVariantRegistry (0=default)
+    u32 hemiIndex = INVALID_TEXTURE_INDEX;
+    u32 padding[3]{};
 };
-static_assert(sizeof(MaterialData) == 32, "MaterialData must be 32 bytes for GPU alignment");
+static_assert(sizeof(MaterialData) == 48, "MaterialData must be 48 bytes for GPU alignment");
 
 // Material flags (must match HLSL)
 enum MaterialFlags : u32 {
@@ -73,6 +76,7 @@ enum MaterialFlags : u32 {
     MAT_FLAG_HAS_PBR_LAYER = (1 << 7),  // Terrain has PBR detail textures
     MAT_FLAG_ALPHA_BLEND   = (1 << 8),  // Transparent alpha blending
     MAT_FLAG_WATER         = (1 << 9),  // Water surface (Fresnel reflect/refract)
+    MAT_FLAG_VERTEX_HEMI   = (1 << 10), // Static vertex N.a contains sky visibility
 };
 
 // ═══════════════════════════════════════════════════════

@@ -131,8 +131,8 @@ private:
         ExtractedReflection& outReflection
     );
 
-    // Invalidate cached SSGI sampling and diagnostic shaders.
-    static constexpr u32 CACHE_VERSION = 26;
+    // Material stride and authored hemisphere lighting inputs changed.
+    static constexpr u32 CACHE_VERSION = 28;
     Stats m_stats;
     bool m_cacheEnabled;
     xr_string m_backendSubdir;

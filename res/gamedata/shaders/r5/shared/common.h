@@ -44,7 +44,7 @@ cbuffer	static_globals : register(b2)
 	float4		L_hemi_color;
 
 	float3 		eye_position;
-	float		_pad_eye;
+	float		hemi_mode;
 
 	float4 		pos_decompression_params;
 	float4 		pos_decompression_params2;

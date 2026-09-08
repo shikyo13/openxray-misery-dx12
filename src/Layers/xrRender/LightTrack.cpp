@@ -19,6 +19,22 @@
 
 namespace xray::render::fg
 {
+float GetObjectHemi(IRenderable* object)
+{
+    if (!object) return 1.0f;
+    auto* ros = static_cast<CROS_impl*>(object->renderable_ROS());
+    if (!ros) return 1.0f;
+    ros->update_smooth(object);
+    const float hemi = ros->get_hemi();
+    if (strstr(Core.Params, "-graphics_trace") && Device.dwFrame % 240 == 0) {
+        static u32 loggedFrame = u32(-1), count = 0;
+        if (loggedFrame != Device.dwFrame) { loggedFrame = Device.dwFrame; count = 0; }
+        if (++count <= 8) Msg("* [ObjectHemi] frame=%u object=%p hemi=%.5f samples=%d",
+            Device.dwFrame, object, hemi, ros->result_count);
+    }
+    return hemi;
+}
+
 //////////////////////////////////////////////////////////////////////
 // Construction/Destruction
 //////////////////////////////////////////////////////////////////////
@@ -26,6 +42,9 @@ CROS_impl::CROS_impl()
 {
     approximate.set(0, 0, 0);
     dwFrame = u32(-1);
+    dwFrameSmooth = u32(-1);
+    ZeroMemory(hemi_cube, sizeof(hemi_cube));
+    ZeroMemory(hemi_cube_smooth, sizeof(hemi_cube_smooth));
     shadow_recv_frame = u32(-1);
     shadow_recv_slot = -1;
 

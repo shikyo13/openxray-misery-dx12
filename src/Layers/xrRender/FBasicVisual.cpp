@@ -71,7 +71,9 @@ void dxRender_Visual::Load(const char* N, IReader* data, u32)
     }
     else if (hdr.shader_id)
     {
-        xray::render::shader_info::GetCompiledShaderNames(hdr.shader_id, shaderName, textureName);
+        const bool found = xray::render::shader_info::GetCompiledShaderNames(
+            hdr.shader_id, shaderName, textureName, hemiTextureName);
+        vertexHemi = found && (Type == MT_NORMAL || Type == MT_PROGRESSIVE);
     }
 
 // desc
@@ -88,6 +90,8 @@ void dxRender_Visual::Copy(dxRender_Visual* pFrom)
     PCOPY(shader);
     PCOPY(shaderName);   // FrameGraph: copy shader name for deferred compilation
     PCOPY(textureName);  // FrameGraph: copy texture name for deferred compilation
+    PCOPY(hemiTextureName);
+    PCOPY(vertexHemi);
     PCOPY(vis);
 
     // Debug: log copies to see if source has texture info

@@ -1074,6 +1074,8 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     m_lastSSGIDebug = ps_r_ssgi_debug;
     m_lastSSGIRadius = ps_r_ssgi_radius;
     m_lastSSGIStrength = ps_r_ssgi_strength;
+    if (m_lastHemi != ps_r_hemi) m_hasPrevFrameData = false;
+    m_lastHemi = ps_r_hemi;
 
     const bool dlssActive = ps_r_aa >= 2 &&
         m_blackboard->get_or_add<passes::DlssPassState>().Prepare(m_device->GetNVRHIDevice(),

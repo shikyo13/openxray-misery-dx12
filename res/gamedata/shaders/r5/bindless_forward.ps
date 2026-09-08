@@ -18,6 +18,7 @@ struct PS_INPUT
     float3 tangent : TEXCOORD3;
     float3 bitangent : TEXCOORD4;
     nointerpolation uint materialID : TEXCOORD5;  // Direct material ID (no indirection)
+    float3 hemisphere : TEXCOORD10;
 #ifdef WATER_SURFACES
     float4 waterLight : COLOR0;
     float sunOcclusion : TEXCOORD6;
@@ -118,7 +119,12 @@ PS_OUTPUT main(PS_INPUT input)
         ao = pbrSample.b;
     }
 
-    f_forward fwd = output_forward_pbr(albedo, N, input.worldPos, metallic, roughness, ao, input.position);
+    // MISERY get_hemi reads the alpha channel of the third level texture.
+    // Static vertex-lit geometry instead carries hemisphere visibility in N.a.
+    float hemi = input.hemisphere.z;
+    if (mat.hemiIndex != INVALID_TEXTURE_INDEX)
+        hemi = GetBindlessTexture(mat.hemiIndex).SampleLevel(smp_rtlinear, input.hemisphere.xy, 0).a;
+    f_forward fwd = output_forward_pbr(albedo, N, input.worldPos, metallic, roughness, ao, input.position, false, hemi);
     output.color = float4(fwd.color.rgb, diffuseSample.a);
     output.normal = fwd.normal;
     output.baseColor = fwd.baseColor;
