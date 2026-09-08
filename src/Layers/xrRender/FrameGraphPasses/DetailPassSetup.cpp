@@ -22,6 +22,7 @@ extern ENGINE_API float ps_r__Detail_l_ambient;
 // Phase 5: Grass wind tuning parameters (defined in xrEngine)
 extern ENGINE_API float ps_r3_grass_wind_multiplier;
 extern ENGINE_API float ps_r3_grass_wind_min;
+extern ENGINE_API float ps_r3_grass_wind_lerp_rate;
 extern ENGINE_API float ps_r3_grass_wind_displacement;
 extern ENGINE_API float ps_r3_grass_interaction_displacement;
 
@@ -125,12 +126,30 @@ DefaultOutputLayout setupDetailPass(
 
             if (g_pGamePersistent)
             {
-                data.detailManager->windSpeed = _max(
-                    g_pGamePersistent->Environment().CurrentEnv.wind_velocity * ps_r3_grass_wind_multiplier,
-                    ps_r3_grass_wind_min);
-                // CEnvDescriptor already stores radians; shaders receive degrees below.
-                float wind_rad = g_pGamePersistent->Environment().CurrentEnv.wind_direction;
-                data.detailManager->windDirection.set(_cos(wind_rad), _sin(wind_rad));
+                auto* wind = data.detailManager;
+                const auto& env = g_pGamePersistent->Environment().CurrentEnv;
+                // Convert authored velocity (m/s, sometimes hundreds in mods) to
+                // bounded bending pressure with a 10 m/s response scale.
+                const float pressure = 1.0f - std::exp(-_max(env.wind_velocity, 0.0f) * 0.1f);
+                const float target = _max(pressure * ps_r3_grass_wind_multiplier, ps_r3_grass_wind_min);
+                const float dt = _max(Device.fTimeDelta, 0.0f);
+                if (!wind->windStateReady) {
+                    wind->windSpeed = target;
+                    wind->windAngle = env.wind_direction;
+                    wind->windStateReady = true;
+                } else {
+                    const float blend = 1.0f - std::exp(-_max(ps_r3_grass_wind_lerp_rate, 0.1f) * dt);
+                    wind->windSpeed += (target - wind->windSpeed) * blend;
+                    wind->windAngle += std::remainder(env.wind_direction - wind->windAngle, PI_MUL_2) * blend;
+                }
+                wind->windDirection.set(_cos(wind->windAngle), _sin(wind->windAngle));
+                // Integrate a continuous, bounded scroll rate. Multiplying absolute
+                // time by a changing wind speed jumps to unrelated noise samples.
+                wind->windNoisePhase = std::fmod(wind->windNoisePhase + dt *
+                    (0.25f + 0.75f * clampr(wind->windSpeed, 0.0f, 1.0f)), 200.0f);
+                if (strstr(Core.Params, "-weather_trace") && Device.dwFrame % 120 == 0)
+                    Msg("* [GrassWind] frame=%u velocity=%.3f pressure=%.4f phase=%.4f radians=%.4f",
+                        Device.dwFrame, env.wind_velocity, wind->windSpeed, wind->windNoisePhase, wind->windAngle);
             }
 
             nvrhi::ITexture* normalTexture = fg.GetPhysicalTexture(data.outputNormal);
@@ -162,10 +181,8 @@ DefaultOutputLayout setupDetailPass(
             auto dynLightCB = cache.GetOrCreateVolatileCB("Detail", "DynLight", 48, renderDevice);
 
             // b3: DetailGlobals
-            float windAngleDeg = 0.0f;
+            float windAngleDeg = rad2deg(dm->windAngle);
             float windSpeed = dm->windSpeed;
-            if (g_pGamePersistent)
-                windAngleDeg = rad2deg(g_pGamePersistent->Environment().CurrentEnv.wind_direction);
 
             FGDetailManager::DetailFrameConstants frameConstants;
             const float quant = 16384.0f;
@@ -177,7 +194,7 @@ DefaultOutputLayout setupDetailPass(
             frameConstants.detail_params.set(
                 float(dm->dtH.x_size()), float(dm->dtH.z_size()),
                 float(dm->dtH.x_offs()), float(dm->dtH.z_offs()));
-            frameConstants.g_wind_direction.set(windAngleDeg, windSpeed, 0.0f, 0.0f);
+            frameConstants.g_wind_direction.set(windAngleDeg, windSpeed, dm->windNoisePhase, 0.0f);
             frameConstants.grass_wind_displacement = ps_r3_grass_wind_displacement;
             frameConstants.grass_interaction_displacement = ps_r3_grass_interaction_displacement;
             frameConstants.interaction_atlas_index = 0;

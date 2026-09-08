@@ -31,7 +31,7 @@ cbuffer DetailGlobals : register(b3)
     float4 dir2D_2;                 // Wind direction 2 (perpendicular)
     float4x4 g_detail_VP;
     float4 detail_params;           // x=slot_x_size, y=slot_z_size, z=slot_x_offs, w=slot_z_offs
-    float4 g_wind_direction;        // x=wind angle degrees, y=wind speed, z/w=unused
+    float4 g_wind_direction;        // x=wind angle degrees, y=bending pressure, z=continuous phase
     float grass_wind_displacement;  // Wind displacement strength
     float grass_interaction_displacement;  // Interaction displacement strength
     uint interaction_atlas_index;   // Bindless index for interaction atlas
@@ -211,25 +211,22 @@ v2p_flat main(v_blade_sdf I, uint instance_id : SV_InstanceID)
 
 	// ===== WIND ANIMATION (Based on grass_example_repo reference) =====
 	// Sample Perlin noise for direction, strength, and turbulence separately
-	// Key: Scale inversely with wind_speed, time scroll proportionally
+	// Keep the spatial pattern fixed and scroll with the integrated wind phase.
 	float wind_speed = max(g_wind_direction.y, 0.1);  // Avoid division by zero
-	float time = wave.w;  // Global time
+	float wind_phase = g_wind_direction.z;
 
 	// Wind DIRECTION sample - larger scale, slower movement
-	// Reference: pos.zx * 0.005/wind_speed + TIME * 0.005 * wind_speed
-	float2 dir_uv = P0.zx * (0.005 / wind_speed) + time * (0.005 * wind_speed);
+	float2 dir_uv = P0.zx * 0.005 + wind_phase * 0.005;
 	float wind_dir_noise = g_Perlin4D.SampleLevel(smp_linear, float3(dir_uv, 0), 0).r;
 
 	// Wind STRENGTH sample - smaller scale, faster movement
-	// Reference: pos.xz * 0.025/wind_speed + TIME * 0.05
-	float2 str_uv = P0.xz * (0.025 / wind_speed) + time * 0.05;
+	float2 str_uv = P0.xz * 0.025 + wind_phase * 0.025;
 	float wind_str_noise = g_Perlin4D.SampleLevel(smp_linear, float3(str_uv, 0), 0).r;
 
 	// Wind TURBULENCE sample - same as strength but with HEIGHT-based time offset
 	// This makes blade tips flutter at different phase than base
-	// Reference: pos.xz * 0.025/wind_speed + (TIME + height_factor² * 0.25) * 0.05
 	float height_factor = vertex_height_factor;  // 0 at base, 1 at tip
-	float2 turb_uv = P0.xz * (0.025 / wind_speed) + (time + height_factor * height_factor * 0.25) * 0.05;
+	float2 turb_uv = P0.xz * 0.025 + (wind_phase + height_factor * height_factor * 0.25) * 0.025;
 	float wind_turb_noise = g_Perlin4D.SampleLevel(smp_linear, float3(turb_uv, 0), 0).r;
 
 	// Process strength: remap to [0.25, 1.0], square for contrast, scale by wind_speed

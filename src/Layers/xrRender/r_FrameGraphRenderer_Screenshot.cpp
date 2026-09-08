@@ -124,8 +124,8 @@ void FrameGraphRenderer::Screenshot(IRender::ScreenshotMode mode, pcstr name)
     else if (mode == IRender::SM_NORMAL)
     {
         string64 stamp;
-        xr_sprintf(filename, "ss_%s_%s_(%s).jpg", Core.UserName, timestamp(stamp),
-            g_pGameLevel ? g_pGameLevel->name().c_str() : "mainmenu");
+        xr_sprintf(filename, "ss_%s_%s_(%s)_f%u.jpg", Core.UserName, timestamp(stamp),
+            g_pGameLevel ? g_pGameLevel->name().c_str() : "mainmenu", Device.dwFrame);
         if (IWriter* file = FS.w_open("$screenshots$", filename))
         {
             XRay::Media::Image jpeg(desc.width, desc.height, image.GetPixels(), XRay::Media::ImageDataFormat::RGBA8);
@@ -135,8 +135,8 @@ void FrameGraphRenderer::Screenshot(IRender::ScreenshotMode mode, pcstr name)
         if (strstr(Core.Params, "-ss_tga"))
         {
             string_path hqName;
-            xr_sprintf(hqName, "ssq_%s_%s_(%s).tga", Core.UserName, stamp,
-                g_pGameLevel ? g_pGameLevel->name().c_str() : "mainmenu");
+            xr_sprintf(hqName, "ssq_%s_%s_(%s)_f%u.tga", Core.UserName, stamp,
+                g_pGameLevel ? g_pGameLevel->name().c_str() : "mainmenu", Device.dwFrame);
             DirectX::Blob blob;
             result = DirectX::SaveToTGAMemory(*image.GetImage(0, 0, 0), blob);
             if (SUCCEEDED(result))

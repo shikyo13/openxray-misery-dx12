@@ -235,6 +235,9 @@ public:
     // Wind parameters (set from environment, consumed by detail/grass passes)
     Fvector2 windDirection = {1.0f, 0.0f};
     float windSpeed = 0.5f;
+    float windAngle = 0.0f;
+    float windNoisePhase = 0.0f;
+    bool windStateReady = false;
 
     struct DetailCullingStats
     {

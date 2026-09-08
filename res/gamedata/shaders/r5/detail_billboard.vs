@@ -111,15 +111,16 @@ v2p_billboard main(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceI
 	float4 world_pos = float4(rotated + raw.pos, 1.0);
 
 	float wind_speed = max(g_wind_direction.y, 0.1);
-	float time = wave.w;
+	float wind_phase = g_wind_direction.z;
 
 	float wind_angle_rad = g_wind_direction.x * (M_PI / 180.0);
 	float2 global_wind_dir = float2(sin(wind_angle_rad), cos(wind_angle_rad));
 
-	float2 dir_uv = world_pos.zx * (0.005 / wind_speed) + time * (0.005 * wind_speed);
+	// Root-anchored spatial coordinates and a continuous phase keep gusts coherent.
+	float2 dir_uv = raw.pos.zx * 0.005 + wind_phase * 0.005;
 	float wind_dir_noise = g_Perlin4D.SampleLevel(smp_linear, float3(dir_uv, 0), 0).r;
 
-	float2 str_uv = world_pos.xz * (0.025 / wind_speed) + time * 0.05;
+	float2 str_uv = raw.pos.xz * 0.025 + wind_phase * 0.025;
 	float wind_str_noise = g_Perlin4D.SampleLevel(smp_linear, float3(str_uv, 0), 0).r;
 
 	float fbm_wind_strength = lerp(0.25, 1.0, wind_str_noise);

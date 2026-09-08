@@ -175,6 +175,9 @@ void FGDetailManager::Unload()
 {
     ZoneScoped;
 
+    windStateReady = false;
+    windNoisePhase = 0.0f;
+
     DestroyGPUBuffers();
 
     for (CDetail* detail : detail_models)
