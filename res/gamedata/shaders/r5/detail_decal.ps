@@ -46,5 +46,5 @@ f_forward main(p_decal I)
 		ao = pbr.b;
 	}
 
-	return output_forward_pbr(texel.rgb, N, I.position.xyz, metallic, roughness, ao, I.hpos);
+	return output_forward_pbr(texel.rgb, N, I.position.xyz, metallic, roughness, ao, I.hpos, false, I.position.w);
 }

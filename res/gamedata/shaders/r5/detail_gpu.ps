@@ -177,5 +177,5 @@ f_forward main(p_flat I)
     float3 sss = ComputeGrassSSS(N, -L_sun_dir_w, t);
     float3 finalAlbedo = grassAlbedo + sss * L_sun_color;
 
-    return output_forward_pbr(finalAlbedo, N, I.position.xyz, metallic, roughness, ao, I.hpos);
+    return output_forward_pbr(finalAlbedo, N, I.position.xyz, metallic, roughness, ao, I.hpos, false, I.position.w);
 }

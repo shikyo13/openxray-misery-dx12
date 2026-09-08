@@ -59,5 +59,6 @@ f_forward main(p_billboard I)
 	float3 sss = ComputeBillboardSSS(N, -L_sun_dir_w, t);
 	albedo += sss * L_sun_color;
 
-	return output_forward_pbr(albedo, N, I.position.xyz, metallic, roughness, ao, I.hpos);
+	// The detail slot supplies the same baked sky visibility as legacy details.
+	return output_forward_pbr(albedo, N, I.position.xyz, metallic, roughness, ao, I.hpos, false, I.position.w);
 }
