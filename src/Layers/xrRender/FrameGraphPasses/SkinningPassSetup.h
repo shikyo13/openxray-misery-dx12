@@ -78,7 +78,8 @@ void InitializeSkinningResources(fg::RenderDevice* device, const nvrhi::Framebuf
 
 u32 DrawSkinnedSunShadows(RenderContext* context, RenderDevice* device, GPUCullingManager* gpuCulling,
     const GeometryCollector* geometry, decals::OverlayManager* overlays, const Fmatrix& viewProjection,
-    const CFrustum& frustum, nvrhi::IFramebuffer* framebuffer, SkinningPassState& state);
+    const CFrustum& frustum, nvrhi::IFramebuffer* framebuffer, SkinningPassState& state,
+    const xr_vector<const GeometryBatch*>* candidates = nullptr);
 
 struct SkinningPassData {
     framegraph::VirtualResourceHandle color;

@@ -7,11 +7,13 @@
 #include "Layers/xrRender/FrameGraph/RenderPassBuilder.h"
 #include "Layers/xrRender/FrameGraph/PassResourceCache.h"
 #include "Layers/xrRender/Geometry/MaterialCache.h"
+#include "Layers/xrRender/Geometry/GeometryBatch.h"
 #include "Layers/xrRender/RenderContext/RenderDevice.h"
 #include "Layers/xrRender/RenderContext/RenderContext.h"
 #include "Layers/xrRender/Bindless/MaterialBuffer.h"
 #include "Layers/xrRender/GPUCullingManager.h"
 #include "Layers/xrRender/xrRender_console.h"
+#include <chrono>
 
 namespace xray::render::fg::passes {
 namespace {
@@ -149,6 +151,16 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
         },
         [](const PassData& data, const framegraph::FrameGraph& graph, RenderContext* context) {
             auto& state = *data.state;
+            const bool trace = strstr(Core.Params, "-shadow_trace") && Device.dwTimeGlobal >= state.nextTrace;
+            using Clock = std::chrono::steady_clock;
+            auto stamp = Clock::now();
+            double cpu[6] = {};
+            const auto lap = [&](u32 part) {
+                if (!trace) return;
+                const auto now = Clock::now();
+                cpu[part] += std::chrono::duration<double, std::milli>(now - stamp).count();
+                stamp = now;
+            };
             auto* command = context->GetCommandList();
             auto* texture = graph.GetPhysicalTexture(data.texture);
             command->clearDepthStencilTexture(texture, nvrhi::AllSubresources, true, 1.f, false, 0);
@@ -165,32 +177,48 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                     state.outputTexture = texture;
                 }
                 state.outputFramebuffers.resize(texture->getDesc().arraySize);
+                lap(0);
                 xr_vector<u32> candidates[3];
+                xr_vector<const GeometryBatch*> skinnedBatches, skinnedCandidates;
+                if (data.collector) {
+                    for (const auto& batch : data.collector->GetBatches())
+                        if (batch.isSkinned && batch.vertexBuffer && batch.indexBuffer)
+                            skinnedBatches.push_back(&batch);
+                }
+                const auto collect = [&](u32 group, const xr_vector<GPUObjectData>& objects, const light* source) {
+                    candidates[group].clear();
+                    for (u32 i = 0; i < objects.size(); ++i) {
+                        const float radius = source->range + objects[i].radius;
+                        if (objects[i].position.distance_to_sqr(source->position) <= radius * radius)
+                            candidates[group].push_back(i);
+                    }
+                };
                 u32 lastOwner = u32(-1);
+                bool staticCandidatesReady = false;
                 for (u32 face = 0; face < state.matrices.size(); ++face) {
                     if (!state.visibleFaces[face]) continue;
                     ++renderedFaces;
+                    const auto* source = ClusteredLightManager::Instance().GetLightSources()[state.owners[face]];
                     if (state.owners[face] != lastOwner) {
                         lastOwner = state.owners[face];
-                        const auto* source = ClusteredLightManager::Instance().GetLightSources()[lastOwner];
-                        const auto collect = [&](u32 group, const xr_vector<GPUObjectData>& objects) {
-                            candidates[group].clear();
-                            for (u32 i = 0; i < objects.size(); ++i) {
-                                const float radius = source->range + objects[i].radius;
-                                if (objects[i].position.distance_to_sqr(source->position) <= radius * radius)
-                                    candidates[group].push_back(i);
-                            }
-                        };
-                        collect(0, geometry->GetStaticObjectData());
-                        collect(1, geometry->GetTerrainObjectData());
-                        collect(2, geometry->GetDynamicObjectData());
+                        staticCandidatesReady = false;
+                        collect(2, geometry->GetDynamicObjectData(), source);
+                        // A cubemap's corners extend beyond the spherical light
+                        // range. Keep only characters that can shadow this light,
+                        // then apply the existing face frustum test when drawing.
+                        skinnedCandidates.clear();
+                        for (const auto* batch : skinnedBatches) {
+                            const float radius = source->range + batch->worldBoundsRadius;
+                            if (batch->worldBoundsCenter.distance_to_sqr(source->position) <= radius * radius)
+                                skinnedCandidates.push_back(batch);
+                        }
                     }
+                    lap(1);
                     nvrhi::FramebufferDesc fb;
                     fb.setDepthAttachment(nvrhi::FramebufferAttachment().setTexture(texture).setArraySlice(face));
                     auto& framebuffer = state.outputFramebuffers[face];
                     if (!framebuffer) framebuffer = command->getDevice()->createFramebuffer(fb);
                     R_ASSERT2(framebuffer, "Local shadow framebuffer creation failed");
-                    const auto* source = ClusteredLightManager::Instance().GetLightSources()[lastOwner];
                     auto& saved = state.staticCache[source];
                     const u32 lightFace = state.lightFaces[face];
                     const u32 faceCount = source->flags.type == IRender_Light::POINT ? 6 : 1;
@@ -219,6 +247,12 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                     }
                     saved.lastUsedFrame = Device.dwFrame;
                     if (!ps_r_local_shadow_cache || !saved.valid[lightFace] || memcmp(&saved.matrices[lightFace], &state.matrices[face], sizeof(Fmatrix))) {
+                        // Warm cached faces need no static-world candidate scan.
+                        if (!staticCandidatesReady) {
+                            collect(0, geometry->GetStaticObjectData(), source);
+                            collect(1, geometry->GetTerrainObjectData(), source);
+                            staticCandidatesReady = true;
+                        }
                         ++staticUpdates;
                         command->clearDepthStencilTexture(saved.texture,
                             nvrhi::TextureSubresourceSet(0, 1, lightFace, 1), true, 1.f, false, 0);
@@ -233,13 +267,17 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                     }
                     command->copyTexture(texture, nvrhi::TextureSlice().setArraySlice(face),
                         saved.texture, nvrhi::TextureSlice().setArraySlice(lightFace));
+                    lap(2);
                     worldCount += DrawWorldShadowMap(context, data.device, geometry,
                         state.matrices[face], state.frusta[face], framebuffer, state.drawing, candidates, 4);
+                    lap(3);
                     skinnedCount += DrawSkinnedSunShadows(context, data.device, geometry, data.collector,
-                        data.overlays, state.matrices[face], state.frusta[face], framebuffer, *data.skinning);
+                        data.overlays, state.matrices[face], state.frusta[face], framebuffer, *data.skinning, &skinnedCandidates);
+                    lap(4);
                     const Fvector4 lightSphere{source->position.x, source->position.y, source->position.z, source->range};
                     detailCount += DrawDetailShadowMap(context, data.device, data.details, state.drawing,
                         state.matrices[face], state.frusta[face], framebuffer, &lightSphere) ? 1 : 0;
+                    lap(5);
                 }
             }
             // Keep only recently used lights; the command list owns in-flight
@@ -248,11 +286,13 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                 if (Device.dwFrame - it->second.lastUsedFrame > 8) it = state.staticCache.erase(it);
                 else ++it;
             }
-            if (strstr(Core.Params, "-shadow_trace") && Device.dwTimeGlobal >= state.nextTrace) {
+            if (trace) {
                 state.nextTrace = Device.dwTimeGlobal + 1000;
                 Msg("* [LocalShadow] frame=%u size=%u points=%u spots=%u faces=%u rendered=%u static_updates=%u budget=%d omitted=%u world=%u skinned=%u detail=%u",
                     Device.dwFrame, state.resolution, state.pointLights, state.spotLights, u32(state.matrices.size()),
                     renderedFaces, staticUpdates, ps_r_local_shadow_faces, state.omittedLights, worldCount, skinnedCount, detailCount);
+                Msg("* [LocalShadowCPU] frame=%u time=%u init_ms=%.3f candidates_ms=%.3f static_copy_ms=%.3f dynamic_ms=%.3f skinned_ms=%.3f detail_ms=%.3f",
+                    Device.dwFrame, Device.dwTimeGlobal, cpu[0], cpu[1], cpu[2], cpu[3], cpu[4], cpu[5]);
             }
         });
     return pass.texture;

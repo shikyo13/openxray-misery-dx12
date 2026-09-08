@@ -454,9 +454,11 @@ static SkinnedPhaseContext BuildSkinnedPhaseContext(
 
 u32 DrawSkinnedSunShadows(RenderContext* context, RenderDevice* device, GPUCullingManager* gpuCulling,
     const GeometryCollector* geometry, decals::OverlayManager* overlays, const Fmatrix& viewProjection,
-    const CFrustum& frustum, nvrhi::IFramebuffer* framebuffer, SkinningPassState& state)
+    const CFrustum& frustum, nvrhi::IFramebuffer* framebuffer, SkinningPassState& state,
+    const xr_vector<const GeometryBatch*>* candidates)
 {
     if (!geometry || !gpuCulling || !state.initialized || !gpuCulling->GetGlobalBoneBuffer()) return 0;
+    if (candidates && candidates->empty()) return 0;
     auto* command = context->GetCommandList();
     auto* nvDevice = device->GetNVRHIDevice();
     auto* backend = device->GetBackend();
@@ -503,7 +505,10 @@ u32 DrawSkinnedSunShadows(RenderContext* context, RenderDevice* device, GPUCulli
     auto bindings = cache.GetOrCreateBindingSet(bsb.Build(), state.sunShadowLayout, nvDevice);
     R_ASSERT2(bindings, "Skinned sun shadow binding set creation failed");
     u32 count = 0;
-    for (const auto& batch : geometry->GetBatches()) {
+    const auto& batches = geometry->GetBatches();
+    const u32 candidateCount = candidates ? u32(candidates->size()) : u32(batches.size());
+    for (u32 i = 0; i < candidateCount; ++i) {
+        const auto& batch = candidates ? *(*candidates)[i] : batches[i];
         if (!batch.isSkinned || !batch.vertexBuffer || !batch.indexBuffer) continue;
         if (!frustum.testSphere_dirty(batch.worldBoundsCenter, batch.worldBoundsRadius)) continue;
         u32 index = 0;
