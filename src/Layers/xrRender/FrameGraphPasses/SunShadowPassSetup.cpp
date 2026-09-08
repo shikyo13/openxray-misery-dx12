@@ -231,6 +231,11 @@ void InitializeShadowPipeline(RenderDevice* device, SunShadowPassState& state)
 }
 }
 
+void PrepareSunShadowCascades(SunShadowPassState& state)
+{
+    PrepareCascades(state);
+}
+
 framegraph::VirtualResourceHandle setupSunShadowPass(
     framegraph::FrameGraph& graph, RenderDevice* device, GPUCullingManager* geometry,
     MaterialCache* materials, framegraph::VirtualResourceHandle uploadDependency,
@@ -238,7 +243,9 @@ framegraph::VirtualResourceHandle setupSunShadowPass(
     SunShadowPassState& state, const GeometryCollector* collector, SkinningPassState& skinning,
     decals::OverlayManager* overlays)
 {
-    PrepareCascades(state);
+    // Shader hot-reload can clear the blackboard after spatial collection.
+    // Recreate the same camera/light volumes if that happened this frame.
+    PrepareSunShadowCascades(state);
     InitializeShadowPipeline(device, state);
     struct PassData {
         framegraph::VirtualResourceHandle texture;

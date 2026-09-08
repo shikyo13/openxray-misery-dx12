@@ -585,6 +585,8 @@ private:
     // ═══════════════════════════════════════════════════
     // Populated once per frame, reused across passes
     xr_vector<ISpatial*> m_lstRenderables;
+    xr_vector<ISpatial*> m_sunCasterCandidates;
+    xr_vector<ISpatial*> m_sunCasterQuery;
 
     // Frame setup
     void SetupFrame();

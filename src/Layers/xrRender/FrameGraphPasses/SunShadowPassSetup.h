@@ -29,6 +29,9 @@ struct SunShadowPassState {
     bool enabled = false;
 };
 
+// Prepare before collecting renderables using the same volumes as shadow draws.
+void PrepareSunShadowCascades(SunShadowPassState& state);
+
 framegraph::VirtualResourceHandle setupSunShadowPass(
     framegraph::FrameGraph& graph, RenderDevice* device, GPUCullingManager* geometry,
     MaterialCache* materials, framegraph::VirtualResourceHandle uploadDependency,

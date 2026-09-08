@@ -2,6 +2,7 @@
 #include "stdafx.h"
 #include "r_FrameGraphRenderer.h"
 #include "xrEngine/IRenderable.h"
+#include "xrEngine/xr_object.h"
 #include "Layers/xrRender/DetailModel.h"
 #include "Layers/xrRender/LightTrack.h"
 #include "xrCore/FMesh.hpp"
@@ -26,6 +27,7 @@
 #include "ImGuiRendererNVRHI.h"
 #include "xrEngine/device.h"
 #include <imgui.h>
+#include <functional>
 
 // Lambda-based pass setup functions
 #include "FrameGraphPasses/DebugDrawPassSetup.h"
@@ -909,12 +911,16 @@ void FrameGraphRenderer::SetupFrame() {
     }
 
     m_lstRenderables.clear();
+    m_sunCasterCandidates.clear();
 
     if (levelLoaded)
     {
         if (levelLoaded && !g_pGamePersistent->IsLoadingScreenShown())
         {
             ZoneScopedN("SetupFrame::FrustumQuery");
+
+            auto& sunShadows = m_blackboard->get_or_add<passes::SunShadowPassState>();
+            passes::PrepareSunShadowCascades(sunShadows);
 
             CFrustum view_frustum;
             view_frustum.CreateFromMatrix(Device.mFullTransform, FRUSTUM_P_LRTB | FRUSTUM_P_FAR);
@@ -929,6 +935,41 @@ void FrameGraphRenderer::SetupFrame() {
                 spatial_types,
                 view_frustum
             );
+
+            // The camera's query omits objects whose shadows reach into its view.
+            // Use the same light volumes as the draw pass; keep camera-visible
+            // lights in their original query and only extend renderable coverage.
+            const u32 cameraCount = u32(m_lstRenderables.size());
+            if (sunShadows.enabled && !ps_r_sun_camera_only) {
+                for (const auto& frustum : sunShadows.frustum) {
+                    g_pGamePersistent->SpatialSpace.q_frustum(m_sunCasterQuery,
+                        0, STYPE_RENDERABLE, frustum);
+                    for (ISpatial* spatial : m_sunCasterQuery) {
+                        const auto& bounds = spatial->GetSpatialData().sphere;
+                        if (view_frustum.testSphere_dirty(bounds.P, bounds.R)) continue;
+                        auto* renderable = spatial->dcast_Renderable();
+                        if (!renderable || !renderable->renderable_ShadowGenerate()) continue;
+                        m_sunCasterCandidates.push_back(spatial);
+                    }
+                }
+                // Cascades overlap. Reuse the vectors and submit each callback
+                // exactly once; ordinary camera/GPU culling still controls color.
+                std::sort(m_sunCasterCandidates.begin(), m_sunCasterCandidates.end(), std::less<ISpatial*>{});
+                m_sunCasterCandidates.erase(std::unique(m_sunCasterCandidates.begin(), m_sunCasterCandidates.end()),
+                    m_sunCasterCandidates.end());
+                m_lstRenderables.insert(m_lstRenderables.end(), m_sunCasterCandidates.begin(), m_sunCasterCandidates.end());
+            }
+            if (strstr(Core.Params, "-shadow_trace") && Device.dwFrame % 120 == 0) {
+                xr_string ids;
+                for (ISpatial* spatial : m_sunCasterCandidates) {
+                    if (const auto* object = spatial->dcast_GameObject()) {
+                        ids += std::to_string(object->ID()).c_str();
+                        ids += ',';
+                    }
+                }
+                Msg("* [SunCasters] frame=%u camera=%u offscreen=%u merged=%u ids=%s",
+                    Device.dwFrame, cameraCount, u32(m_sunCasterCandidates.size()), u32(m_lstRenderables.size()), ids.c_str());
+            }
         }
     }
 
