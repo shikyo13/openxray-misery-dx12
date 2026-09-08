@@ -607,7 +607,7 @@ void DrawObjectMotion(RenderContext* context, RenderDevice* device, GPUCullingMa
     auto worldCB = cache.GetOrCreateVolatileCB("ObjectMotion", "World", sizeof(DynamicTransforms), device, 8192);
     auto materialCB = cache.GetOrCreateVolatileCB("ObjectMotion", "Material", sizeof(SkinnedMaterialCB), device, 8192);
     auto globalsCB = cache.GetOrCreateVolatileCB("ObjectMotion", "Globals", sizeof(StaticGlobals), device);
-    auto globals = BuildStaticGlobals();
+    auto globals = BuildStaticGlobals(2.f, framebuffer->getFramebufferInfo().width, framebuffer->getFramebufferInfo().height);
     command->writeBuffer(globalsCB, &globals, sizeof(globals));
     if (overlays) overlays->UploadSplats(command);
     auto bindingSet = [&](bool skinned) {

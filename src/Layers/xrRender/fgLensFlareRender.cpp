@@ -363,9 +363,10 @@ void FGLensFlareRender::DispatchVisibility(nvrhi::ICommandList* cmdList, nvrhi::
     }
 
     FlareVisParams cb{};
-    cb.sunPosX = m_sunPosPx.x;
-    cb.sunPosY = m_sunPosPx.y;
-    cb.radiusPx = m_sunRadiusPx;
+    const auto& depthDesc = depth->getDesc();
+    cb.sunPosX = m_sunPosPx.x * float(depthDesc.width) / float(Device.dwWidth);
+    cb.sunPosY = m_sunPosPx.y * float(depthDesc.height) / float(Device.dwHeight);
+    cb.radiusPx = m_sunRadiusPx * float(depthDesc.height) / float(Device.dwHeight);
     cb.emaAlpha = 1.f - expf(-8.f * Device.fTimeDelta);
     cb.valid = m_sunValid ? 1u : 0u;
     cmdList->writeBuffer(m_visConstantBuffer, &cb, sizeof(cb));

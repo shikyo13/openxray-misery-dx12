@@ -372,4 +372,101 @@ DefaultOutputLayout setupDetailPass(
     return outputs;
 }
 
+VirtualResourceHandle setupDetailMotionPass(FrameGraph& graph, fg::RenderDevice* device,
+    FGDetailManager* dm, VirtualResourceHandle depth, VirtualResourceHandle motion,
+    const Fmatrix& previousViewProjection, bool historyValid, DetailMotionPassState& state)
+{
+    // This is the authored MISERY detail path. Procedural blade history is separate.
+    if (!dm || ps_r__detail_gpu || !dm->billboardGraphicsPipeline ||
+        !dm->visibleBillboardInstancesBuffer || !dm->billboardDrawArgsBuffer ||
+        !dm->pulledIndexBuffer || !dm->maxPulledIndexCount) return motion;
+    auto* nv = device->GetNVRHIDevice();
+    auto* loader = GEnv.Render->GetShaderLoader();
+    auto& cache = GetPassResourceCache();
+    if (!state.pipeline) {
+        auto vs = loader->LoadVertexShader("detail_motion");
+        auto ps = loader->LoadPixelShader("detail_motion");
+        R_ASSERT2(vs.handle && ps.handle && vs.reflection && ps.reflection, "Detail motion shader compilation failed");
+        state.layout = cache.GetOrCreateBindingLayoutFromReflection("Detail.Motion", *vs.reflection, *ps.reflection, nv);
+        nvrhi::GraphicsPipelineDesc desc;
+        desc.VS = vs.handle; desc.PS = ps.handle;
+        desc.bindingLayouts = {state.layout, device->GetBackend()->GetBindlessLayout()};
+        desc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::None;
+        desc.renderState.depthStencilState.depthTestEnable = true;
+        desc.renderState.depthStencilState.depthWriteEnable = false;
+        desc.renderState.depthStencilState.depthFunc = nvrhi::ComparisonFunc::Equal;
+        nvrhi::FramebufferInfo info;
+        info.colorFormats = {nvrhi::Format::RG16_FLOAT};
+        info.depthFormat = nvrhi::Format::D32;
+        state.pipeline = nv->createGraphicsPipeline(desc, info);
+        R_ASSERT2(state.pipeline, "Detail motion pipeline creation failed");
+    }
+    struct PassData {
+        VirtualResourceHandle depth, motion;
+        fg::RenderDevice* device;
+        FGDetailManager* dm;
+        DetailMotionPassState* state;
+        Fmatrix previousVP;
+        bool historyValid;
+    };
+    auto& pass = graph.addCallbackPass<PassData>("Motion Vectors.Grass",
+        [&](FrameGraph& builder, PassHandle pass, PassData& data) {
+            RenderPassBuilder pb(builder, pass);
+            data.depth = pb.read(depth, ResourceState::DepthStencilRead);
+            data.motion = pb.readWrite(motion, ResourceState::RenderTarget);
+            data.device = device; data.dm = dm; data.state = &state;
+            data.previousVP = previousViewProjection; data.historyValid = historyValid;
+        }, [](const PassData& data, const FrameGraph& graph, fg::RenderContext* ctx) {
+            auto* nv = data.device->GetNVRHIDevice();
+            auto* cmd = ctx->GetCommandList();
+            auto* dm = data.dm;
+            auto& s = *data.state;
+            auto& cache = GetPassResourceCache();
+            const auto current = BuildDetailFrameConstants(dm, Device.mFullTransform);
+            const bool continuous = data.historyValid && s.previousFrame + 1 == Device.dwFrame;
+            struct MotionParams { Fmatrix previousVP; Fvector4 wind; Fvector4 controls; } params;
+            static_assert(sizeof(params) == 96);
+            params.previousVP = continuous ? data.previousVP : Device.mFullTransform;
+            params.wind = continuous ? s.previousWind : current.g_wind_direction;
+            params.controls.set(continuous ? s.previousDisplacement : current.grass_wind_displacement,
+                ps_r_motion_debug == 3 ? 1.f : 0.f, float(dm->buildDetailsBindlessIndex), 0.f);
+            auto currentCB = cache.GetOrCreateVolatileCB("Detail.Motion", "DetailGlobals", sizeof(current), data.device);
+            auto motionCB = cache.GetOrCreateVolatileCB("Detail.Motion", "DetailMotionParams", sizeof(params), data.device);
+            cmd->writeBuffer(currentCB, &current, sizeof(current));
+            cmd->writeBuffer(motionCB, &params, sizeof(params));
+            auto* loader = GEnv.Render->GetShaderLoader();
+            BindingSetBuilder binding(*loader->GetCachedReflection("detail_motion", ".vs"),
+                *loader->GetCachedReflection("detail_motion", ".ps"), nv, "Detail.Motion");
+            binding.ConstantBuffer("DetailGlobals", currentCB).ConstantBuffer("DetailMotionParams", motionCB)
+                .BufferSRV("visible_indices", dm->visibleBillboardInstancesBuffer)
+                .BufferSRV("detail_models", dm->detailModelsBuffer)
+                .BufferSRV("pulled_vertices", dm->pulledVertexBuffer)
+                .BufferSRV("all_instances", dm->generatedInstancesBuffer)
+                .Texture("g_Perlin4D", dm->perlin4dTexture);
+            auto bindings = cache.GetOrCreateBindingSet(binding.Build(), s.layout, nv);
+            R_ASSERT2(bindings, "Detail motion binding creation failed");
+            auto* motion = graph.GetPhysicalTexture(data.motion);
+            nvrhi::FramebufferDesc fb;
+            fb.addColorAttachment(motion).setDepthAttachment(graph.GetPhysicalTexture(data.depth));
+            auto framebuffer = cache.GetOrCreateFramebuffer("Detail.Motion", fb, nv);
+            R_ASSERT2(framebuffer, "Detail motion framebuffer creation failed");
+            nvrhi::GraphicsState draw;
+            draw.framebuffer = framebuffer;
+            draw.viewport.addViewportAndScissorRect(nvrhi::Viewport(float(motion->getDesc().width), float(motion->getDesc().height)));
+            draw.pipeline = s.pipeline;
+            draw.bindings = {bindings, data.device->GetBackend()->GetBindlessDescriptorTable()};
+            draw.indexBuffer = {dm->pulledIndexBuffer, nvrhi::Format::R16_UINT, 0};
+            draw.indirectParams = dm->billboardDrawArgsBuffer;
+            cmd->setGraphicsState(draw);
+            cmd->drawIndexedIndirect(0);
+            if (strstr(Core.Params, "-graphics_trace") && Device.dwFrame % 120 == 0)
+                Msg("* [DetailMotion] frame=%u history=%u previous_phase=%.6f current_phase=%.6f",
+                    Device.dwFrame, unsigned(continuous), params.wind.z, current.g_wind_direction.z);
+            s.previousWind = current.g_wind_direction;
+            s.previousDisplacement = current.grass_wind_displacement;
+            s.previousFrame = Device.dwFrame;
+        });
+    return pass.motion;
+}
+
 } // namespace xray::render::fg::passes

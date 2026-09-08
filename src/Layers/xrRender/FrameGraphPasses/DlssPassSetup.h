@@ -10,11 +10,14 @@ class DlssPassState {
 public:
     DlssPassState();
     ~DlssPassState();
-    bool Prepare(nvrhi::IDevice* device, u32 width, u32 height);
+    bool Prepare(nvrhi::IDevice* device, u32 outputWidth, u32 outputHeight, u32 mode,
+        u32& renderWidth, u32& renderHeight);
     bool Evaluate(nvrhi::ICommandList* cmd, nvrhi::ITexture* color, nvrhi::ITexture* depth,
         nvrhi::ITexture* motion, nvrhi::ITexture* output, float jitterX, float jitterY, bool reset);
     nvrhi::ComputePipelineHandle depthPipeline;
     nvrhi::BindingLayoutHandle depthLayout;
+    nvrhi::ComputePipelineHandle fallbackPipeline;
+    nvrhi::BindingLayoutHandle fallbackLayout;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl;
@@ -22,5 +25,6 @@ private:
 framegraph::VirtualResourceHandle setupDlssPass(framegraph::FrameGraph& graph,
     fg::RenderDevice* device, framegraph::VirtualResourceHandle color,
     framegraph::VirtualResourceHandle depth, framegraph::VirtualResourceHandle motion,
-    u32 width, u32 height, float jitterX, float jitterY, bool reset, DlssPassState& state);
+    u32 width, u32 height, u32 outputWidth, u32 outputHeight,
+    float jitterX, float jitterY, bool reset, DlssPassState& state);
 }

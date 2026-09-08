@@ -132,7 +132,7 @@ static_assert(sizeof(StaticGlobals) == 848, "StaticGlobals must be 848 bytes");
 // Legacy alias for compatibility
 using GlobalConstants = StaticGlobals;
 
-inline void FillGlobalConstants(GlobalConstants& cb) {
+inline void FillGlobalConstants(GlobalConstants& cb, u32 width = Device.dwWidth, u32 height = Device.dwHeight) {
     cb.m_V = Device.mView;
     cb.m_P = Device.mProject;
     cb.m_VP.mul(Device.mProject, Device.mView);
@@ -180,18 +180,18 @@ inline void FillGlobalConstants(GlobalConstants& cb) {
     const float HorzTan = -VertTan / Device.fASPECT;
 
     // Vertex decompression (used for quantized positions)
-    cb.pos_decompression_params.set(HorzTan, VertTan, (2.0f * HorzTan) / (float)Device.dwWidth, (2.0f * VertTan) / (float)Device.dwHeight);
-    cb.pos_decompression_params2.set((float)Device.dwWidth, (float)Device.dwHeight, 1.0f / (float)Device.dwWidth, 1.0f / (float)Device.dwHeight);
+    cb.pos_decompression_params.set(HorzTan, VertTan, (2.0f * HorzTan) / (float)width, (2.0f * VertTan) / (float)height);
+    cb.pos_decompression_params2.set((float)width, (float)height, 1.0f / (float)width, 1.0f / (float)height);
 
     // Parallax mapping
     cb.parallax.set(0.02f, -0.01f, 0.0f, 0.0f);  // height scale, min samples, max samples, unused
 
     // Screen resolution (for UI shaders and other effects)
     cb.screen_res.set(
-        (float)Device.dwWidth,              // x = width
-        (float)Device.dwHeight,             // y = height
-        1.0f / (float)Device.dwWidth,       // z = 1/width
-        1.0f / (float)Device.dwHeight       // w = 1/height
+        (float)width,              // x = width
+        (float)height,             // y = height
+        1.0f / (float)width,       // z = 1/width
+        1.0f / (float)height       // w = 1/height
     );
 
     // Clear padding to avoid uninitialized memory warnings
@@ -269,9 +269,9 @@ inline void FillSunConstants(StaticGlobals& cb, const SunLightData& sun) {
 
 void GetSunLightData(SunLightData& outSun, float hdrIntensity = 2.0f);
 
-inline StaticGlobals BuildStaticGlobals(float hdrIntensity = 2.0f) {
+inline StaticGlobals BuildStaticGlobals(float hdrIntensity = 2.0f, u32 width = Device.dwWidth, u32 height = Device.dwHeight) {
     StaticGlobals sg = {};
-    FillGlobalConstants(sg);
+    FillGlobalConstants(sg, width, height);
     SunLightData sunData;
     GetSunLightData(sunData, hdrIntensity);
     FillSunConstants(sg, sunData);

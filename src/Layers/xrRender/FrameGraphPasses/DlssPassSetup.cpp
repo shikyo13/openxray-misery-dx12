@@ -22,7 +22,7 @@ struct DlssPassState::Impl {
     NVSDK_NGX_Parameter* parameters = nullptr;
     NVSDK_NGX_Handle* feature = nullptr;
     bool initialized = false, supported = false;
-    u32 width = 0, height = 0, lastFrame = 0;
+    u32 width = 0, height = 0, outputWidth = 0, outputHeight = 0, mode = 0, lastFrame = 0;
     ~Impl() {
         if (device) device->waitForIdle();
         if (feature) NVSDK_NGX_D3D12_ReleaseFeature(feature);
@@ -34,14 +34,19 @@ struct DlssPassState::Impl {
 DlssPassState::DlssPassState() : impl(std::make_unique<Impl>()) {}
 DlssPassState::~DlssPassState() = default;
 
-bool DlssPassState::Prepare(nvrhi::IDevice* device, u32 width, u32 height)
+bool DlssPassState::Prepare(nvrhi::IDevice* device, u32 outputWidth, u32 outputHeight, u32 mode,
+    u32& renderWidth, u32& renderHeight)
 {
+    renderWidth = outputWidth; renderHeight = outputHeight;
 #ifdef XRAY_HAVE_DLSS
     if (impl->device && impl->device.Get() != device) impl = std::make_unique<Impl>();
     auto& s = *impl;
-    if (s.feature && s.width == width && s.height == height) return true;
+    if (s.feature && s.outputWidth == outputWidth && s.outputHeight == outputHeight && s.mode == mode) {
+        renderWidth = s.width; renderHeight = s.height;
+        return true;
+    }
     s.nativeDevice = device->getNativeObject(nvrhi::ObjectTypes::D3D12_Device);
-    if (!s.nativeDevice || width < 32 || height < 32) return false;
+    if (!s.nativeDevice || outputWidth < 32 || outputHeight < 32 || mode < 2 || mode > 5) return false;
     s.device = device;
     if (!s.initialized) {
         string_path path;
@@ -72,6 +77,18 @@ bool DlssPassState::Prepare(nvrhi::IDevice* device, u32 width, u32 height)
         Msg("* [DLSS] NGX initialized; SDK 310.7.0, native D3D12, Super Resolution/DLAA supported");
     }
     if (!s.supported) return false;
+    const NVSDK_NGX_PerfQuality_Value qualities[] = {NVSDK_NGX_PerfQuality_Value_DLAA,
+        NVSDK_NGX_PerfQuality_Value_MaxQuality, NVSDK_NGX_PerfQuality_Value_Balanced,
+        NVSDK_NGX_PerfQuality_Value_MaxPerf};
+    const char* names[] = {"DLAA", "Quality", "Balanced", "Performance"};
+    u32 width = 0, height = 0, maxWidth = 0, maxHeight = 0, minWidth = 0, minHeight = 0;
+    float sharpness = 0.f;
+    const auto optimal = NGX_DLSS_GET_OPTIMAL_SETTINGS(s.parameters, outputWidth, outputHeight,
+        qualities[mode - 2], &width, &height, &maxWidth, &maxHeight, &minWidth, &minHeight, &sharpness);
+    if (NVSDK_NGX_FAILED(optimal) || width < 32 || height < 32 || width > outputWidth || height > outputHeight) {
+        Msg("! [DLSS] %s is unavailable at %ux%u; retaining FXAA", names[mode - 2], outputWidth, outputHeight);
+        return false;
+    }
     device->waitForIdle();
     if (s.feature) {
         NVSDK_NGX_D3D12_ReleaseFeature(s.feature);
@@ -83,13 +100,19 @@ bool DlssPassState::Prepare(nvrhi::IDevice* device, u32 width, u32 height)
     cmd->open();
     ID3D12GraphicsCommandList* native = cmd->getNativeObject(nvrhi::ObjectTypes::D3D12_GraphicsCommandList);
     NVSDK_NGX_DLSS_Create_Params create{};
-    create.Feature.InWidth = create.Feature.InTargetWidth = width;
-    create.Feature.InHeight = create.Feature.InTargetHeight = height;
-    create.Feature.InPerfQualityValue = NVSDK_NGX_PerfQuality_Value_DLAA;
+    create.Feature.InWidth = width; create.Feature.InTargetWidth = outputWidth;
+    create.Feature.InHeight = height; create.Feature.InTargetHeight = outputHeight;
+    create.Feature.InPerfQualityValue = qualities[mode - 2];
     create.InFeatureCreateFlags = NVSDK_NGX_DLSS_Feature_Flags_IsHDR |
         NVSDK_NGX_DLSS_Feature_Flags_MVLowRes | NVSDK_NGX_DLSS_Feature_Flags_MVJittered |
         NVSDK_NGX_DLSS_Feature_Flags_DepthInverted | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure;
     NVSDK_NGX_Parameter_SetUI(s.parameters, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_DLAA,
+        NVSDK_NGX_DLSS_Hint_Render_Preset_K);
+    NVSDK_NGX_Parameter_SetUI(s.parameters, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Quality,
+        NVSDK_NGX_DLSS_Hint_Render_Preset_K);
+    NVSDK_NGX_Parameter_SetUI(s.parameters, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Balanced,
+        NVSDK_NGX_DLSS_Hint_Render_Preset_K);
+    NVSDK_NGX_Parameter_SetUI(s.parameters, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Performance,
         NVSDK_NGX_DLSS_Hint_Render_Preset_K);
     const auto result = NGX_D3D12_CREATE_DLSS_EXT(native, 1, 1, &s.feature, s.parameters, &create);
     cmd->clearState();
@@ -97,12 +120,16 @@ bool DlssPassState::Prepare(nvrhi::IDevice* device, u32 width, u32 height)
     device->executeCommandList(cmd);
     device->waitForIdle();
     if (NVSDK_NGX_FAILED(result)) {
-        Msg("! [DLSS] DLAA creation failed: 0x%08x; retaining FXAA", unsigned(result));
+        if (s.feature) NVSDK_NGX_D3D12_ReleaseFeature(s.feature);
+        s.feature = nullptr;
+        Msg("! [DLSS] %s creation failed: 0x%08x; retaining FXAA", names[mode - 2], unsigned(result));
         return false;
     }
     s.width = width; s.height = height; s.lastFrame = 0;
-    Msg("* [DLSS] Created DLAA %ux%u -> %ux%u, preset K, HDR scene input; SDR presentation unchanged",
-        width, height, width, height);
+    s.outputWidth = outputWidth; s.outputHeight = outputHeight; s.mode = mode;
+    renderWidth = width; renderHeight = height;
+    Msg("* [DLSS] Created %s %ux%u -> %ux%u, preset K, HDR scene input; SDR presentation unchanged",
+        names[mode - 2], width, height, outputWidth, outputHeight);
     return true;
 #else
     Msg("! [DLSS] This build has no NVIDIA SDK support; retaining FXAA");
@@ -117,6 +144,14 @@ bool DlssPassState::Evaluate(nvrhi::ICommandList* cmd, nvrhi::ITexture* color, n
     auto& s = *impl;
     if (!s.feature) return false;
     nvrhi::ITexture* inputs[] = {color, depth, motion};
+    bool dimensionsMatch = output->getDesc().width == s.outputWidth && output->getDesc().height == s.outputHeight;
+    for (auto* texture : inputs)
+        dimensionsMatch &= texture->getDesc().width == s.width && texture->getDesc().height == s.height;
+    if (!dimensionsMatch) {
+        Msg("! [DLSS] Render targets do not match the active feature dimensions; returning to FXAA");
+        ps_r_aa = 1;
+        return false;
+    }
     for (auto* texture : inputs)
         cmd->setTextureState(texture, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
     cmd->setTextureState(output, nvrhi::AllSubresources, nvrhi::ResourceStates::UnorderedAccess);
@@ -157,7 +192,7 @@ bool DlssPassState::Evaluate(nvrhi::ICommandList* cmd, nvrhi::ITexture* color, n
     s.lastFrame = Device.dwFrame;
     if (strstr(Core.Params, "-graphics_trace") && (eval.InReset || Device.dwFrame % 120 == 0))
         Msg("* [DLSS] Evaluate frame=%u reset=%d jitter=(%.5f,%.5f) input=%ux%u output=%ux%u",
-            Device.dwFrame, eval.InReset, jitterX, jitterY, s.width, s.height, s.width, s.height);
+            Device.dwFrame, eval.InReset, jitterX, jitterY, s.width, s.height, s.outputWidth, s.outputHeight);
     return true;
 #else
     return false;
@@ -166,7 +201,8 @@ bool DlssPassState::Evaluate(nvrhi::ICommandList* cmd, nvrhi::ITexture* color, n
 
 VirtualResourceHandle setupDlssPass(FrameGraph& graph, fg::RenderDevice* device,
     VirtualResourceHandle color, VirtualResourceHandle depth, VirtualResourceHandle motion,
-    u32 width, u32 height, float jitterX, float jitterY, bool reset, DlssPassState& state)
+    u32 width, u32 height, u32 outputWidth, u32 outputHeight,
+    float jitterX, float jitterY, bool reset, DlssPassState& state)
 {
     auto* nv = device->GetNVRHIDevice();
     auto& cache = GetPassResourceCache();
@@ -178,6 +214,15 @@ VirtualResourceHandle setupDlssPass(FrameGraph& graph, fg::RenderDevice* device,
         pipeline.CS = cs.handle; pipeline.bindingLayouts = {state.depthLayout};
         state.depthPipeline = cache.GetOrCreateComputePipeline("DLSS.Depth", pipeline, nv);
         R_ASSERT2(state.depthPipeline, "DLSS depth pipeline creation failed");
+    }
+    if (!state.fallbackPipeline) {
+        auto cs = GEnv.Render->GetShaderLoader()->LoadComputeShader("dlss_fallback");
+        R_ASSERT2(cs.handle && cs.reflection, "DLSS fallback shader compilation failed");
+        state.fallbackLayout = cache.GetOrCreateBindingLayoutFromReflection("DLSS.Fallback", *cs.reflection, nv);
+        nvrhi::ComputePipelineDesc pipeline;
+        pipeline.CS = cs.handle; pipeline.bindingLayouts = {state.fallbackLayout};
+        state.fallbackPipeline = cache.GetOrCreateComputePipeline("DLSS.Fallback", pipeline, nv);
+        R_ASSERT2(state.fallbackPipeline, "DLSS fallback pipeline creation failed");
     }
     ResourceDesc desc;
     desc.width = width; desc.height = height;
@@ -203,10 +248,11 @@ VirtualResourceHandle setupDlssPass(FrameGraph& graph, fg::RenderDevice* device,
             ctx->Dispatch((data.width + 7) / 8, (data.height + 7) / 8, 1);
         });
     desc.format = nvrhi::Format::RGBA16_FLOAT; desc.isRenderTarget = true;
-    desc.debugName = "rt_DLAA";
+    desc.width = outputWidth; desc.height = outputHeight;
+    desc.debugName = "rt_DLSS";
     auto target = graph.CreateTexture(desc.debugName.c_str(), desc);
     struct EvalData { VirtualResourceHandle color, depth, motion, output; DlssPassState* state; float jitterX, jitterY; bool reset; };
-    auto& evaluated = graph.addCallbackPass<EvalData>("DLSS.DLAA",
+    auto& evaluated = graph.addCallbackPass<EvalData>(width == outputWidth && height == outputHeight ? "DLSS.DLAA" : "DLSS.SuperResolution",
         [&](FrameGraph& builder, PassHandle pass, EvalData& data) {
             RenderPassBuilder pb(builder, pass);
             data.color = pb.read(color); data.depth = pb.read(converted.output); data.motion = pb.read(motion);
@@ -217,8 +263,17 @@ VirtualResourceHandle setupDlssPass(FrameGraph& graph, fg::RenderDevice* device,
             auto* color = graph.GetPhysicalTexture(data.color);
             auto* output = graph.GetPhysicalTexture(data.output);
             if (!data.state->Evaluate(cmd, color, graph.GetPhysicalTexture(data.depth),
-                graph.GetPhysicalTexture(data.motion), output, data.jitterX, data.jitterY, data.reset))
-                cmd->copyTexture(output, nvrhi::TextureSlice(), color, nvrhi::TextureSlice());
+                graph.GetPhysicalTexture(data.motion), output, data.jitterX, data.jitterY, data.reset)) {
+                // Keep a complete display-sized frame if NGX fails mid-frame.
+                // Next frame returns to full-resolution FXAA before geometry renders.
+                auto* reflection = GEnv.Render->GetShaderLoader()->GetCachedReflection("dlss_fallback", ".cs");
+                BindingSetBuilder binding(*reflection, cmd->getDevice(), "DLSS.Fallback");
+                binding.Texture("t_Color", color).TextureUAV("u_Output", output);
+                auto set = GetPassResourceCache().GetOrCreateBindingSet(binding.Build(), data.state->fallbackLayout, cmd->getDevice());
+                R_ASSERT2(set, "DLSS fallback binding failed");
+                ctx->SetComputePipeline(data.state->fallbackPipeline); ctx->SetComputeBindingSet(0, set);
+                ctx->Dispatch((output->getDesc().width + 7) / 8, (output->getDesc().height + 7) / 8, 1);
+            }
         });
     return evaluated.output;
 }

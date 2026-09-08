@@ -38,6 +38,19 @@ struct DetailPassState {
     float lastBladeWidth = 0.0f;
 };
 
+struct DetailMotionPassState {
+    nvrhi::GraphicsPipelineHandle pipeline;
+    nvrhi::BindingLayoutHandle layout;
+    Fvector4 previousWind{};
+    float previousDisplacement = 0;
+    u32 previousFrame = 0;
+};
+
+framegraph::VirtualResourceHandle setupDetailMotionPass(framegraph::FrameGraph& graph,
+    fg::RenderDevice* device, fg::FGDetailManager* detailManager,
+    framegraph::VirtualResourceHandle depth, framegraph::VirtualResourceHandle motion,
+    const Fmatrix& previousViewProjection, bool historyValid, DetailMotionPassState& state);
+
 struct DetailPassData {
     framegraph::VirtualResourceHandle inputColor;
     framegraph::VirtualResourceHandle depth;

@@ -77,7 +77,12 @@ StructuredBuffer<PulledVertex> pulled_vertices : register(t36);
 StructuredBuffer<InstanceData> all_instances : register(t37);
 StructuredBuffer<GPUSlotData> slot_data : register(t38);
 
-#ifdef DETAIL_SHADOW
+#include "detail_wind.h"
+
+#ifdef DETAIL_MOTION
+#include "detail_motion.h"
+#define DetailVertexOutput DetailMotionOutput
+#elif defined(DETAIL_SHADOW)
 struct DetailVertexOutput { float4 hpos : SV_Position; float3 uvAlpha : TEXCOORD0; };
 #else
 #define DetailVertexOutput v2p_billboard
@@ -117,40 +122,20 @@ DetailVertexOutput main(uint vertex_id : SV_VertexID, uint instance_id : SV_Inst
 
 	float4 world_pos = float4(rotated + raw.pos, 1.0);
 
-	float wind_speed = max(g_wind_direction.y, 0.1);
-	float wind_phase = g_wind_direction.z;
+    DetailBend bend = EvaluateDetailBend(raw.pos, height_factor, mdl.flags,
+        g_wind_direction, grass_wind_displacement);
+    world_pos.xyz = raw.pos + ApplyDetailBend(rotated, bend);
 
-	float wind_angle_rad = g_wind_direction.x * (M_PI / 180.0);
-	float2 global_wind_dir = float2(sin(wind_angle_rad), cos(wind_angle_rad));
-
-	// Root-anchored spatial coordinates and a continuous phase keep gusts coherent.
-	float2 dir_uv = raw.pos.zx * 0.005 + wind_phase * 0.005;
-	float wind_dir_noise = g_Perlin4D.SampleLevel(smp_linear, float3(dir_uv, 0), 0).r;
-
-	float2 str_uv = raw.pos.xz * 0.025 + wind_phase * 0.025;
-	float wind_str_noise = g_Perlin4D.SampleLevel(smp_linear, float3(str_uv, 0), 0).r;
-
-	float fbm_wind_strength = lerp(0.25, 1.0, wind_str_noise);
-	fbm_wind_strength *= fbm_wind_strength;
-	fbm_wind_strength *= wind_speed;
-
-	float fbm_turbulence = (wind_dir_noise * 2.0 - 1.0) * 0.3;
-	float2 perpendicular_dir = float2(-global_wind_dir.y, global_wind_dir.x);
-	float2 wind_dir = normalize(global_wind_dir + perpendicular_dir * fbm_turbulence);
-
-    // Authored weather can use wind velocities in the hundreds. Convert wind
-    // force into bounded angular bending, never unbounded world-space stretch.
-    // Rotation preserves each vertex's distance from the root; the base stays fixed.
-    float bend_angle = atan(max(fbm_wind_strength * grass_wind_displacement, 0.0)) * height_factor;
-    if ((asuint(mdl.flags) & 1u) != 0) bend_angle = 0.0;
-    float3 bend_axis = float3(wind_dir.y, 0.0, -wind_dir.x);
-    float bend_sin, bend_cos;
-    sincos(bend_angle, bend_sin, bend_cos);
-    float3 bent = rotated * bend_cos + cross(bend_axis, rotated) * bend_sin
-        + bend_axis * dot(bend_axis, rotated) * (1.0 - bend_cos);
-    world_pos.xyz = raw.pos + bent;
-
-#ifdef DETAIL_SHADOW
+#ifdef DETAIL_MOTION
+    DetailBend previousBend = EvaluateDetailBend(raw.pos, height_factor, mdl.flags,
+        g_previousDetailWind, g_detailMotionControls.x);
+    float4 previousWorld = float4(raw.pos + ApplyDetailBend(rotated, previousBend), 1);
+    O.hpos = mul(g_detail_VP, world_pos);
+    O.currentClip = O.hpos;
+    O.previousClip = mul(g_previousDetailVP, previousWorld);
+    O.uv = float2(v.u, v.v);
+    return O;
+#elif defined(DETAIL_SHADOW)
     float threshold = (asuint(mdl.flags) & 1u) != 0 ? 0.5 : 96.0 / 255.0;
     // Fade alpha coverage over the outer fifth of the selected caster range.
     float fade = saturate((length(raw.pos - detail_shadow_range.xyz) / detail_shadow_range.w - 0.8) * 5.0);
@@ -187,8 +172,7 @@ DetailVertexOutput main(uint vertex_id : SV_VertexID, uint instance_id : SV_Inst
 	N.x = faceN.x * c - faceN.z * s;
 	N.y = faceN.y;
     N.z = faceN.x * s + faceN.z * c;
-    N = N * bend_cos + cross(bend_axis, N) * bend_sin
-        + bend_axis * dot(bend_axis, N) * (1.0 - bend_cos);
+    N = ApplyDetailBend(N, bend);
 
 #if defined(USE_R2_STATIC_SUN) && !defined(USE_LM_HEMI)
 	O.tcdh = float4(uv, hemi, sun);

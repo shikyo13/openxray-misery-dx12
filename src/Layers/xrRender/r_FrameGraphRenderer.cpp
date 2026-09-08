@@ -397,7 +397,6 @@ void FrameGraphRenderer::Render() {
     if (!m_enabled) return;
 
     if (m_hasPrevFrameData && (Device.dwFrame != m_previousRenderedFrame + 1 ||
-        m_prevFrameWidth != Device.dwWidth || m_prevFrameHeight != Device.dwHeight ||
         m_prevCameraPos.distance_to(Device.vCameraPosition) > 10.f ||
         m_previousCameraDirection.dotproduct(Device.vCameraDirection) < .5f)) {
         m_hasPrevFrameData = false;
@@ -532,7 +531,7 @@ void FrameGraphRenderer::Render() {
     auto& cache = framegraph::GetPassResourceCache();
     auto* cmdList = m_renderContext->GetCommandList();
     auto staticGlobalsCB = cache.GetOrCreateVolatileCB("Frame", "StaticGlobals", sizeof(passes::StaticGlobals), m_device);
-    auto staticGlobalsData = passes::BuildStaticGlobals();
+    auto staticGlobalsData = passes::BuildStaticGlobals(2.f, m_renderWidth, m_renderHeight);
     const auto& sunShadow = m_blackboard->get_or_add<passes::SunShadowPassState>();
     for (u32 i = 0; i < 3; ++i) staticGlobalsData.shadow_matrices[i] = sunShadow.viewProjection[i];
     staticGlobalsData.cascade_splits = sunShadow.splits;
@@ -541,7 +540,7 @@ void FrameGraphRenderer::Render() {
     if (clm.IsReady() && clm.GetLightCount() > 0) {
         float zNear = VIEWPORT_NEAR;
         float zFar = g_pGamePersistent->Environment().CurrentEnv.far_plane;
-        auto ccb = clm.BuildClusterCB(Device.dwWidth, Device.dwHeight, zNear, zFar);
+        auto ccb = clm.BuildClusterCB(m_renderWidth, m_renderHeight, zNear, zFar);
         staticGlobalsData.cluster_params.set(ccb.gridDims.x, ccb.gridDims.y, ccb.gridDims.z, ccb.gridDims.w);
         staticGlobalsData.cluster_scales.set(ccb.depthParams.x, ccb.depthParams.y, ccb.depthParams.z, ccb.depthParams.w);
     }
@@ -919,7 +918,7 @@ void FrameGraphRenderer::SetupFrame() {
             ZoneScopedN("Readback::CullStats");
             m_gpuCullingManager->ProcessStatsReadback();
         }
-        m_gpuCullingManager->BeginSkinnedFrame(ps_r_motion_debug || ps_r_rt_gi || ps_r_aa == 2);
+        m_gpuCullingManager->BeginSkinnedFrame(ps_r_motion_debug || ps_r_rt_gi || ps_r_aa >= 2);
     }
 
     if (m_detailManager && m_device) {
@@ -1057,25 +1056,28 @@ framegraph::VirtualResourceHandle FrameGraphRenderer::CreateRT(
 }
 
 void FrameGraphRenderer::SetupFrameGraphPasses() {
-    const u32 width = Device.dwWidth;
-    const u32 height = Device.dwHeight;
+    const u32 outputWidth = Device.dwWidth, outputHeight = Device.dwHeight;
+    u32 width = outputWidth, height = outputHeight;
 
-    const bool dlaaActive = ps_r_aa == 2 &&
-        m_blackboard->get_or_add<passes::DlssPassState>().Prepare(m_device->GetNVRHIDevice(), width, height);
-    if (ps_r_aa == 2 && !dlaaActive) ps_r_aa = 1;
-    if (dlaaActive != m_dlaaActive) m_hasPrevFrameData = false;
-    m_dlaaActive = dlaaActive;
-    m_dlaaJitter.set(0.f, 0.f);
-    if (dlaaActive) {
+    const bool dlssActive = ps_r_aa >= 2 &&
+        m_blackboard->get_or_add<passes::DlssPassState>().Prepare(m_device->GetNVRHIDevice(),
+            outputWidth, outputHeight, ps_r_aa, width, height);
+    if (ps_r_aa >= 2 && !dlssActive) ps_r_aa = 1;
+    if (dlssActive != m_dlssActive || m_prevFrameWidth != width || m_prevFrameHeight != height)
+        m_hasPrevFrameData = false;
+    m_dlssActive = dlssActive;
+    m_renderWidth = width; m_renderHeight = height;
+    m_dlssJitter.set(0.f, 0.f);
+    if (dlssActive) {
         auto halton = [](u32 index, u32 base) {
             float value = 0.f, fraction = 1.f;
             while (index) { fraction /= float(base); value += fraction * float(index % base); index /= base; }
             return value;
         };
         const u32 phase = Device.dwFrame % 32 + 1;
-        m_dlaaJitter.set(halton(phase, 2) - .5f, halton(phase, 3) - .5f);
-        Device.mProject._31 += 2.f * m_dlaaJitter.x / float(width);
-        Device.mProject._32 -= 2.f * m_dlaaJitter.y / float(height);
+        m_dlssJitter.set(halton(phase, 2) - .5f, halton(phase, 3) - .5f);
+        Device.mProject._31 += 2.f * m_dlssJitter.x / float(width);
+        Device.mProject._32 -= 2.f * m_dlssJitter.y / float(height);
         Device.mFullTransform.mul(Device.mProject, Device.mView);
         Device.mInvFullTransform.invert(Device.mFullTransform);
     }
@@ -1086,8 +1088,8 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     if (backbufferTexture) {
         framegraph::ResourceDesc backbufferDesc;
         backbufferDesc.type = framegraph::ResourceDesc::Type::Texture2D;
-        backbufferDesc.width = width;
-        backbufferDesc.height = height;
+        backbufferDesc.width = outputWidth;
+        backbufferDesc.height = outputHeight;
         backbufferDesc.format = backbufferTexture->getDesc().format;
         backbufferDesc.isRenderTarget = true;
         backbufferDesc.isImported = true;
@@ -1527,7 +1529,7 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     // ═══════════════════════════════════════════════════════
     passes::MotionVectorOutput motionOutput{};
     // Keep optional temporal inputs dormant until a consumer needs them.
-    if (ps_r_motion_debug || ps_r_rt_gi || m_dlaaActive)
+    if (ps_r_motion_debug || ps_r_rt_gi || m_dlssActive)
         motionOutput = passes::setupMotionVectorPass(
             *m_framegraph, m_device,
             transparentOutputs.depth,
@@ -1541,6 +1543,11 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     // ═══════════════════════════════════════════════════════
     //  PARTICLE PASS (after all opaque + transparent geometry)
     // ═══════════════════════════════════════════════════════
+    if (motionOutput.motionVectors.is_valid() && ps_r_motion_debug != 2)
+        motionOutput.motionVectors = passes::setupDetailMotionPass(*m_framegraph, m_device, m_detailManager.get(),
+            transparentOutputs.depth, motionOutput.motionVectors, m_prevViewProj, m_hasPrevFrameData,
+            m_blackboard->get_or_add<passes::DetailMotionPassState>());
+
     auto particleOutputs = passes::setupParticlePass(
         *m_framegraph,
         m_device,
@@ -1799,10 +1806,10 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     // ═══════════════════════════════════════════════════════
     //  EXPOSURE PASS (Auto-Exposure / Eye Adaptation)
     // ═══════════════════════════════════════════════════════
-    if (m_dlaaActive)
+    if (m_dlssActive)
         sceneColor = passes::setupDlssPass(*m_framegraph, m_device, sceneColor,
-            transparentOutputs.depth, motionOutput.motionVectors, width, height,
-            m_dlaaJitter.x, m_dlaaJitter.y, !m_hasPrevFrameData,
+            transparentOutputs.depth, motionOutput.motionVectors, width, height, outputWidth, outputHeight,
+            m_dlssJitter.x, m_dlssJitter.y, !m_hasPrevFrameData,
             m_blackboard->get_or_add<passes::DlssPassState>());
 
     passes::ExposureConfig exposureConfig = passes::GetDefaultExposureConfig();
@@ -1812,28 +1819,28 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
         sceneColor,
         exposureConfig,
         Device.fTimeDelta,
-        width,
-        height,
+        outputWidth,
+        outputHeight,
         m_blackboard->get_or_add<passes::ExposurePassState>()
     );
 
     m_exposureTexture = exposureOutput.exposureTexture;
 
     auto bloom = passes::setupBloomPass(*m_framegraph, m_device, sceneColor,
-        m_exposureTexture, width, height, m_blackboard->get_or_add<passes::BloomPassState>());
+        m_exposureTexture, outputWidth, outputHeight, m_blackboard->get_or_add<passes::BloomPassState>());
     sceneColor = passes::setupSceneTonemapPass(*m_framegraph, m_device, sceneColor,
-        m_exposureTexture, bloom, width, height, m_blackboard->get_or_add<passes::SceneTonemapPassState>());
+        m_exposureTexture, bloom, outputWidth, outputHeight, m_blackboard->get_or_add<passes::SceneTonemapPassState>());
     sceneColor = passes::setupAntialiasingPass(*m_framegraph, m_device, sceneColor,
-        width, height, m_blackboard->get_or_add<passes::AntialiasingPassState>());
+        outputWidth, outputHeight, m_blackboard->get_or_add<passes::AntialiasingPassState>());
     if (ps_r_motion_debug && motionOutput.motionVectors.is_valid())
         sceneColor = passes::setupMotionVectorDebugPass(*m_framegraph, m_device, motionOutput.motionVectors,
-            width, height, m_blackboard->get_or_add<passes::MotionVectorPassState>());
+            outputWidth, outputHeight, m_blackboard->get_or_add<passes::MotionVectorPassState>());
 
     auto sceneWithUI = passes::setupUIPass(
         *m_framegraph,
         sceneColor,
-        width,
-        height
+        outputWidth,
+        outputHeight
     );
 
     sceneWithUI = passes::setupFontPass(*m_framegraph, sceneWithUI);
@@ -1842,11 +1849,11 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     sceneWithUI = passes::setupCursorPass(
         *m_framegraph,
         sceneWithUI,
-        width,
-        height
+        outputWidth,
+        outputHeight
     );
 
-    sceneWithUI = passes::setupDebugDrawPass(*m_framegraph, sceneWithUI, width, height);
+    sceneWithUI = passes::setupDebugDrawPass(*m_framegraph, sceneWithUI, outputWidth, outputHeight);
 
     // 6. Final transfer and the camera's authored post-processing effects.
     auto ldrOutput = passes::setupTonemapPass(
@@ -1855,8 +1862,8 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
         sceneWithUI,
         exposureOutput.exposureTexture,
         backbufferHandle,
-        width,
-        height,
+        outputWidth,
+        outputHeight,
         m_blackboard->get_or_add<passes::TonemapPassState>(),
         &m_blackboard->get_or_add<passes::ExposurePassState>(),
         m_postProcessParams
@@ -2001,8 +2008,8 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
         *m_framegraph,
         ldrOutput,
         imguiRenderer,
-        width,
-        height
+        outputWidth,
+        outputHeight
     );
 
     // Store final output for presentation (now points to backbuffer)

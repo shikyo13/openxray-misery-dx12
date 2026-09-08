@@ -1,0 +1,15 @@
+#define SM_6_0
+#include "common.h"
+#include "bindless_common.h"
+#include "detail_motion.h"
+
+float2 main(DetailMotionOutput input) : SV_Target0
+{
+    Texture2D atlas = GetBindlessTexture((uint)g_detailMotionControls.z);
+    clip(atlas.Sample(smp_base, input.uv).a - 96.0 / 255.0);
+    if (g_detailMotionControls.y > 0.5) return float2(0.01, 0);
+    if (input.previousClip.w <= 1e-6 || input.currentClip.w <= 1e-6) return 0;
+    float2 motion = (input.previousClip.xy / input.previousClip.w
+        - input.currentClip.xy / input.currentClip.w) * float2(0.5, -0.5);
+    return all(isfinite(motion)) ? motion : float2(0, 0);
+}
