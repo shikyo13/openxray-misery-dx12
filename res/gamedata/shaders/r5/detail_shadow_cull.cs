@@ -15,6 +15,7 @@ cbuffer DetailShadowCull : register(b0) {
     float4 rootRadii[16];
     float4 cameraRange;
     uint4 slotWindow; // startX, startZ, width, database stride
+    float4 lightRange; // position and radius; zero radius for sunlight
 };
 
 [numthreads(256, 1, 1)]
@@ -26,6 +27,13 @@ void main(uint3 id : SV_DispatchThreadID)
     if (slot.instance_count == 0 || slot.instance_base >= instanceCapacity) return;
     float3 closest = clamp(cameraRange.xyz, slot.aabb_min, slot.aabb_max);
     if (dot(closest - cameraRange.xyz, closest - cameraRange.xyz) > cameraRange.w * cameraRange.w) return;
+    // A cubemap face extends beyond the light's spherical attenuation range.
+    // Keep any mesh that can cross that range, including wind-bent foliage.
+    if (lightRange.w > 0) {
+        float3 delta = clamp(lightRange.xyz, slot.aabb_min, slot.aabb_max) - lightRange.xyz;
+        float reach = lightRange.w + maximumRadius;
+        if (dot(delta, delta) > reach * reach) return;
+    }
     // Use the light's complete frustum, including its near plane. Camera Hi-Z
     // and camera visibility cannot reject something that casts into the view.
     [unroll] for (uint p = 0; p < 6; ++p) {
@@ -44,6 +52,11 @@ void main(uint3 id : SV_DispatchThreadID)
         uint model = instance.packed & 63u;
         float scale = float((instance.packed >> 18) & 1023u) * (4.0 / 1023.0);
         float radius = rootRadii[model / 4][model % 4] * scale;
+        if (lightRange.w > 0) {
+            float3 delta = instance.pos - lightRange.xyz;
+            float reach = lightRange.w + radius;
+            if (dot(delta, delta) > reach * reach) continue;
+        }
         bool visible = true;
         [unroll] for (uint p = 0; p < 6; ++p)
             visible = visible && dot(planes[p].xyz, instance.pos) + planes[p].w <= radius;

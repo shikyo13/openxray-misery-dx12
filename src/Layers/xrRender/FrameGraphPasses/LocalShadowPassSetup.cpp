@@ -169,13 +169,26 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
             };
             auto* command = context->GetCommandList();
             auto* texture = graph.GetPhysicalTexture(data.texture);
-            command->clearDepthStencilTexture(texture, nvrhi::AllSubresources, true, 1.f, false, 0);
+            auto* geometry = data.geometry;
+            const bool canRender = !state.matrices.empty() && geometry && geometry->IsMegaDataUploaded();
+            if (!canRender) {
+                command->clearDepthStencilTexture(texture, nvrhi::AllSubresources, true, 1.f, false, 0);
+            } else {
+                // Every rendered face receives a complete cached depth copy.
+                // Clear only skipped faces; unused capacity has no light index.
+                for (u32 face = 0; face < state.matrices.size();) {
+                    if (state.visibleFaces[face]) { ++face; continue; }
+                    const u32 first = face++;
+                    while (face < state.matrices.size() && !state.visibleFaces[face]) ++face;
+                    command->clearDepthStencilTexture(texture,
+                        nvrhi::TextureSubresourceSet(0, 1, first, face - first), true, 1.f, false, 0);
+                }
+            }
             if (!state.matrices.empty())
                 command->writeBuffer(ClusteredLightManager::Instance().GetShadowMatricesBuffer(),
                     state.matrices.data(), state.matrices.size() * sizeof(Fmatrix));
-            auto* geometry = data.geometry;
             u32 worldCount = 0, skinnedCount = 0, detailCount = 0, renderedFaces = 0, staticUpdates = 0;
-            if (!state.matrices.empty() && geometry && geometry->IsMegaDataUploaded()) {
+            if (canRender) {
                 data.materials->FinalizePendingMaterials(context);
                 bindless::MaterialBuffer::Instance().Upload(context);
                 if (state.outputTexture != texture) {

@@ -34,8 +34,9 @@ struct alignas(16) DetailShadowCullConstants {
     Fvector4 rootRadii[16];
     Fvector4 cameraRange;
     u32 gridStartX, gridStartZ, gridWidth, gridStride;
+    Fvector4 lightRange; // w == 0 for directional sunlight
 };
-static_assert(sizeof(DetailShadowCullConstants) == 400);
+static_assert(sizeof(DetailShadowCullConstants) == 416);
 
 bool DrawDetailShadowMapImpl(RenderContext* context, RenderDevice* device, FGDetailManager* dm,
     ShadowMapPassState& state, const Fmatrix& viewProjection, const CFrustum& frustum, nvrhi::IFramebuffer* framebuffer, const Fvector4* lightSphere)
@@ -115,6 +116,7 @@ bool DrawDetailShadowMapImpl(RenderContext* context, RenderDevice* device, FGDet
     float minZ = Device.vCameraPosition.z - ps_r_detail_shadow_distance;
     float maxZ = Device.vCameraPosition.z + ps_r_detail_shadow_distance;
     if (lightSphere) {
+        constants.lightRange = *lightSphere;
         const float reach = lightSphere->w + constants.maximumRadius;
         minX = _max(minX, lightSphere->x - reach); maxX = _min(maxX, lightSphere->x + reach);
         minZ = _max(minZ, lightSphere->z - reach); maxZ = _min(maxZ, lightSphere->z + reach);
