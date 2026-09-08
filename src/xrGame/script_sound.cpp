@@ -13,6 +13,7 @@
 #include "GameObject.h"
 #include "ai_space.h"
 #include "xrScriptEngine/script_engine.hpp"
+#include "xrEngine/device.h"
 
 CScriptSound::CScriptSound(LPCSTR caSoundName, ESoundTypes sound_type)
 {
@@ -52,6 +53,9 @@ void CScriptSound::Play(CScriptGameObject* object, float delay, int flags)
     //	Msg							("%6d : CScriptSound::Play (%s), delay %f, flags
     //%d",Device.dwTimeGlobal,m_sound._handle()->file_name(),delay,flags);
     m_sound.play((object) ? &object->object() : NULL, flags, delay);
+    if (strstr(Core.Params, "-sound_trace"))
+        Msg("* [ScriptSound] frame=%u name=%s length_ms=%u playing=%u",
+            Device.dwFrame, *m_caSoundToPlay, Length(), IsPlaying() ? 1u : 0u);
 }
 
 void CScriptSound::PlayAtPos(CScriptGameObject* object, const Fvector& position, float delay, int flags)

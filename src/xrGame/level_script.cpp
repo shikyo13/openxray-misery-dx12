@@ -739,9 +739,12 @@ void CLevel::script_register(lua_State* luaState)
         def("get_active_cam", &get_active_cam),
         def("set_active_cam", &set_active_cam),
         def("get_start_time", +[]() -> xrTime { return xrTime(Level().GetStartGameTime()); }),
-        def("valid_vertex", +[](u32 level_vertex_id)
+        def("valid_vertex", +[](u64 level_vertex_id)
         {
-            return ai().level_graph().valid_vertex_id(level_vertex_id);
+            // vertex_id exposes the legacy 2^32 invalid sentinel to Lua.
+            // Check before narrowing, otherwise that sentinel becomes vertex 0.
+            return level_vertex_id <= u32(-1) &&
+                ai().level_graph().valid_vertex_id(u32(level_vertex_id));
         }),
         //Alundaio: END
 
@@ -845,7 +848,7 @@ void CLevel::script_register(lua_State* luaState)
         {
             // Original luabind converts 4294967295 (which is u32(-1)) to 4294967296
             const u32 id = ai().level_graph().vertex_id(position);
-            return id == u32(-1) ? id + 1 : id; // reproduce original behaviour
+            return id == u32(-1) ? u64(id) + 1 : id; // reproduce original behaviour without u32 overflow
         }),
         def("game_id", &GameID),
         def("ray_pick", &ray_pick)
