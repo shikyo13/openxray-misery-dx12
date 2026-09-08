@@ -699,26 +699,34 @@ void FrameGraph::BuildDependencyGraph() {
     }
 
     xr_map<u32, PassNode*> lastWriter;
+    xr_map<u32, xr_vector<PassNode*>> pendingReaders;
 
     for (auto& pass : m_passes) {
+        auto dependOn = [&pass](PassNode* producer) {
+            if (producer && producer != &pass && !pass.DependsOn(producer)) {
+                pass.dependsOn.push_back(producer);
+                producer->dependents.push_back(&pass);
+            }
+        };
         for (const auto& access : pass.resourceAccesses) {
-            if (!access.IsRead()) continue;
-
             auto it = lastWriter.find(access.resource.index);
-            if (it != lastWriter.end()) {
-                PassNode* producer = it->second;
-                if (!pass.DependsOn(producer)) {
-                    pass.dependsOn.push_back(producer);
-                    producer->dependents.push_back(&pass);
-                }
+            if (it != lastWriter.end()) dependOn(it->second);
+            if (access.IsWrite()) {
+                // A later in-place writer must wait for every reader of the
+                // previous contents (e.g. HUD-less transfer before UI drawing).
+                for (auto* reader : pendingReaders[access.resource.index]) dependOn(reader);
             }
         }
 
         for (const auto& access : pass.resourceAccesses) {
             if (access.IsWrite()) {
                 lastWriter[access.resource.index] = &pass;
+                pendingReaders[access.resource.index].clear();
             }
         }
+        for (const auto& access : pass.resourceAccesses)
+            if (access.IsRead() && lastWriter[access.resource.index] != &pass)
+                pendingReaders[access.resource.index].push_back(&pass);
     }
 }
 

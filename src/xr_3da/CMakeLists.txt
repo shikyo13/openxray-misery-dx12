@@ -1,5 +1,22 @@
 add_executable(xr_3da WIN32)
 
+if(TARGET xray_fidelityfx)
+    foreach(runtime amd_fidelityfx_loader_dx12.dll amd_fidelityfx_framegeneration_dx12.dll)
+        add_custom_command(TARGET xr_3da POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_PROPERTY:xray_fidelityfx,XRAY_FIDELITYFX_BIN>/${runtime}" "$<TARGET_FILE_DIR:xr_3da>/${runtime}"
+            VERBATIM)
+        install(FILES "$<TARGET_PROPERTY:xray_fidelityfx,XRAY_FIDELITYFX_BIN>/${runtime}"
+            DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    endforeach()
+    add_custom_command(TARGET xr_3da POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_PROPERTY:xray_fidelityfx,XRAY_FIDELITYFX_LICENSE>" "$<TARGET_FILE_DIR:xr_3da>/AMD_FIDELITYFX_LICENSE.md"
+        VERBATIM)
+    install(FILES "$<TARGET_PROPERTY:xray_fidelityfx,XRAY_FIDELITYFX_LICENSE>"
+        DESTINATION "${CMAKE_INSTALL_BINDIR}" RENAME AMD_FIDELITYFX_LICENSE.md)
+endif()
+
 if(TARGET xray_ngx)
     add_custom_command(TARGET xr_3da POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different

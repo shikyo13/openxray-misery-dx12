@@ -1,0 +1,43 @@
+# Official AMD FidelityFX SDK v2.3.0. Only the API and frame-generation
+# runtime are distributed. Each file is pinned to the upstream commit and hash.
+option(XRAY_ENABLE_FSR3_FG "Build independently selectable native FSR frame generation" ON)
+if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8 OR NOT XRAY_ENABLE_FSR3_FG)
+    return()
+endif()
+set(XRAY_FIDELITYFX_SDK_ROOT "${CMAKE_BINARY_DIR}/_deps/fidelityfx-sdk-src" CACHE PATH "FidelityFX SDK cache")
+function(xray_fidelityfx_file path hash)
+    set(destination "${XRAY_FIDELITYFX_SDK_ROOT}/Kits/FidelityFX/${path}")
+    if(EXISTS "${destination}")
+        file(SHA256 "${destination}" actual_hash)
+        if(actual_hash STREQUAL hash)
+            return()
+        endif()
+    endif()
+    get_filename_component(directory "${destination}" DIRECTORY)
+    file(MAKE_DIRECTORY "${directory}")
+    file(DOWNLOAD "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/60f4ea81909200d8542eca14dccb2628b763a9a3/Kits/FidelityFX/${path}"
+        "${destination}" EXPECTED_HASH "SHA256=${hash}" TLS_VERIFY ON STATUS result)
+    list(GET result 0 error_code)
+    if(NOT error_code EQUAL 0)
+        message(FATAL_ERROR "FidelityFX SDK download failed: ${path}: ${result}")
+    endif()
+endfunction()
+xray_fidelityfx_file(api/include/ffx_api.h e1a9d1b559eaf75f4cb401f1c43a66e2f3dc9621abfeb58b9c6fac56443177fd)
+xray_fidelityfx_file(api/include/ffx_api_types.h cc0adc0ffc804dd7cd03c39c15581b575e416383177ffe95060201d52cc0fc49)
+xray_fidelityfx_file(api/include/ffx_api_loader.h 18d1901dbbc881e8131b91c65ad44bb3b4a1de6c31435d5b75236f16727ba80e)
+xray_fidelityfx_file(api/include/dx12/ffx_api_dx12.h c9afbc3c4c673723e9e5369a666f0ff54560543b5a93537f8ff453bf1c3bf530)
+xray_fidelityfx_file(framegeneration/include/ffx_framegeneration.h e6c42f8a38aab2c7c4fc6931545a8e5463fdf87349902ec9687d9fe4949a0566)
+xray_fidelityfx_file(framegeneration/include/ffx_framegeneration_api_types.h 396596af3df63310674e8036abd2ad0fcd061e61334e7a2c76653a2be3c686b4)
+xray_fidelityfx_file(framegeneration/include/dx12/ffx_api_framegeneration_dx12.h d533810bbd6fd4f87dfa2c1657c1457c7b1597b66345827d375b081d67127f66)
+xray_fidelityfx_file(signedbin/amd_fidelityfx_loader_dx12.dll e2d85aa05a9bd9ed8b38935fdf5199372cca6f74c12015143bb6f945ee1608aa)
+xray_fidelityfx_file(signedbin/amd_fidelityfx_framegeneration_dx12.dll 02297beedd285e822d3a64f314cf00faf378dcec0edc47ff0c4dd71b3a8c2f18)
+xray_fidelityfx_file(docs/license.md 6757f2fec461238da6f84f83536ec195e8c036b1773a06f6f34301b9ed8c0963)
+add_library(xray_fidelityfx INTERFACE)
+target_include_directories(xray_fidelityfx INTERFACE
+    "${XRAY_FIDELITYFX_SDK_ROOT}/Kits/FidelityFX/api/include"
+    "${XRAY_FIDELITYFX_SDK_ROOT}/Kits/FidelityFX/framegeneration/include")
+set_target_properties(xray_fidelityfx PROPERTIES
+    XRAY_FIDELITYFX_BIN "${XRAY_FIDELITYFX_SDK_ROOT}/Kits/FidelityFX/signedbin"
+    XRAY_FIDELITYFX_LICENSE "${XRAY_FIDELITYFX_SDK_ROOT}/Kits/FidelityFX/docs/license.md")
+target_link_libraries(xrRender PRIVATE xray_fidelityfx)
+target_compile_definitions(xrRender PRIVATE XRAY_HAVE_FSR3=1)

@@ -63,6 +63,7 @@
 #include "FrameGraphPasses/AmbientOcclusionPassSetup.h"
 #include "FrameGraphPasses/AntialiasingPassSetup.h"
 #include "FrameGraphPasses/DlssPassSetup.h"
+#include "FrameGraphPasses/FsrFrameGenerationPassSetup.h"
 #include "FrameGraphPasses/SceneTonemapPassSetup.h"
 #include "FrameGraphPasses/BloomPassSetup.h"
 #include "FrameGraphPasses/SunShaftPassSetup.h"
@@ -918,7 +919,7 @@ void FrameGraphRenderer::SetupFrame() {
             ZoneScopedN("Readback::CullStats");
             m_gpuCullingManager->ProcessStatsReadback();
         }
-        m_gpuCullingManager->BeginSkinnedFrame(ps_r_motion_debug || ps_r_rt_gi || ps_r_aa >= 2);
+        m_gpuCullingManager->BeginSkinnedFrame(ps_r_motion_debug || ps_r_rt_gi || ps_r_aa >= 2 || ps_r_fsr_fg);
     }
 
     if (m_detailManager && m_device) {
@@ -1059,6 +1060,10 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     const u32 outputWidth = Device.dwWidth, outputHeight = Device.dwHeight;
     u32 width = outputWidth, height = outputHeight;
 
+    const bool fsrActive = ps_r_fsr_fg && passes::prepareFsrFrameGeneration(m_device, outputWidth, outputHeight);
+    if (fsrActive != m_fsrActive) m_hasPrevFrameData = false;
+    m_fsrActive = fsrActive;
+
     const bool dlssActive = ps_r_aa >= 2 &&
         m_blackboard->get_or_add<passes::DlssPassState>().Prepare(m_device->GetNVRHIDevice(),
             outputWidth, outputHeight, ps_r_aa, width, height);
@@ -1079,7 +1084,9 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
         Device.mProject._31 += 2.f * m_dlssJitter.x / float(width);
         Device.mProject._32 -= 2.f * m_dlssJitter.y / float(height);
         Device.mFullTransform.mul(Device.mProject, Device.mView);
-        Device.mInvFullTransform.invert(Device.mFullTransform);
+        // Perspective projection requires the full 4x4 inverse. invert() is
+        // affine-only and collapses reconstructed camera motion toward screen center.
+        Device.mInvFullTransform.invert_44(Device.mFullTransform);
     }
 
     nvrhi::ITexture* backbufferTexture = GEnv.Backend->GetBackBuffer();
@@ -1529,7 +1536,7 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     // ═══════════════════════════════════════════════════════
     passes::MotionVectorOutput motionOutput{};
     // Keep optional temporal inputs dormant until a consumer needs them.
-    if (ps_r_motion_debug || ps_r_rt_gi || m_dlssActive)
+    if (ps_r_motion_debug || ps_r_rt_gi || m_dlssActive || m_fsrActive)
         motionOutput = passes::setupMotionVectorPass(
             *m_framegraph, m_device,
             transparentOutputs.depth,
@@ -1836,6 +1843,13 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
         sceneColor = passes::setupMotionVectorDebugPass(*m_framegraph, m_device, motionOutput.motionVectors,
             outputWidth, outputHeight, m_blackboard->get_or_add<passes::MotionVectorPassState>());
 
+    framegraph::VirtualResourceHandle fsrHudless;
+    if (m_fsrActive)
+        fsrHudless = passes::setupTonemapPass(*m_framegraph, m_device, sceneColor,
+            exposureOutput.exposureTexture, {}, outputWidth, outputHeight,
+            m_blackboard->get_or_add<passes::TonemapPassState>(),
+            &m_blackboard->get_or_add<passes::ExposurePassState>(), m_postProcessParams, true);
+
     auto sceneWithUI = passes::setupUIPass(
         *m_framegraph,
         sceneColor,
@@ -2013,6 +2027,11 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     );
 
     // Store final output for presentation (now points to backbuffer)
+    if (m_fsrActive)
+        finalOutput = passes::setupFsrFrameGenerationPass(*m_framegraph, m_device, finalOutput,
+            fsrHudless, transparentOutputs.depth, motionOutput.motionVectors, width, height,
+            m_dlssJitter.x, m_dlssJitter.y, !m_hasPrevFrameData,
+            m_blackboard->get_or_add<passes::FsrFrameGenerationPassState>());
     m_finalOutput = finalOutput;
 
     // ═══════════════════════════════════════════════════════

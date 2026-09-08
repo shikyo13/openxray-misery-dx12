@@ -5,9 +5,11 @@
 
 #include "xrEngine/IRenderBackend.h"
 #include <nvrhi/nvrhi.h>
+#include <memory>
 
 // Forward declarations
 class Task;
+class FsrFrameGeneration;
 struct ID3D12Device;
 struct ID3D12CommandQueue;
 struct IDXGISwapChain3;
@@ -79,6 +81,7 @@ public:
     ID3D12Device* GetD3D12Device() const { return m_d3d12Device; }
     ID3D12CommandQueue* GetD3D12CommandQueue() const { return m_commandQueue; }
     IDXGISwapChain3* GetSwapChain() const { return m_swapChain; }
+    FsrFrameGeneration* GetFrameGeneration() const { return m_frameGeneration.get(); }
 
 private:
     static constexpr u32 BACK_BUFFER_COUNT = 2;
@@ -97,6 +100,7 @@ private:
     IDXGIFactory4* m_dxgiFactory = nullptr;
     IDXGIAdapter1* m_adapter = nullptr;
     IDXGISwapChain3* m_swapChain = nullptr;
+    std::unique_ptr<FsrFrameGeneration> m_frameGeneration;
 
     // D3D12 objects
     ID3D12Device* m_d3d12Device = nullptr;

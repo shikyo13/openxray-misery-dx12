@@ -1,5 +1,6 @@
 add_library(xrRender STATIC)
 include(${CMAKE_SOURCE_DIR}/cmake/Dlss.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/FsrFrameGeneration.cmake)
 
 if(WIN32)
     # Reuse the image codec used by the DX11 renderer for screenshot/save formats.
@@ -171,6 +172,8 @@ target_sources(xrRender PRIVATE
     FrameGraphPasses/AntialiasingPassSetup.cpp
     FrameGraphPasses/DlssPassSetup.h
     FrameGraphPasses/DlssPassSetup.cpp
+    FrameGraphPasses/FsrFrameGenerationPassSetup.h
+    FrameGraphPasses/FsrFrameGenerationPassSetup.cpp
     FrameGraphPasses/ReSTIRGIPassSetup.h
     FrameGraphPasses/ReSTIRGIPassSetup.cpp
     FrameGraphPasses/ClusterLightPassSetup.cpp
@@ -366,6 +369,7 @@ target_sources(xrRender PRIVATE
 if(WIN32)
     target_sources(xrRender PRIVATE
         Backend/D3D12Backend.cpp
+        Backend/FsrFrameGeneration.cpp
     )
 endif()
 

@@ -2,6 +2,7 @@
 // DirectX 12 backend implementation with bindless texture support
 #include "stdafx.h"
 #include "D3D12Backend.h"
+#include "FsrFrameGeneration.h"
 
 #include "xrCore/Threading/TaskManager.hpp"
 
@@ -182,6 +183,7 @@ void D3D12Backend::Shutdown() {
     Msg("* [D3D12Backend] Shutting down...");
 
     WaitForIdle();
+    if (m_frameGeneration) m_frameGeneration->ReleaseContext();
 
     // Release NVRHI resources
     m_bindlessDescriptorTable = nullptr;
@@ -198,6 +200,8 @@ void D3D12Backend::Shutdown() {
         m_swapChain->Release();
         m_swapChain = nullptr;
     }
+    // Drop the backend's swapchain reference before unloading the SDK DLL.
+    m_frameGeneration.reset();
     if (m_computeQueue) {
         m_computeQueue->Release();
         m_computeQueue = nullptr;
@@ -341,6 +345,15 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd, u32 width, u32 height) {
     swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     // Enable tearing for uncapped framerate in windowed mode
     swapChainDesc.Flags = m_tearingSupported ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
+
+    m_frameGeneration = std::make_unique<FsrFrameGeneration>();
+    if (m_frameGeneration->CreateSwapChain(m_dxgiFactory, m_commandQueue, hwnd, swapChainDesc, &m_swapChain)) {
+        m_backBufferWidth = width;
+        m_backBufferHeight = height;
+        m_currentBackBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
+        return true;
+    }
+    m_frameGeneration.reset();
 
     IDXGISwapChain1* swapChain1 = nullptr;
     HRESULT hr = m_dxgiFactory->CreateSwapChainForHwnd(
@@ -541,12 +554,15 @@ void D3D12Backend::Present(bool vsync) {
             presentFlags = DXGI_PRESENT_ALLOW_TEARING;
         }
 
-        m_swapChain->Present(syncInterval, presentFlags);
+        const HRESULT hr = m_frameGeneration ? m_frameGeneration->Present(m_swapChain, syncInterval, presentFlags) :
+            m_swapChain->Present(syncInterval, presentFlags);
+        if (FAILED(hr)) Msg("! [D3D12Backend] Present failed: 0x%08x", unsigned(hr));
     }
 }
 
 void D3D12Backend::ResizeSwapChain(u32 width, u32 height) {
     WaitForIdle();
+    if (m_frameGeneration) m_frameGeneration->ReleaseContext();
 
     // Release back buffers
     for (auto& bb : m_backBuffers)
@@ -630,6 +646,7 @@ void D3D12Backend::EndFrame() {
 }
 
 void D3D12Backend::WaitForIdle() {
+    if (m_frameGeneration) m_frameGeneration->WaitForPresents();
     // Wait for any pending async GC first
     if (m_gcTask) {
         TaskScheduler->Wait(*m_gcTask);

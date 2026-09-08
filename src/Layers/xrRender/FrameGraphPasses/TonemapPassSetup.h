@@ -39,6 +39,7 @@ struct TonemapPassState {
     u32 noiseRandom = 0x9e3779b9;
     u32 noiseShiftX = 0;
     u32 noiseShiftY = 0;
+    u32 noiseFrame = ~0u;
     u32 nextTraceTime = 0;
     nvrhi::GraphicsPipelineHandle pipeline;
     nvrhi::BindingLayoutHandle bindingLayout;
@@ -73,7 +74,8 @@ framegraph::VirtualResourceHandle setupTonemapPass(
     u32 height,
     TonemapPassState& state,
     const ExposurePassState* exposureState = nullptr,
-    const SPPInfo& postProcess = SPPInfo{}
+    const SPPInfo& postProcess = SPPInfo{},
+    bool hudless = false
 );
 
 void InitializeTonemapPass(nvrhi::IDevice* device, TonemapPassState& state);

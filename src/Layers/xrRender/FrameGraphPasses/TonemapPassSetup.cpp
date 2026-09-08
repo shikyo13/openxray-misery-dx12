@@ -66,7 +66,11 @@ PostProcessConstants PreparePostProcess(const SPPInfo& ppi, TonemapPassState& st
         const auto& desc = state.noiseTexture->getDesc();
         const u32 tw = u32(_max(1, iCeil(float(desc.width) * ppi.noise.grain + EPS_S)));
         const u32 th = u32(_max(1, iCeil(float(desc.height) * ppi.noise.grain + EPS_S)));
-        state.noiseTime -= Device.fTimeDelta;
+        // HUD-less and final images must use identical grain for UI extraction.
+        if (state.noiseFrame != Device.dwFrame) {
+            state.noiseTime -= Device.fTimeDelta;
+            state.noiseFrame = Device.dwFrame;
+        }
         if (state.noiseTime < 0.f) {
             // Rendering noise must not consume the gameplay RNG sequence.
             auto random = [&state]() {
@@ -184,7 +188,8 @@ framegraph::VirtualResourceHandle setupTonemapPass(
     u32 height,
     TonemapPassState& tonemapState,
     const ExposurePassState* exposureState,
-    const SPPInfo& postProcess)
+    const SPPInfo& postProcess,
+    bool hudless)
 {
     using namespace framegraph;
 
@@ -196,9 +201,9 @@ framegraph::VirtualResourceHandle setupTonemapPass(
     bool hasOutputTarget = outputTarget.is_valid();
 
     auto& passData = fg.addCallbackPass<TonemapPassData>(
-        "Tonemap",
+        hudless ? "FSR3FG.HUDLess" : "Tonemap",
 
-        [hdrInput, exposureTexture, outputTarget, hasExposure, hasOutputTarget, width, height, &tonemapState, exposureState, postProcessConstants](FrameGraph& builder, PassHandle passHandle, TonemapPassData& data) {
+        [hdrInput, exposureTexture, outputTarget, hasExposure, hasOutputTarget, width, height, &tonemapState, exposureState, postProcessConstants, hudless](FrameGraph& builder, PassHandle passHandle, TonemapPassData& data) {
             RenderPassBuilder passBuilder(builder, passHandle);
 
             data.width = width;
@@ -226,9 +231,9 @@ framegraph::VirtualResourceHandle setupTonemapPass(
                 ldrDesc.format = nvrhi::Format::RGBA8_UNORM;
                 ldrDesc.isRenderTarget = true;
                 ldrDesc.isTransient = false;
-                ldrDesc.debugName = "rt_Final";
+                ldrDesc.debugName = hudless ? "rt_FSR3Hudless" : "rt_Final";
 
-                data.ldrOutput = passBuilder.createTexture("rt_Final", ldrDesc);
+                data.ldrOutput = passBuilder.createTexture(ldrDesc.debugName.c_str(), ldrDesc);
             }
         },
 
