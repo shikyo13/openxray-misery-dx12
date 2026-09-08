@@ -5,6 +5,7 @@ cbuffer MotionVectorParams : register(b5) {
     float4x4 g_PrevViewProj;
     float2 g_ScreenSize;
     float2 g_InvScreenSize;
+    float4 g_CameraPosition;
 };
 
 Texture2D<float> t_Depth : register(t0);
@@ -28,19 +29,27 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
     float depth = t_Depth.Load(int3(pixel, 0));
 
-    if (depth <= 0.0) {
+    // HUD depth is compressed into [0.9, 1]. Its actual motion is supplied
+    // by the skinned object pass, not reconstructed as a world-space surface.
+    if (depth >= .9) {
         u_MotionVectors[pixel] = float2(0, 0);
         return;
     }
 
-    float3 worldPos = ReconstructWorldPos(pixel, depth);
-
-    float4 prevClip = mul(g_PrevViewProj, float4(worldPos, 1.0));
+    float2 currUV = (float2(pixel) + 0.5) * g_InvScreenSize;
+    float4 world = mul(g_InvViewProj, float4(currUV.x * 2 - 1, 1 - currUV.y * 2, depth, 1));
+    // Sky follows camera rotation but not translation, including an infinite
+    // reverse-Z far plane (world.w == 0).
+    float4 previousPosition = depth <= 0 ? float4(world.xyz - g_CameraPosition.xyz * world.w, 0) : float4(world.xyz / world.w, 1);
+    float4 prevClip = mul(g_PrevViewProj, previousPosition);
+    if (prevClip.w <= 1e-6) {
+        u_MotionVectors[pixel] = 0;
+        return;
+    }
     float2 prevNDC = prevClip.xy / prevClip.w;
     prevNDC.y = -prevNDC.y;
     float2 prevUV = prevNDC * 0.5 + 0.5;
 
-    float2 currUV = (float2(pixel) + 0.5) * g_InvScreenSize;
-
-    u_MotionVectors[pixel] = prevUV - currUV;
+    float2 motion = prevUV - currUV;
+    u_MotionVectors[pixel] = all(isfinite(motion)) ? motion : float2(0, 0);
 }

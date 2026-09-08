@@ -25,6 +25,10 @@ struct VS_OUTPUT
     float3 tangent   : TEXCOORD3;
     float3 bitangent : TEXCOORD4;
     nointerpolation uint materialID : TEXCOORD5;
+#ifdef XR_OBJECT_MOTION
+    float4 previousClip : TEXCOORD7;
+    float4 currentClip : TEXCOORD8;
+#endif
 };
 
 VS_OUTPUT main(VS_INPUT_4W v)
@@ -67,6 +71,14 @@ VS_OUTPUT main(VS_INPUT_4W v)
 
     o.materialID = g_SkinnedMaterialID;
     o.texcoord = v.tc;
+
+#ifdef XR_OBJECT_MOTION
+    float4x4 previousBone = get_previous_bone(id0) * w0 + get_previous_bone(id1) * w1 + get_previous_bone(id2) * w2 + get_previous_bone(id3) * w3;
+    float3 previousWorld = previous_skinned_world(v.P, N, previousBone);
+    o.previousClip = mul(motion_previous_view_projection, float4(previousWorld, 1));
+    o.currentClip = o.position;
+    if (motion_controls.x < .5) o.previousClip = o.currentClip;
+#endif
 
     return o;
 }

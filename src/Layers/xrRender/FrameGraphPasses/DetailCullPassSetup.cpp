@@ -47,6 +47,26 @@ VirtualResourceHandle setupDetailCullPass(
     noiseDesc.isTransient = false;
     auto noise = fg.ImportTexture("DetailWindNoise", detailManager->perlin4dTexture, noiseDesc);
 
+    // Loading, a camera cut or resize can invalidate the previous depth pyramid.
+    // Bind a cleared reverse-Z far plane for that frame: culling still runs,
+    // but unavailable history cannot hide grass or create a null texture binding.
+    if (!hiZPyramid.is_valid()) {
+        ResourceDesc emptyDesc;
+        emptyDesc.type = ResourceDesc::Type::Texture2D;
+        emptyDesc.debugName = "Detail.EmptyHiZ";
+        emptyDesc.width = emptyDesc.height = 1;
+        emptyDesc.format = nvrhi::Format::R32_FLOAT;
+        emptyDesc.isUAV = true;
+        hiZPyramid = fg.CreateTexture("Detail.EmptyHiZ", emptyDesc);
+        hiZWidth = hiZHeight = hiZMipLevels = 1;
+        auto clear = fg.AddPass("Detail.EmptyHiZ");
+        fg.PassWrite(clear, hiZPyramid, ResourceState::UnorderedAccess);
+        fg.SetPassCallback(clear, [hiZPyramid](fg::RenderContext& context, const FrameGraph& graph) {
+            context.GetCommandList()->clearTextureFloat(graph.GetPhysicalTexture(hiZPyramid),
+                nvrhi::AllSubresources, nvrhi::Color(0.f));
+        });
+    }
+
     Fmatrix capturedPrevViewProj;
     bool hasPrevViewProj = (prevViewProj != nullptr);
     if (hasPrevViewProj)

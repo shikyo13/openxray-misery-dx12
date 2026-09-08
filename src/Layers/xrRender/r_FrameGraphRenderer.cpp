@@ -395,6 +395,15 @@ void FrameGraphRenderer::Render() {
 
     if (!m_enabled) return;
 
+    if (m_hasPrevFrameData && (Device.dwFrame != m_previousRenderedFrame + 1 ||
+        m_prevFrameWidth != Device.dwWidth || m_prevFrameHeight != Device.dwHeight ||
+        m_prevCameraPos.distance_to(Device.vCameraPosition) > 10.f ||
+        m_previousCameraDirection.dotproduct(Device.vCameraDirection) < .5f)) {
+        m_hasPrevFrameData = false;
+        if (strstr(Core.Params, "-graphics_trace"))
+            Msg("* [MotionHistory] Reset on frame %u after camera/frame/viewport discontinuity", Device.dwFrame);
+    }
+
     VERIFY(m_framegraph != nullptr);
     const bool graphicsTrace = strstr(Core.Params, "-graphics_trace") != nullptr;
     if (graphicsTrace) {
@@ -554,6 +563,8 @@ void FrameGraphRenderer::Render() {
     m_hasPrevFrameData = true;
     m_prevViewProj = Device.mFullTransform;
     m_prevCameraPos = Device.vCameraPosition;
+    m_previousCameraDirection = Device.vCameraDirection;
+    m_previousRenderedFrame = Device.dwFrame;
     m_pingPongIndex = 1 - m_pingPongIndex;
 
     if (m_gpuProfiler)
@@ -564,7 +575,7 @@ void FrameGraphRenderer::Render() {
             for (const auto& timing : m_gpuProfiler->GetPassTimings()) {
                 const char* name = timing.name.c_str();
                 if (!timing.pending && name && (strstr(name, "SSAO") || strstr(name, "Antialiasing") ||
-                    strstr(name, "Exposure") || strstr(name, "SceneTonemap") || strstr(name, "SkyBackgroundCopy") || strstr(name, "Bloom.") || strstr(name, "SunShafts.") || strstr(name, "Water.") || strstr(name, "Transparent Pass") || strstr(name, "Sun shadow") || strstr(name, "Local shadow") || strstr(name, "Detail")))
+                    strstr(name, "Exposure") || strstr(name, "SceneTonemap") || strstr(name, "SkyBackgroundCopy") || strstr(name, "Bloom.") || strstr(name, "SunShafts.") || strstr(name, "Water.") || strstr(name, "Transparent Pass") || strstr(name, "Motion Vectors") || strstr(name, "Sun shadow") || strstr(name, "Local shadow") || strstr(name, "Detail")))
                     m_graphicsTrace->w_printf("gpu,%u,%u,%u,%u,%s,%.6f\n", Device.dwFrame,
                         Device.dwTimeGlobal, ps_r_aa, ps_r_ssao, name, timing.timeMs);
             }
@@ -899,7 +910,7 @@ void FrameGraphRenderer::SetupFrame() {
             ZoneScopedN("Readback::CullStats");
             m_gpuCullingManager->ProcessStatsReadback();
         }
-        m_gpuCullingManager->BeginSkinnedFrame();
+        m_gpuCullingManager->BeginSkinnedFrame(ps_r_motion_debug || ps_r_rt_gi);
     }
 
     if (m_detailManager && m_device) {
@@ -1483,18 +1494,20 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     }
 
     // ═══════════════════════════════════════════════════════
-    //  MOTION VECTOR PASS (Depth-based reprojection)
+    //  MOTION VECTOR PASS (Camera + independently moving objects)
     // ═══════════════════════════════════════════════════════
-    passes::MotionVectorOutput motionOutput;
-    if (m_hasPrevFrameData) {
+    passes::MotionVectorOutput motionOutput{};
+    // Keep optional temporal inputs dormant until a consumer needs them.
+    if (ps_r_motion_debug || ps_r_rt_gi)
         motionOutput = passes::setupMotionVectorPass(
             *m_framegraph, m_device,
             transparentOutputs.depth,
-            Device.mInvFullTransform, m_prevViewProj,
+            Device.mInvFullTransform, m_hasPrevFrameData ? m_prevViewProj : Device.mFullTransform,
             width, height,
-            m_blackboard->get_or_add<passes::MotionVectorPassState>()
+            m_blackboard->get_or_add<passes::MotionVectorPassState>(),
+            m_geometryCollector.get(), &m_hudBatches, m_gpuCullingManager.get(), m_overlayManager.get(),
+            m_blackboard->get_or_add<passes::SkinningPassState>(), m_hasPrevFrameData
         );
-    }
 
     // ═══════════════════════════════════════════════════════
     //  PARTICLE PASS (after all opaque + transparent geometry)
@@ -1777,6 +1790,9 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
         m_exposureTexture, bloom, width, height, m_blackboard->get_or_add<passes::SceneTonemapPassState>());
     sceneColor = passes::setupAntialiasingPass(*m_framegraph, m_device, sceneColor,
         width, height, m_blackboard->get_or_add<passes::AntialiasingPassState>());
+    if (ps_r_motion_debug && motionOutput.motionVectors.is_valid())
+        sceneColor = passes::setupMotionVectorDebugPass(*m_framegraph, m_device, motionOutput.motionVectors,
+            width, height, m_blackboard->get_or_add<passes::MotionVectorPassState>());
 
     auto sceneWithUI = passes::setupUIPass(
         *m_framegraph,

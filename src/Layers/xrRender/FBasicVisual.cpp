@@ -9,6 +9,7 @@
 #include "xrCore/FMesh.hpp"
 #include "xrEngine/xr_object.h"  // For GEnv
 #include "Layers/xrRender/Materials/ShaderInfo.h"
+#include <atomic>
 
 namespace xray::render::fg
 {
@@ -25,6 +26,8 @@ IRender_Mesh::~IRender_Mesh()
 
 dxRender_Visual::dxRender_Visual()
 {
+    static std::atomic<u64> nextMotionIdentity{0};
+    motionIdentity = nextMotionIdentity.fetch_add(1, std::memory_order_relaxed) + 1;
     Type = 0;
     shader = nullptr;
     vis.clear();

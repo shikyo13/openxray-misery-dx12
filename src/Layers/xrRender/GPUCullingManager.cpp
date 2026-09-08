@@ -564,7 +564,10 @@ void GPUCullingManager::CreateSkinnedCullingBuffers(fg::RenderDevice* device)
         desc.keepInitialState = true;
 
         m_globalBoneBuffer = nvDevice->createBuffer(desc);
-        if (!m_globalBoneBuffer) {
+        desc.debugName = "PreviousBoneBuffer";
+        m_previousBoneBuffer = nvDevice->createBuffer(desc);
+        m_boneHistory.clear();
+        if (!m_globalBoneBuffer || !m_previousBoneBuffer) {
             Msg("! [GPUCulling] Failed to create global bone buffer");
             return;
         }
@@ -2407,11 +2410,18 @@ bool GPUCullingManager::EnsureSkinnedArgsGatePipeline(nvrhi::IDevice* nvDevice)
 //  SKELETON BONE BUFFER
 // ═══════════════════════════════════════════════════════
 
-void GPUCullingManager::BeginSkinnedFrame()
+void GPUCullingManager::BeginSkinnedFrame(bool trackMotionHistory)
 {
+    m_trackMotionHistory = trackMotionHistory;
     // Reset bone buffer allocations for new frame
     ++m_boneUploadFrameId;
     m_currentBoneOffset = 0;
+    for (auto it = m_boneHistory.begin(); it != m_boneHistory.end();) {
+        if (it->second.frame != m_boneUploadFrameId - 1)
+            it = m_boneHistory.erase(it);
+        else
+            ++it;
+    }
 }
 
 u32 GPUCullingManager::GetOrUploadSkeleton(nvrhi::ICommandList* cmdList, CKinematics* skeleton)
@@ -2469,6 +2479,16 @@ void GPUCullingManager::UploadSkeletonBones(nvrhi::ICommandList* cmdList, CKinem
     u64 byteOffset = static_cast<u64>(boneOffset) * BONE_STRIDE;
     u64 byteSize = static_cast<u64>(boneCount) * BONE_STRIDE;
 
+    if (m_trackMotionHistory) {
+        auto& history = m_boneHistory[skeleton->motionIdentity];
+        const bool consecutive = history.frame == m_boneUploadFrameId - 1 && history.matrices.size() == boneCount;
+        // Match previous poses to this frame's offsets, regardless of collection order.
+        // New/reappearing skeletons reset; the normal FXAA path does no history upload.
+        cmdList->writeBuffer(m_previousBoneBuffer,
+            consecutive ? history.matrices.data() : m_boneStagingBuffer.data(), byteSize, byteOffset);
+        history.matrices.assign(m_boneStagingBuffer.begin(), m_boneStagingBuffer.begin() + boneCount);
+        history.frame = m_boneUploadFrameId;
+    }
     cmdList->writeBuffer(m_globalBoneBuffer, m_boneStagingBuffer.data(), byteSize, byteOffset);
 }
 

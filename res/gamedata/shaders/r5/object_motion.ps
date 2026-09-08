@@ -1,0 +1,27 @@
+#define SM_6_0
+#include "common.h"
+#include "bindless_common.h"
+#include "object_motion_common.h"
+struct Input {
+    float4 position : SV_Position;
+    // Keep the register layout identical to every skinned VS output.
+    float3 worldPos : TEXCOORD0;
+    float2 uv : TEXCOORD1;
+    float3 normal : TEXCOORD2;
+    float3 tangent : TEXCOORD3;
+    float3 bitangent : TEXCOORD4;
+    nointerpolation uint materialID : TEXCOORD5;
+    float4 previousClip : TEXCOORD7;
+    float4 currentClip : TEXCOORD8;
+};
+float2 main(Input input) : SV_Target {
+    MaterialData material = g_Materials[input.materialID];
+    if ((material.flags & MAT_FLAG_ALPHA_TEST) != 0)
+        clip(SampleDiffuse(material, input.uv).a - material.alphaRef);
+    // Mode 3 marks actual depth-tested object coverage; it is not a velocity.
+    if (motion_controls.y > .5) return float2(.01, 0);
+    if (input.previousClip.w <= 1e-6 || input.currentClip.w <= 1e-6) return 0;
+    float2 motion = (input.previousClip.xy / input.previousClip.w -
+        input.currentClip.xy / input.currentClip.w) * float2(.5, -.5);
+    return all(isfinite(motion)) ? motion : float2(0, 0);
+}

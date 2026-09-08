@@ -441,7 +441,7 @@ public:
     // Each skeleton gets a contiguous range: g_BoneMatrices[offset + boneIndex]
 
     // Call at frame start to reset bone buffer allocations
-    void BeginSkinnedFrame();
+    void BeginSkinnedFrame(bool trackMotionHistory);
 
     // Get bone offset for a skeleton, uploading if not already done this frame
     // Returns offset (in bone count) into global buffer
@@ -449,6 +449,7 @@ public:
 
     // Get the global bone buffer for shader binding
     nvrhi::IBuffer* GetGlobalBoneBuffer() const { return m_globalBoneBuffer.Get(); }
+    nvrhi::IBuffer* GetPreviousBoneBuffer() const { return m_previousBoneBuffer.Get(); }
 
     // Process readback results from previous frame (call at frame start)
     void ProcessStatsReadback();
@@ -657,6 +658,13 @@ private:
     static constexpr u32 MAX_TOTAL_BONES = 16384;  // ~200 skeletons * 78 bones
     static constexpr u32 BONE_STRIDE = sizeof(Fmatrix);  // 64 bytes
     nvrhi::BufferHandle m_globalBoneBuffer;
+    nvrhi::BufferHandle m_previousBoneBuffer;
+    bool m_trackMotionHistory = false;
+    struct BoneHistory {
+        u32 frame = 0;
+        xr_vector<Fmatrix> matrices;
+    };
+    xr_map<u64, BoneHistory> m_boneHistory;
     u32 m_boneUploadFrameId = 0;
     xr_vector<Fmatrix> m_boneStagingBuffer;
     u32 m_currentBoneOffset = 0;

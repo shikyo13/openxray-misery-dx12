@@ -131,8 +131,8 @@ private:
         ExtractedReflection& outReflection
     );
 
-    // Invalidate cached includes and reflection for the native water interfaces.
-    static constexpr u32 CACHE_VERSION = 19;
+    // Invalidate cached includes and reflection for previous-pose motion shaders.
+    static constexpr u32 CACHE_VERSION = 20;
     Stats m_stats;
     bool m_cacheEnabled;
     xr_string m_backendSubdir;

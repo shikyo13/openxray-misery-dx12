@@ -103,6 +103,8 @@ int ps_r_ssao_debug = 0;
 u32 ps_r_aa = 1;
 float ps_r_bloom_strength = 1.f;
 int ps_r_bloom_debug = 0;
+int ps_r_motion_debug = 0;
+float ps_r_motion_debug_scale = 1.f;
 const xr_token qaa_fg_token[] = {{"off", 0}, {"fxaa", 1}, {nullptr, 0}};
 const xr_token qssao_token[] = {{"st_opt_off", 0}, {"st_opt_low", 1}, {"st_opt_medium", 2}, {"st_opt_high", 3},
     {"st_opt_ultra", 4},
@@ -916,6 +918,8 @@ void xrRender_initconsole()
     CMD3(CCC_Token, "r_aa", &ps_r_aa, qaa_fg_token);
     CMD4(CCC_Float, "r_bloom_strength", &ps_r_bloom_strength, 0.f, 2.f);
     CMD4(CCC_Integer, "r_bloom_debug", &ps_r_bloom_debug, 0, 1);
+    CMD4(CCC_Integer, "r_motion_debug", &ps_r_motion_debug, 0, 3);
+    CMD4(CCC_Float, "r_motion_debug_scale", &ps_r_motion_debug_scale, .01f, 64.f);
     CMD3(CCC_Mask, "r2_ssao_blur", &ps_r2_ls_flags_ext, R2FLAGEXT_SSAO_BLUR); // Need restart
     CMD3(CCC_Mask, "r2_ssao_opt_data", &ps_r2_ls_flags_ext, R2FLAGEXT_SSAO_OPT_DATA); // Need restart
     CMD3(CCC_Mask, "r2_ssao_half_data", &ps_r2_ls_flags_ext, R2FLAGEXT_SSAO_HALF_DATA); // Need restart

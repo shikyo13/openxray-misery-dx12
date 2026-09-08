@@ -229,4 +229,30 @@ float3 apply_splat_color(float3 albedo, float3 worldPos, float2 meshUV)
     return albedo;
 }
 
+#ifdef XR_OBJECT_MOTION
+#include "object_motion_common.h"
+StructuredBuffer<float4x4> g_PreviousBoneMatrices : register(t29);
+float4x4 get_previous_bone(int legacyIndex) {
+    return g_PreviousBoneMatrices[g_SkeletonBoneOffset + legacyIndex / 3];
+}
+float3 previous_skinned_world(float4 position, float3 normal, float4x4 bone) {
+    float3 worldPos = mul(motion_previous_world, mul(bone, position)).xyz;
+    float3 worldNormal = normalize(mul((float3x3)motion_previous_world, mul((float3x3)bone, normal)));
+    float3 offset = 0;
+    for (uint i = 0; i < g_SplatCount; ++i) {
+        PaintSplat splat = g_PaintSplats[g_SplatOffset + i];
+        float3 center = 0;
+        for (uint j = 0; j < 4; ++j)
+            center += mul(g_PreviousBoneMatrices[g_SkeletonBoneOffset + splat.boneIdx[j]],
+                float4(splat.posRadius.xyz, 1)).xyz * splat.boneWeights[j];
+        float dist = distance(worldPos, mul(motion_previous_world, float4(center, 1)).xyz);
+        if (dist < splat.posRadius.w) {
+            float fade = 1 - smoothstep(splat.posRadius.w * .5, splat.posRadius.w, dist);
+            offset -= worldNormal * (splat.color.a * fade * dev_param_1.x);
+        }
+    }
+    return worldPos + offset;
+}
+#endif
+
 #endif // SKINNED_COMMON_H

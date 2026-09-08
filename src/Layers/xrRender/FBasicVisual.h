@@ -85,6 +85,9 @@ public:
     u32 bindless_material_id{UINT32_MAX};
     u32 bindless_material_epoch{0};
 
+    // Survives frame-to-frame tracking without confusing reused model pointers.
+    u64 motionIdentity{0};
+
     virtual void Load(const char* N, IReader* data, u32 dwFlags);
     virtual void Release(); // Shared memory release
     virtual void Copy(dxRender_Visual* from);

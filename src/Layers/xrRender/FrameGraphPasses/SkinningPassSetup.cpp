@@ -3,6 +3,7 @@
 // Uses GPU-driven global bone buffer for efficient skinning
 #include "stdafx.h"
 #include "SkinningPassSetup.h"
+#include "MotionVectorPassSetup.h"
 #include "ShaderConstants.h"
 #include "Layers/xrRender/FrameGraph/FrameGraph.h"
 #include "Layers/xrRender/FrameGraph/IPass.h"
@@ -28,6 +29,7 @@
 #include "PassCommon.h"
 #include "Layers/xrRender/ClusteredLightManager.h"
 #include "xrCore/FMesh.hpp"
+#include "xrEngine/IRenderable.h"
 
 extern ENGINE_API float psHUD_FOV;
 
@@ -540,6 +542,164 @@ u32 DrawSkinnedSunShadows(RenderContext* context, RenderDevice* device, GPUCulli
         ++count;
     }
     return count;
+}
+
+void DrawObjectMotion(RenderContext* context, RenderDevice* device, GPUCullingManager* gpuCulling,
+    const GeometryCollector* geometry, const xr_vector<GeometryBatch>* hudBatches,
+    decals::OverlayManager* overlays, nvrhi::IFramebuffer* framebuffer,
+    const Fmatrix& previousViewProjection, bool historyValid,
+    SkinningPassState& skinning, ObjectMotionState& state)
+{
+    if (!gpuCulling || !framebuffer) return;
+    if ((!geometry || geometry->GetBatches().empty()) && (!hudBatches || hudBatches->empty())) return;
+    auto* command = context->GetCommandList();
+    auto* nv = device->GetNVRHIDevice();
+    auto* backend = device->GetBackend();
+    auto* loader = GEnv.Render->GetShaderLoader();
+    auto& cache = framegraph::GetPassResourceCache();
+    auto ps = loader->LoadPixelShader("object_motion");
+    R_ASSERT2(ps.handle && ps.reflection, "Object motion pixel shader compilation failed");
+    nvrhi::FramebufferInfoEx info;
+    info.colorFormats.push_back(nvrhi::Format::RG16_FLOAT);
+    info.depthFormat = nvrhi::Format::D32;
+    auto pipeline = [&](nvrhi::IShader* vs, nvrhi::IInputLayout* input,
+                        nvrhi::IBindingLayout* layout, const char* name) {
+        nvrhi::GraphicsPipelineDesc desc;
+        desc.VS = vs; desc.PS = ps.handle; desc.inputLayout = input;
+        desc.bindingLayouts = {layout, backend->GetBindlessLayout()};
+        desc.primType = nvrhi::PrimitiveType::TriangleList;
+        desc.renderState.depthStencilState.depthTestEnable = true;
+        desc.renderState.depthStencilState.depthWriteEnable = false;
+        desc.renderState.depthStencilState.depthFunc = nvrhi::ComparisonFunc::Equal;
+        desc.renderState.rasterState.frontCounterClockwise = false;
+        desc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::Back;
+        auto result = cache.GetOrCreatePipeline(name, desc, info, nv);
+        R_ASSERT2(result, "Object motion pipeline creation failed");
+        return result;
+    };
+    if (!state.rigidPipeline) {
+        auto vs = loader->LoadVertexShader("object_motion");
+        R_ASSERT2(vs.handle && vs.reflection, "Rigid motion vertex shader compilation failed");
+        state.rigidLayout = cache.GetOrCreateBindingLayoutFromReflection("ObjectMotionRigid", *vs.reflection, *ps.reflection, nv);
+        nvrhi::VertexAttributeDesc attributes[] = {
+            nvrhi::VertexAttributeDesc().setName("POSITION").setFormat(nvrhi::Format::RGB32_FLOAT).setOffset(0).setElementStride(48),
+            nvrhi::VertexAttributeDesc().setName("TEXCOORD").setFormat(nvrhi::Format::RG32_FLOAT).setOffset(24).setElementStride(48)
+        };
+        state.rigidInputLayout = nv->createInputLayout(attributes, 2, vs.handle);
+        state.rigidPipeline = pipeline(vs.handle, state.rigidInputLayout, state.rigidLayout, "ObjectMotionRigid");
+    }
+    const char* shaderNames[] = {"bindless_skinned_motion", "bindless_skinned_hq_motion",
+        "bindless_skinned_2w_motion", "bindless_skinned_3w_motion", "bindless_skinned_4w_motion"};
+    if (skinning.initialized && !state.skinnedPipelines[0]) {
+        const SkinningPipelineVariant* variants[] = {&skinning.nonHQ, &skinning.hq1w,
+            &skinning.hq2w, &skinning.hq3w, &skinning.hq4w};
+        for (u32 i = 0; i < 5; ++i) {
+            auto vs = loader->LoadVertexShader(shaderNames[i]);
+            R_ASSERT2(vs.handle && vs.reflection, "Skinned motion vertex shader compilation failed");
+            if (!state.skinnedLayout)
+                state.skinnedLayout = cache.GetOrCreateBindingLayoutFromReflection("ObjectMotionSkinned", *vs.reflection, *ps.reflection, nv);
+            state.skinnedPipelines[i] = pipeline(vs.handle, variants[i]->inputLayout, state.skinnedLayout, shaderNames[i]);
+        }
+    }
+    struct MotionConstants { Fmatrix previousViewProjection, previousWorld; Fvector4 controls; };
+    static_assert(sizeof(MotionConstants) == 144);
+    auto motionCB = cache.GetOrCreateVolatileCB("ObjectMotion", "Motion", sizeof(MotionConstants), device, 8192);
+    auto worldCB = cache.GetOrCreateVolatileCB("ObjectMotion", "World", sizeof(DynamicTransforms), device, 8192);
+    auto materialCB = cache.GetOrCreateVolatileCB("ObjectMotion", "Material", sizeof(SkinnedMaterialCB), device, 8192);
+    auto globalsCB = cache.GetOrCreateVolatileCB("ObjectMotion", "Globals", sizeof(StaticGlobals), device);
+    auto globals = BuildStaticGlobals();
+    command->writeBuffer(globalsCB, &globals, sizeof(globals));
+    if (overlays) overlays->UploadSplats(command);
+    auto bindingSet = [&](bool skinned) {
+        const auto* vsReflection = loader->GetCachedReflection(skinned ? shaderNames[0] : "object_motion", ".vs");
+        framegraph::BindingSetBuilder bsb(*vsReflection, *ps.reflection, nv, skinned ? "ObjectMotionSkinned" : "ObjectMotionRigid");
+        bsb.ConstantBuffer("ObjectMotionParams", motionCB);
+        bsb.ConstantBuffer("dynamic_transforms", worldCB);
+        bsb.ConstantBuffer("static_globals", globalsCB);
+        bsb.ConstantBuffer("SkinnedMaterialCB", materialCB);
+        bsb.BufferSRV("g_Materials", MaterialBuffer::Instance().GetBuffer());
+        if (skinned) {
+            bsb.BufferSRV("g_BoneMatrices", gpuCulling->GetGlobalBoneBuffer());
+            bsb.BufferSRV("g_PreviousBoneMatrices", gpuCulling->GetPreviousBoneBuffer());
+            bsb.BufferSRV("g_PaintSplats", overlays ? overlays->GetSplatBuffer() : nullptr);
+        }
+        auto result = cache.GetOrCreateBindingSet(bsb.Build(), skinned ? state.skinnedLayout : state.rigidLayout, nv);
+        R_ASSERT2(result, "Object motion binding set creation failed");
+        return result;
+    };
+    auto rigidBindings = bindingSet(false);
+    auto skinnedBindings = state.skinnedPipelines[0] ? bindingSet(true) : nvrhi::BindingSetHandle();
+    for (auto it = state.transforms.begin(); it != state.transforms.end();) {
+        if (it->second.frame != Device.dwFrame - 1) it = state.transforms.erase(it);
+        else ++it;
+    }
+    CFrustum frustum;
+    frustum.CreateFromMatrix(Device.mFullTransform, FRUSTUM_P_LRTB | FRUSTUM_P_FAR);
+    const auto& size = framebuffer->getFramebufferInfo();
+    u32 counts[3] = {}, continuous = 0;
+    auto drawBatch = [&](const GeometryBatch& batch, bool hud) {
+        // Match the visible skinning pass: it writes depth for every skinned
+        // mesh, including MISERY model shaders carrying legacy transparency flags.
+        if (!batch.visual || batch.isStatic || batch.isTerrain ||
+            (!batch.isSkinned && batch.IsStrictB2F()) || batch.bindlessMaterialID == UINT32_MAX) return;
+        if (!hud && !frustum.testSphere_dirty(batch.worldBoundsCenter, batch.worldBoundsRadius)) return;
+        if (batch.isSkinned) {
+            if (!skinnedBindings || !batch.vertexBuffer || !batch.indexBuffer) return;
+        } else if (hud || !batch.megaBufferAlloc.valid) return;
+        auto world = hud ? ApplyHUDFOVAdjustment(batch.worldMatrix) : batch.worldMatrix;
+        auto* root = batch.renderable ? batch.renderable->GetRenderData().visual : nullptr;
+        const u64 owner = root ? static_cast<dxRender_Visual*>(root)->motionIdentity : 0;
+        auto& history = state.transforms[{batch.visual->motionIdentity, owner, hud}];
+        if (!history.seen || history.frame != Device.dwFrame) {
+            history.valid = historyValid && history.seen && history.frame == Device.dwFrame - 1;
+            history.previous = history.valid ? history.current : world;
+            history.current = world; history.frame = Device.dwFrame; history.seen = true;
+        }
+        MotionConstants motion{previousViewProjection, history.previous, {}};
+        motion.controls.set(history.valid ? 1.f : 0.f, ps_r_motion_debug == 3 ? 1.f : 0.f, 0, 0);
+        command->writeBuffer(motionCB, &motion, sizeof(motion));
+        DynamicTransforms transforms{};
+        FillDynamicTransforms(transforms, world);
+        command->writeBuffer(worldCB, &transforms, sizeof(transforms));
+        SkinnedMaterialCB material{};
+        material.materialID = batch.bindlessMaterialID;
+        nvrhi::GraphicsState draw;
+        if (batch.isSkinned) {
+            u32 index = 0;
+            switch (GetSkinnedVertexFormatID(batch.skinningRenderMode, batch.vertexStride)) {
+            case VF_SKINNED_HQ1W: index = 1; break;
+            case VF_SKINNED_HQ2W: index = 2; break;
+            case VF_SKINNED_HQ3W: index = 3; break;
+            case VF_SKINNED_HQ4W: index = 4; break;
+            }
+            material.skeletonBoneOffset = GetSkeletonBoneOffset(command, *gpuCulling, batch);
+            const auto splats = GetSplatRange(batch, overlays);
+            material.splatOffset = splats.offset; material.splatCount = splats.count;
+            draw.pipeline = state.skinnedPipelines[index];
+            draw.bindings = {skinnedBindings, backend->GetBindlessDescriptorTable()};
+            draw.vertexBuffers = {{batch.vertexBuffer, 0, 0}};
+            draw.indexBuffer = {batch.indexBuffer, nvrhi::Format::R16_UINT, 0};
+        } else {
+            draw.pipeline = state.rigidPipeline;
+            draw.bindings = {rigidBindings, backend->GetBindlessDescriptorTable()};
+            draw.vertexBuffers = {{gpuCulling->GetMegaVertexBuffer(), 0, 0}};
+            draw.indexBuffer = {gpuCulling->GetMegaIndexBuffer(), nvrhi::Format::R32_UINT, 0};
+        }
+        command->writeBuffer(materialCB, &material, sizeof(material));
+        draw.framebuffer = framebuffer;
+        draw.viewport.addViewportAndScissorRect(nvrhi::Viewport(0.f, float(size.width), 0.f, float(size.height), hud ? .9f : 0.f, 1.f));
+        command->setGraphicsState(draw);
+        command->drawIndexed(nvrhi::DrawArguments().setVertexCount(batch.indexCount)
+            .setStartIndexLocation(batch.isSkinned ? batch.startIndex : batch.megaBufferAlloc.indexOffset)
+            .setStartVertexLocation(batch.isSkinned ? batch.baseVertex : batch.megaBufferAlloc.vertexOffset));
+        ++counts[hud ? 2 : (batch.isSkinned ? 1 : 0)];
+        continuous += history.valid ? 1 : 0;
+    };
+    if (geometry) for (const auto& batch : geometry->GetBatches()) drawBatch(batch, false);
+    if (hudBatches) for (const auto& batch : *hudBatches) drawBatch(batch, true);
+    if (strstr(Core.Params, "-graphics_trace") && Device.dwFrame % 120 == 0)
+        Msg("* [ObjectMotion] frame=%u rigid=%u skinned=%u hud=%u continuous=%u camera_history=%u",
+            Device.dwFrame, counts[0], counts[1], counts[2], continuous, historyValid ? 1u : 0u);
 }
 
 static void DrawSkinnedBatch(

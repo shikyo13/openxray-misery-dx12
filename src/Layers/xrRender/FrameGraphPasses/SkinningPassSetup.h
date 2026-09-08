@@ -46,6 +46,14 @@ struct SkinningPipelineVariant {
     nvrhi::ShaderHandle vs;
 };
 
+struct ObjectMotionState;
+struct SkinningPassState;
+void DrawObjectMotion(RenderContext* context, RenderDevice* device, GPUCullingManager* gpuCulling,
+    const GeometryCollector* geometry, const xr_vector<GeometryBatch>* hudBatches,
+    decals::OverlayManager* overlays, nvrhi::IFramebuffer* framebuffer,
+    const Fmatrix& previousViewProjection, bool historyValid,
+    SkinningPassState& skinning, ObjectMotionState& state);
+
 struct SkinningPassState {
     nvrhi::GraphicsPipelineHandle sunShadowPipelines[5];
     nvrhi::BindingLayoutHandle sunShadowLayout;

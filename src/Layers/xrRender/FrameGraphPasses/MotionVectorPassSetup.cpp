@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MotionVectorPassSetup.h"
+#include "SkinningPassSetup.h"
 #include "Layers/xrRender/FrameGraph/BindingSetBuilder.h"
 #include "Layers/xrRender/FrameGraph/FrameGraph.h"
 #include "Layers/xrRender/FrameGraph/PassResourceCache.h"
@@ -7,6 +8,7 @@
 #include "Layers/xrRender/RenderContext/RenderContext.h"
 #include "Layers/xrRender/RenderContext/RenderDevice.h"
 #include "Layers/xrRender/FrameGraph/ShaderLoader.h"
+#include "Layers/xrRender/xrRender_console.h"
 
 namespace fg
 {
@@ -45,7 +47,10 @@ MotionVectorOutput setupMotionVectorPass(
     const Fmatrix& invViewProj,
     const Fmatrix& prevViewProj,
     u32 width, u32 height,
-    MotionVectorPassState& state)
+    MotionVectorPassState& state,
+    const GeometryCollector* geometry, const xr_vector<GeometryBatch>* hudBatches,
+    GPUCullingManager* gpuCulling, decals::OverlayManager* overlays,
+    SkinningPassState& skinning, bool historyValid)
 {
     InitializeResources(device, state);
 
@@ -59,6 +64,7 @@ MotionVectorOutput setupMotionVectorPass(
     mvDesc.height = height;
     mvDesc.format = nvrhi::Format::RG16_FLOAT;
     mvDesc.isUAV = true;
+    mvDesc.isRenderTarget = true;
     mvDesc.isTransient = true;
     auto mvHandle = fg.CreateTexture("rt_MotionVectors", mvDesc);
 
@@ -95,6 +101,7 @@ MotionVectorOutput setupMotionVectorPass(
                 Fmatrix prevViewProj;
                 float screenW, screenH;
                 float invScreenW, invScreenH;
+                Fvector4 camera;
             } cb;
             cb.invViewProj = data.invViewProj;
             cb.prevViewProj = data.prevViewProj;
@@ -102,6 +109,8 @@ MotionVectorOutput setupMotionVectorPass(
             cb.screenH = (float)data.height;
             cb.invScreenW = 1.0f / data.width;
             cb.invScreenH = 1.0f / data.height;
+            cb.camera.set(Device.vCameraPosition.x, Device.vCameraPosition.y, Device.vCameraPosition.z, 0);
+            static_assert(sizeof(cb) == 160);
 
             nvrhi::IDevice* nvDevice = data.device->GetNVRHIDevice();
             nvrhi::ICommandList* cmdList = ctx->GetCommandList();
@@ -123,7 +132,79 @@ MotionVectorOutput setupMotionVectorPass(
         }
     );
 
-    return { passData.motionVectors };
+    if (ps_r_motion_debug == 2) return {passData.motionVectors};
+    struct ObjectPassData {
+        VirtualResourceHandle motion, depth;
+        fg::RenderDevice* device;
+        const GeometryCollector* geometry;
+        const xr_vector<GeometryBatch>* hudBatches;
+        GPUCullingManager* gpuCulling;
+        decals::OverlayManager* overlays;
+        SkinningPassState* skinning;
+        ObjectMotionState* state;
+        Fmatrix previousViewProjection;
+        bool historyValid;
+    };
+    auto& objects = fg.addCallbackPass<ObjectPassData>("Motion Vectors.Objects",
+        [&](FrameGraph& graph, PassHandle pass, ObjectPassData& data) {
+            RenderPassBuilder pb(graph, pass);
+            data.motion = pb.readWrite(passData.motionVectors, ResourceState::RenderTarget);
+            data.depth = pb.read(depthInput, ResourceState::DepthStencilRead);
+            data.device = device; data.geometry = geometry; data.hudBatches = hudBatches;
+            data.gpuCulling = gpuCulling; data.overlays = overlays; data.skinning = &skinning;
+            data.state = &state.objects; data.previousViewProjection = prevViewProj; data.historyValid = historyValid;
+        },
+        [](const ObjectPassData& data, const FrameGraph& graph, fg::RenderContext* ctx) {
+            nvrhi::FramebufferDesc desc;
+            desc.addColorAttachment(graph.GetPhysicalTexture(data.motion));
+            desc.setDepthAttachment(graph.GetPhysicalTexture(data.depth));
+            auto framebuffer = GetPassResourceCache().GetOrCreateFramebuffer("ObjectMotion", desc, data.device->GetNVRHIDevice());
+            R_ASSERT2(framebuffer, "Object motion framebuffer creation failed");
+            DrawObjectMotion(ctx, data.device, data.gpuCulling, data.geometry, data.hudBatches,
+                data.overlays, framebuffer, data.previousViewProjection, data.historyValid, *data.skinning, *data.state);
+        });
+    return { objects.motion };
+}
+
+VirtualResourceHandle setupMotionVectorDebugPass(FrameGraph& graph, fg::RenderDevice* device,
+    VirtualResourceHandle motion, u32 width, u32 height, MotionVectorPassState& state)
+{
+    auto& cache = GetPassResourceCache();
+    auto* nv = device->GetNVRHIDevice();
+    if (!state.debugPipeline) {
+        auto shader = GEnv.Render->GetShaderLoader()->LoadComputeShader("motion_debug");
+        R_ASSERT2(shader.handle && shader.reflection, "Motion debug shader compilation failed");
+        state.debugLayout = cache.GetOrCreateBindingLayoutFromReflection("MotionDebug", *shader.reflection, nv);
+        nvrhi::ComputePipelineDesc desc;
+        desc.CS = shader.handle; desc.bindingLayouts = {state.debugLayout};
+        state.debugPipeline = cache.GetOrCreateComputePipeline("MotionDebug", desc, nv);
+        R_ASSERT2(state.debugPipeline, "Motion debug pipeline creation failed");
+    }
+    ResourceDesc desc;
+    desc.debugName = "MotionDebug"; desc.width = width; desc.height = height;
+    desc.format = nvrhi::Format::RGBA16_FLOAT; desc.isUAV = true; desc.isRenderTarget = true;
+    auto output = graph.CreateTexture("MotionDebug", desc);
+    auto pass = graph.AddPass("Motion Vectors.Debug");
+    graph.PassRead(pass, motion, ResourceState::ShaderResource);
+    graph.PassWrite(pass, output, ResourceState::UnorderedAccess);
+    graph.SetPassCallback(pass, [motion, output, width, height, device, &state](fg::RenderContext& ctx, const FrameGraph& graph) {
+        auto* nv = device->GetNVRHIDevice();
+        auto* reflection = GEnv.Render->GetShaderLoader()->GetCachedReflection("motion_debug", ".cs");
+        BindingSetBuilder bsb(*reflection, nv, "MotionDebug");
+        auto constants = GetPassResourceCache().GetOrCreateVolatileCB("MotionDebug", "Options", 16, device);
+        Fvector4 options;
+        options.set(ps_r_motion_debug_scale, 0, 0, 0);
+        ctx.GetCommandList()->writeBuffer(constants, &options, sizeof(options));
+        bsb.ConstantBuffer("MotionDebugOptions", constants);
+        bsb.Texture("t_Motion", graph.GetPhysicalTexture(motion));
+        bsb.TextureUAV("u_Output", graph.GetPhysicalTexture(output));
+        auto bindings = GetPassResourceCache().GetOrCreateBindingSet(bsb.Build(), state.debugLayout, nv);
+        R_ASSERT2(bindings, "Motion debug binding set creation failed");
+        ctx.SetComputePipeline(state.debugPipeline);
+        ctx.SetComputeBindingSet(0, bindings);
+        ctx.Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+    });
+    return output;
 }
 
 } // namespace
