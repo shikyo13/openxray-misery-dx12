@@ -1,6 +1,7 @@
 #define SM_6_0
 #include "common.h"
 #include "bindless_common.h"
+#include "particle_fog.h"
 
 static const float DISTORT_STRENGTH = 0.05;
 
@@ -12,6 +13,7 @@ struct PS_INPUT
     float3 worldPos : TEXCOORD2;
     float3 normal   : TEXCOORD3;
     nointerpolation uint materialID : TEXCOORD4;
+    nointerpolation uint flags : TEXCOORD5;
 };
 
 float4 main(PS_INPUT input) : SV_Target0
@@ -19,6 +21,7 @@ float4 main(PS_INPUT input) : SV_Target0
     MaterialData mat = g_Materials[input.materialID];
     float4 distort = SampleDiffuse(mat, input.texcoord);
     float intensity = distort.a * dot(input.color.rgb, 0.33);
+    intensity *= particle_fog_transmittance(particle_fog_amount(input.worldPos, input.flags));
     float2 offset = (distort.xy - 0.5) * DISTORT_STRENGTH * intensity;
     float sourceViewZ = dot(input.worldPos - eye_position, camera_direction.xyz);
     return float4(offset, sourceViewZ * intensity, intensity);

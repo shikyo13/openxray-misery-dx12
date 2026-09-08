@@ -1,6 +1,7 @@
 #define SM_6_0
 #include "common.h"
 #include "bindless_common.h"
+#include "particle_fog.h"
 
 Texture2D<float> g_SceneDepth : register(t1);
 
@@ -14,6 +15,7 @@ struct PS_INPUT
     float3 worldPos : TEXCOORD2;
     float3 normal   : TEXCOORD3;
     nointerpolation uint materialID : TEXCOORD4;
+    nointerpolation uint flags : TEXCOORD5;
 };
 
 struct PS_OUTPUT
@@ -47,6 +49,8 @@ PS_OUTPUT main(PS_INPUT input)
         result.rgb *= soft;
     }
 
+    float fog = particle_fog_amount(input.worldPos, input.flags);
+    result.rgb = apply_particle_fog(result.rgb, fog, input.flags, input.hpos.xy);
     output.color = result;
     output.normal = float4(normalize(input.normal), 1);
     output.baseColor = float4(diffuseSample.rgb, 0);

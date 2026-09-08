@@ -347,8 +347,9 @@ static u32 GenerateParticleVertices(
                 }
             }
 
-            if (isHUD) {
-                for (ParticleVertex* v = pvStart; v < pv; v++) {
+            for (ParticleVertex* v = pvStart; v < pv; v++) {
+                v->flags = u32(batch.blendMode) | (isHUD ? 8u : 0u);
+                if (isHUD) {
                     Fvector tmp;
                     hudMat.transform_tiny(tmp, v->p);
                     v->p = tmp;
@@ -424,8 +425,9 @@ void InitializeParticleResources(fg::RenderDevice* device, const nvrhi::Framebuf
         nvrhi::VertexAttributeDesc().setName("COLOR").setFormat(nvrhi::Format::BGRA8_UNORM).setBufferIndex(0).setOffset(12).setElementStride(stride),
         nvrhi::VertexAttributeDesc().setName("TEXCOORD").setFormat(nvrhi::Format::RG32_FLOAT).setBufferIndex(0).setOffset(16).setElementStride(stride),
         nvrhi::VertexAttributeDesc().setName("MATERIALID").setFormat(nvrhi::Format::R32_UINT).setBufferIndex(0).setOffset(24).setElementStride(stride),
+        nvrhi::VertexAttributeDesc().setName("PARTICLEFLAGS").setFormat(nvrhi::Format::R32_UINT).setBufferIndex(0).setOffset(28).setElementStride(stride),
     };
-    state.inputLayout = nvDevice->createInputLayout(attribs, 4, state.vs);
+    state.inputLayout = nvDevice->createInputLayout(attribs, 5, state.vs);
 
     for (u32 i = 0; i < PARTICLE_BLEND_COUNT; i++) {
         const auto& bd = s_blendDescs[i];
@@ -597,6 +599,7 @@ ParticlePassOutput setupParticlePass(
         "Particles",
         [&, width, height, hiZPyramid, hiZWidth, hiZHeight, hiZMipLevels, state](FrameGraph& builder, PassHandle passHandle, ParticlePassData& data) {
             RenderPassBuilder passBuilder(builder, passHandle);
+            ReadSkyBackground(builder, passHandle);
 
             data.width = width;
             data.height = height;

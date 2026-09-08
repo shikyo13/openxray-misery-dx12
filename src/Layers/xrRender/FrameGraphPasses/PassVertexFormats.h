@@ -30,7 +30,7 @@ struct ParticleVertex {
     u32 color;
     Fvector2 t;
     u32 materialID;
-    u32 _pad;
+    u32 flags; // Low three bits: ParticleBlendMode; bit 3: HUD particle.
 };
 static_assert(sizeof(ParticleVertex) == 32, "ParticleVertex must be 32 bytes to match Vulkan std430 stride");
 
