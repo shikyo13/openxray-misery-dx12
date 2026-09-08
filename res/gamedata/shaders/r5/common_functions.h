@@ -219,6 +219,7 @@ float gbuf_unpack_mtl( float mtl_hemi )
 }
 
 #include "shared/pbr_brdf.h"
+#include "shared/environment_diffuse.h"
 #include "shared/clustered_lighting.h"
 
 float3 worldNormalToView(float3 N)
@@ -285,11 +286,15 @@ f_forward output_forward_pbr(
 	);
 
 	float skyVisibility = hemi_mode == 0 ? 1.0 : saturate(authoredHemi);
-	float3 ambientColor = L_ambient.rgb + L_hemi_color.rgb * L_hemi_color.w * skyVisibility;
+	float3 skyIrradiance = L_hemi_color.rgb * L_hemi_color.w;
+	float3 specularAmbientColor = L_ambient.rgb + skyIrradiance * skyVisibility;
+	[branch] if (environment_settings.x > .5)
+		skyIrradiance = AuthoredEnvironmentDiffuse(N);
+	float3 ambientColor = L_ambient.rgb + skyIrradiance * skyVisibility;
 	float3 ambient = PBRAmbient(
 		albedo, N, V,
 		metallic, roughness, ao,
-		ambientColor
+		ambientColor, specularAmbientColor
 	);
 
 	float3 finalColor = sunLight * SampleCSM(worldPos, N) + ambient;
@@ -311,6 +316,11 @@ f_forward output_forward_pbr(
 	res.baseColor = float4(albedo, metallic);
 	// SSAO follows this pass and must not darken the fog contribution.
 	res.ambient = float4(ambient * (1.0 - fog) * (1.0 - fog * fog), 0);
+	if (environment_settings.x == 2) {
+		// Raw directional irradiance, before material and visibility multiplication.
+		res.color.rgb = skyIrradiance;
+		res.ambient = 0;
+	}
 	if (hemi_mode == 2) {
 		res.color.rgb = skyVisibility;
 		res.ambient = 0;

@@ -108,6 +108,7 @@ float ps_r_ssgi_strength = 1.f;
 // 5 raw irradiance amplified 16x (diagnostic only, before receiver reflectance).
 int ps_r_ssgi_debug = 0;
 int ps_r_hemi = 1; // 0 legacy flat ambient, 1 authored sky visibility, 2 diagnostic.
+int ps_r_env_diffuse = 1; // 0 uniform sky, 1 authored environment diffuse, 2 irradiance diagnostic.
 u32 ps_r_aa = 1;
 int ps_r_fsr_fg = 0;
 int ps_r_fsr_fg_capture = 0;
@@ -933,6 +934,7 @@ void xrRender_initconsole()
     CMD4(CCC_Float, "r_ssgi_strength", &ps_r_ssgi_strength, 0.f, 4.f);
     CMD4(CCC_Integer, "r_ssgi_debug", &ps_r_ssgi_debug, 0, 5);
     CMD4(CCC_Integer, "r_hemi", &ps_r_hemi, 0, 2);
+    CMD4(CCC_Integer, "r_env_diffuse", &ps_r_env_diffuse, 0, 2);
     CMD3(CCC_Token, "r_aa", &ps_r_aa, qaa_fg_token);
     CMD4(CCC_Integer, "r_fsr_fg", &ps_r_fsr_fg, 0, 1);
     CMD4(CCC_Integer, "r_fsr_fg_capture", &ps_r_fsr_fg_capture, 0, 64);

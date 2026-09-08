@@ -44,6 +44,7 @@ public:
 
     void DrawSky(nvrhi::ICommandList* cmdList, nvrhi::IFramebuffer* framebuffer, CEnvironment* environment, u32 width, u32 height);
     nvrhi::ITexture* GetSkyTexture(CEnvironment* environment, u32 index);
+    nvrhi::ITexture* GetEnvironmentTexture(u32 index);
     void DrawSun(nvrhi::ICommandList* cmdList, nvrhi::IFramebuffer* framebuffer, CEnvironment* environment, u32 width, u32 height);
 
 private:

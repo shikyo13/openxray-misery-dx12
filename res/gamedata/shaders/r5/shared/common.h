@@ -68,6 +68,8 @@ cbuffer	static_globals : register(b2)
 	float4		dev_param_4;
 	float4		tree_wind;
 	float4		tree_wave;
+	float4		environment_color;
+	float4		environment_settings;
 };
 
 /*

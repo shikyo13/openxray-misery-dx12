@@ -152,7 +152,8 @@ float3 PBRDirectLighting(
     return (diffuse + specular) * lightColor * NdotL;
 }
 
-// Simplified ambient term (placeholder for future IBL)
+// Diffuse irradiance may come from the authored environment maps.
+// Specular remains the existing approximation until reflection filtering is integrated.
 float3 PBRAmbient(
     float3 albedo,
     float3 N,
@@ -160,7 +161,8 @@ float3 PBRAmbient(
     float metallic,
     float roughness,
     float ao,
-    float3 ambientColor)
+    float3 ambientColor,
+    float3 specularAmbientColor)
 {
     float3 F0 = CalculateF0(albedo, metallic);
     float NdotV = max(dot(N, V), 0.0f);
@@ -170,7 +172,7 @@ float3 PBRAmbient(
     float3 diffuseAmbient = kD * albedo * ambientColor;
 
     // Approximate specular ambient (will be replaced by IBL)
-    float3 specularAmbient = F * ambientColor * 0.3f;
+    float3 specularAmbient = F * specularAmbientColor * 0.3f;
 
     return (diffuseAmbient + specularAmbient) * ao;
 }

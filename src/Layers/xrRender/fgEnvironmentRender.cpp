@@ -311,6 +311,29 @@ nvrhi::ITexture* FGEnvironmentRender::GetSkyTexture(CEnvironment* environment, u
     return m_skyPlaceholderCube.Get();
 }
 
+nvrhi::ITexture* FGEnvironmentRender::GetEnvironmentTexture(u32 index)
+{
+    R_ASSERT(index < 2);
+    // Descriptors register lazy CTexture objects. The native draw path must
+    // load them before sampling; their existing owner releases them on destroy.
+    auto& environment = g_pGamePersistent->Environment();
+    if (environment.Current[index]) {
+        auto* descriptor = static_cast<FGEnvDescriptorRender*>(&*environment.Current[index]->m_pDescriptor);
+        if (descriptor->sky_texture_env) {
+            auto* texture = descriptor->sky_texture_env->surface_get_native();
+            if (!texture) {
+                descriptor->sky_texture_env->Load();
+                texture = descriptor->sky_texture_env->surface_get_native();
+            }
+            if (texture) return texture;
+        }
+    }
+    // Menu post-processing intentionally clears the environment maps.
+    // Worldless globals have zero environment color, but still need a valid SRV.
+    InitSkyResources();
+    return m_skyPlaceholderCube.Get();
+}
+
 void FGEnvironmentRender::DrawSky(nvrhi::ICommandList* cmdList, nvrhi::IFramebuffer* framebuffer, CEnvironment* environment, u32 width, u32 height)
 {
     if (!environment || !cmdList || !framebuffer)
@@ -328,6 +351,18 @@ void FGEnvironmentRender::DrawSky(nvrhi::ICommandList* cmdList, nvrhi::IFramebuf
             env.fog_color.x, env.fog_color.y, env.fog_color.z,
             env.sky_color.x, env.sky_color.y, env.sky_color.z, environment->CurrentEnv.weight,
             env.wind_velocity, env.wind_direction);
+
+    if (strstr(Core.Params, "-graphics_trace") && Device.dwFrame % 120 == 0) {
+        auto* a = GetEnvironmentTexture(0);
+        auto* b = GetEnvironmentTexture(1);
+        Msg("* [EnvDiffuse] frame=%u mode=%d cube0=%ux%u cube1=%ux%u fallback0=%u fallback1=%u weight=%.5f tint=%.5f,%.5f,%.5f source0=%s source1=%s",
+            Device.dwFrame, ps_r_env_diffuse, a->getDesc().width, a->getDesc().height,
+            b->getDesc().width, b->getDesc().height,
+            unsigned(a == m_skyPlaceholderCube.Get()), unsigned(b == m_skyPlaceholderCube.Get()),
+            env.env_color.w, env.env_color.x, env.env_color.y, env.env_color.z,
+            environment->Current[0] ? environment->Current[0]->sky_texture_env_name.c_str() : "<none>",
+            environment->Current[1] ? environment->Current[1]->sky_texture_env_name.c_str() : "<none>");
+    }
 
     Fmatrix mSky;
     mSky.rotateY(env.sky_rotation);

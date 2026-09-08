@@ -129,8 +129,9 @@ struct alignas(16) StaticGlobals {
     Fvector4 dev_param_3;
     Fvector4 dev_param_4;
     Fvector4 tree_wind, tree_wave;
+    Fvector4 environment_color, environment_settings;
 };
-static_assert(sizeof(StaticGlobals) == 880, "StaticGlobals must be 880 bytes");
+static_assert(sizeof(StaticGlobals) == 912, "StaticGlobals must be 912 bytes");
 
 // Legacy alias for compatibility
 using GlobalConstants = StaticGlobals;
@@ -225,6 +226,8 @@ inline void FillGlobalConstants(GlobalConstants& cb, u32 width = Device.dwWidth,
     cb.dev_param_4 = ps_dev_param_4;
     cb.tree_wind.set(0, 0, 0, 0);
     cb.tree_wave.set(0, 0, 0, 0);
+    cb.environment_color.set(0, 0, 0, 0);
+    cb.environment_settings.set(float(ps_r_env_diffuse), 0, 0, 0);
     if (g_pGamePersistent) {
         const auto& env = g_pGamePersistent->Environment().CurrentEnv;
         const float rotation = PI_MUL_2 * Device.fTimeGlobal / _max(env.m_fTreeRotation, EPS_S);
@@ -278,6 +281,11 @@ inline void FillSunConstants(StaticGlobals& cb, const SunLightData& sun) {
         desc.hemi_color.z,
         ps_r2_sun_lumscale_hemi
     );
+    // Same weather tint and scale as the legacy combine/hmodel diffuse path.
+    cb.environment_color = desc.env_color;
+    cb.environment_color.x *= 2.f * ps_r2_sun_lumscale_hemi;
+    cb.environment_color.y *= 2.f * ps_r2_sun_lumscale_hemi;
+    cb.environment_color.z *= 2.f * ps_r2_sun_lumscale_hemi;
 }
 
 void GetSunLightData(SunLightData& outSun, float hdrIntensity = 2.0f);

@@ -8,6 +8,9 @@
 #include "PassResourceCache.h"
 #include "BindingLayoutBuilder.h"
 #include "Layers/xrRender/xrRender_console.h"
+#include "Layers/xrRender/fgEnvironmentRender.h"
+#include "xrEngine/IGame_Persistent.h"
+#include "xrEngine/Environment.h"
 
 namespace xray::render::framegraph {
 
@@ -320,6 +323,15 @@ nvrhi::BindingSetDesc BindingSetBuilder::Build()
         auto* buffer = fg::ClusteredLightManager::Instance().GetShadowMatricesBuffer();
         R_ASSERT2(buffer, "Local shadow matrices must exist before forward material binding");
         m_desc.bindings.push_back(nvrhi::BindingSetItem::StructuredBuffer_SRV(resource.slot, buffer));
+    }
+    for (const auto& resource : m_lists->srvs) {
+        const bool first = NameMatches(resource.name, "g_EnvironmentDiffuse0");
+        if (!first && !NameMatches(resource.name, "g_EnvironmentDiffuse1")) continue;
+        auto& environment = g_pGamePersistent->Environment();
+        auto* renderer = static_cast<fg::FGEnvironmentRender*>(&*environment.m_pRender);
+        auto* texture = renderer->GetEnvironmentTexture(first ? 0u : 1u);
+        R_ASSERT2(texture, "Forward environment lighting requires a valid cubemap");
+        m_desc.bindings.push_back(nvrhi::BindingSetItem::Texture_SRV(resource.slot, texture));
     }
     AddSamplers();
 
