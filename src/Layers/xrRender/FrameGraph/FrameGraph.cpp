@@ -1147,6 +1147,12 @@ void FrameGraph::OptimizeMemoryAliasing() {
 
     u32 aliasedCount = 0;
     u64 memoryReduced = 0;
+    // Aliases reuse the same texture object, not merely the same heap bytes.
+    // Track the lifetime of the entire allocation to prevent overlapping aliases.
+    xr_vector<std::pair<u32, u32>> allocationLifetimes(m_resources.size());
+    for (const auto* resource : transientResources)
+        allocationLifetimes[resource->handle.index] = {resource->firstUsedPass, resource->lastUsedPass};
+
 
     // Try to alias each resource with a previous one
     for (size_t i = 0; i < transientResources.size(); i++) {
@@ -1161,8 +1167,10 @@ void FrameGraph::OptimizeMemoryAliasing() {
         for (size_t j = 0; j < i; j++) {
             ResourceNode* candidate = transientResources[j];
 
-            // Check if lifetimes don't overlap
-            if (!current->OverlapsWith(*candidate)) {
+            if (candidate->aliasedWith != INVALID_INDEX) continue;
+            auto& lifetime = allocationLifetimes[candidate->handle.index];
+            const bool overlaps = current->firstUsedPass <= lifetime.second && lifetime.first <= current->lastUsedPass;
+            if (!overlaps) {
                 // Check if they have compatible properties
                 bool compatible = true;
 
@@ -1177,6 +1185,17 @@ void FrameGraph::OptimizeMemoryAliasing() {
                     compatible = false;
                 }
 
+                // Reusing a texture requires identical dimensions, subresources and capabilities.
+                // A matching format/byte size does not make an RTV-only texture usable as a UAV.
+                const auto& a = current->desc;
+                const auto& b = candidate->desc;
+                if (a.isRenderTarget != b.isRenderTarget || a.isDepthStencil != b.isDepthStencil ||
+                    (a.isUAV || a.allowUAV) != (b.isUAV || b.allowUAV)) compatible = false;
+                if (a.type != ResourceDesc::Type::Buffer && (a.width != b.width || a.height != b.height ||
+                    a.depth != b.depth || a.arraySize != b.arraySize || a.mipLevels != b.mipLevels ||
+                    a.sampleCount != b.sampleCount)) compatible = false;
+                if (a.type == ResourceDesc::Type::Buffer && a.structStride != b.structStride) compatible = false;
+
                 // Candidate must be large enough
                 if (candidate->memorySize < current->memorySize) {
                     compatible = false;
@@ -1185,6 +1204,8 @@ void FrameGraph::OptimizeMemoryAliasing() {
                 if (compatible) {
                     // Alias this resource with the candidate
                     current->aliasedWith = candidate->handle.index;
+                    lifetime.first = _min(lifetime.first, current->firstUsedPass);
+                    lifetime.second = _max(lifetime.second, current->lastUsedPass);
                     aliasedCount++;
                     memoryReduced += current->memorySize;
                     break;

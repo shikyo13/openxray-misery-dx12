@@ -148,11 +148,10 @@ bool FGResourcePool::AreTexturesCompatible(
 {
     // Must match exactly for now
     // Could be more flexible (allow larger texture for smaller request, etc.)
-    return a.width == b.width &&
-           a.height == b.height &&
-           a.format == b.format &&
-           a.mipLevels == b.mipLevels &&
-           a.arraySize == b.arraySize;
+    return a.type == b.type &&
+           a.width == b.width && a.height == b.height && a.depth == b.depth &&
+           a.format == b.format && a.mipLevels == b.mipLevels && a.arraySize == b.arraySize &&
+           a.isRenderTarget == b.isRenderTarget && a.isDepthStencil == b.isDepthStencil && a.isUAV == b.isUAV;
 }
 
 // ═══════════════════════════════════════════════════

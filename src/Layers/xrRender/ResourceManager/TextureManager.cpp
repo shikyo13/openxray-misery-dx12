@@ -885,8 +885,11 @@ void TextureManager::LoadTextureSync(TextureHandle handle) {
     // Upload all slices in one command list
     m_device->UploadTextureData(deviceHandle, slices.data(), (u32)slices.size());
 
-    // Store NVRHI handle
+    // Transfer the strong reference to TextureManager. Keeping the temporary
+    // RenderDevice handle alive pins every upload, including replaced animation
+    // frames, after the manager evicts or releases the texture.
     meta.nvrhiTexture = m_device->GetNativeTexture(deviceHandle);
+    m_device->DestroyTexture(deviceHandle);
 
     // ═══════════════════════════════════════════════════
     //  STORE VIDEO TEXTURE STATE (IF APPLICABLE)
