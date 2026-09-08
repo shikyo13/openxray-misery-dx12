@@ -13,7 +13,7 @@ using namespace framegraph;
 VirtualResourceHandle setupAntialiasingPass(FrameGraph& graph, fg::RenderDevice* device,
     VirtualResourceHandle color, u32 width, u32 height, AntialiasingPassState& state)
 {
-    if (ps_r_aa == 0) return color;
+    if (ps_r_aa != 1) return color;
     auto& cache = GetPassResourceCache();
     auto* nv = device->GetNVRHIDevice();
     if (!state.pipeline) {

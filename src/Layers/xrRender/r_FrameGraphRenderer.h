@@ -504,6 +504,8 @@ private:
     Fmatrix m_prevViewProj;                       // Previous frame's view-projection
     Fvector m_prevCameraPos;                      // Previous frame's camera position
     bool m_hasPrevFrameData = false;              // Valid previous frame exists
+    bool m_dlaaActive = false;
+    Fvector2 m_dlaaJitter{};
     u32 m_previousRenderedFrame = 0;
     Fvector m_previousCameraDirection;
     u32 m_prevFrameWidth = 0;                     // Previous frame resolution

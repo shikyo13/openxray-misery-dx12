@@ -62,6 +62,7 @@
 #include "FrameGraphPasses/MotionVectorPassSetup.h"
 #include "FrameGraphPasses/AmbientOcclusionPassSetup.h"
 #include "FrameGraphPasses/AntialiasingPassSetup.h"
+#include "FrameGraphPasses/DlssPassSetup.h"
 #include "FrameGraphPasses/SceneTonemapPassSetup.h"
 #include "FrameGraphPasses/BloomPassSetup.h"
 #include "FrameGraphPasses/SunShaftPassSetup.h"
@@ -501,6 +502,9 @@ void FrameGraphRenderer::Render() {
     // ═══════════════════════════════════════════════════════
     //  SETUP PASSES (PER-FRAME: Route geometry to passes)
     // ═══════════════════════════════════════════════════════
+    const Fmatrix unjitteredProject = Device.mProject;
+    const Fmatrix unjitteredViewProj = Device.mFullTransform;
+    const Fmatrix unjitteredInvViewProj = Device.mInvFullTransform;
     {
         ZoneScopedN("FG::SetupPasses");
         SetupFrameGraphPasses();
@@ -562,6 +566,11 @@ void FrameGraphRenderer::Render() {
 
     m_hasPrevFrameData = true;
     m_prevViewProj = Device.mFullTransform;
+    // Scene collection uses the stable camera. Only rasterization and its
+    // matching reprojection history receive the subpixel sampling offset.
+    Device.mProject = unjitteredProject;
+    Device.mFullTransform = unjitteredViewProj;
+    Device.mInvFullTransform = unjitteredInvViewProj;
     m_prevCameraPos = Device.vCameraPosition;
     m_previousCameraDirection = Device.vCameraDirection;
     m_previousRenderedFrame = Device.dwFrame;
@@ -575,7 +584,7 @@ void FrameGraphRenderer::Render() {
             for (const auto& timing : m_gpuProfiler->GetPassTimings()) {
                 const char* name = timing.name.c_str();
                 if (!timing.pending && name && (strstr(name, "SSAO") || strstr(name, "Antialiasing") ||
-                    strstr(name, "Exposure") || strstr(name, "SceneTonemap") || strstr(name, "SkyBackgroundCopy") || strstr(name, "Bloom.") || strstr(name, "SunShafts.") || strstr(name, "Water.") || strstr(name, "Transparent Pass") || strstr(name, "Motion Vectors") || strstr(name, "Sun shadow") || strstr(name, "Local shadow") || strstr(name, "Detail")))
+                    strstr(name, "DLSS.") || strstr(name, "Exposure") || strstr(name, "SceneTonemap") || strstr(name, "SkyBackgroundCopy") || strstr(name, "Bloom.") || strstr(name, "SunShafts.") || strstr(name, "Water.") || strstr(name, "Transparent Pass") || strstr(name, "Motion Vectors") || strstr(name, "Sun shadow") || strstr(name, "Local shadow") || strstr(name, "Detail")))
                     m_graphicsTrace->w_printf("gpu,%u,%u,%u,%u,%s,%.6f\n", Device.dwFrame,
                         Device.dwTimeGlobal, ps_r_aa, ps_r_ssao, name, timing.timeMs);
             }
@@ -910,7 +919,7 @@ void FrameGraphRenderer::SetupFrame() {
             ZoneScopedN("Readback::CullStats");
             m_gpuCullingManager->ProcessStatsReadback();
         }
-        m_gpuCullingManager->BeginSkinnedFrame(ps_r_motion_debug || ps_r_rt_gi);
+        m_gpuCullingManager->BeginSkinnedFrame(ps_r_motion_debug || ps_r_rt_gi || ps_r_aa == 2);
     }
 
     if (m_detailManager && m_device) {
@@ -1050,6 +1059,26 @@ framegraph::VirtualResourceHandle FrameGraphRenderer::CreateRT(
 void FrameGraphRenderer::SetupFrameGraphPasses() {
     const u32 width = Device.dwWidth;
     const u32 height = Device.dwHeight;
+
+    const bool dlaaActive = ps_r_aa == 2 &&
+        m_blackboard->get_or_add<passes::DlssPassState>().Prepare(m_device->GetNVRHIDevice(), width, height);
+    if (ps_r_aa == 2 && !dlaaActive) ps_r_aa = 1;
+    if (dlaaActive != m_dlaaActive) m_hasPrevFrameData = false;
+    m_dlaaActive = dlaaActive;
+    m_dlaaJitter.set(0.f, 0.f);
+    if (dlaaActive) {
+        auto halton = [](u32 index, u32 base) {
+            float value = 0.f, fraction = 1.f;
+            while (index) { fraction /= float(base); value += fraction * float(index % base); index /= base; }
+            return value;
+        };
+        const u32 phase = Device.dwFrame % 32 + 1;
+        m_dlaaJitter.set(halton(phase, 2) - .5f, halton(phase, 3) - .5f);
+        Device.mProject._31 += 2.f * m_dlaaJitter.x / float(width);
+        Device.mProject._32 -= 2.f * m_dlaaJitter.y / float(height);
+        Device.mFullTransform.mul(Device.mProject, Device.mView);
+        Device.mInvFullTransform.invert(Device.mFullTransform);
+    }
 
     nvrhi::ITexture* backbufferTexture = GEnv.Backend->GetBackBuffer();
     framegraph::VirtualResourceHandle backbufferHandle;
@@ -1498,7 +1527,7 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     // ═══════════════════════════════════════════════════════
     passes::MotionVectorOutput motionOutput{};
     // Keep optional temporal inputs dormant until a consumer needs them.
-    if (ps_r_motion_debug || ps_r_rt_gi)
+    if (ps_r_motion_debug || ps_r_rt_gi || m_dlaaActive)
         motionOutput = passes::setupMotionVectorPass(
             *m_framegraph, m_device,
             transparentOutputs.depth,
@@ -1770,6 +1799,12 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     // ═══════════════════════════════════════════════════════
     //  EXPOSURE PASS (Auto-Exposure / Eye Adaptation)
     // ═══════════════════════════════════════════════════════
+    if (m_dlaaActive)
+        sceneColor = passes::setupDlssPass(*m_framegraph, m_device, sceneColor,
+            transparentOutputs.depth, motionOutput.motionVectors, width, height,
+            m_dlaaJitter.x, m_dlaaJitter.y, !m_hasPrevFrameData,
+            m_blackboard->get_or_add<passes::DlssPassState>());
+
     passes::ExposureConfig exposureConfig = passes::GetDefaultExposureConfig();
     auto exposureOutput = passes::setupExposurePass(
         *m_framegraph,

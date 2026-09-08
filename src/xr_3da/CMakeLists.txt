@@ -1,5 +1,18 @@
 add_executable(xr_3da WIN32)
 
+if(TARGET xray_ngx)
+    add_custom_command(TARGET xr_3da POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_PROPERTY:xray_ngx,XRAY_DLSS_RUNTIME>" "$<TARGET_FILE_DIR:xr_3da>/nvngx_dlss.dll"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_PROPERTY:xray_ngx,XRAY_DLSS_LICENSE>" "$<TARGET_FILE_DIR:xr_3da>/NVIDIA_DLSS_LICENSE.txt"
+        VERBATIM)
+    install(FILES "$<TARGET_PROPERTY:xray_ngx,XRAY_DLSS_RUNTIME>"
+        DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    install(FILES "$<TARGET_PROPERTY:xray_ngx,XRAY_DLSS_LICENSE>"
+        DESTINATION "${CMAKE_INSTALL_BINDIR}" RENAME NVIDIA_DLSS_LICENSE.txt)
+endif()
+
 target_sources(xr_3da PRIVATE
     entry_point.cpp
     memory_capacity_check.cpp

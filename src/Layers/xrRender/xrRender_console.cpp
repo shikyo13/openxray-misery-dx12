@@ -105,7 +105,7 @@ float ps_r_bloom_strength = 1.f;
 int ps_r_bloom_debug = 0;
 int ps_r_motion_debug = 0;
 float ps_r_motion_debug_scale = 1.f;
-const xr_token qaa_fg_token[] = {{"off", 0}, {"fxaa", 1}, {nullptr, 0}};
+const xr_token qaa_fg_token[] = {{"off", 0}, {"fxaa", 1}, {"dlaa", 2}, {nullptr, 0}};
 const xr_token qssao_token[] = {{"st_opt_off", 0}, {"st_opt_low", 1}, {"st_opt_medium", 2}, {"st_opt_high", 3},
     {"st_opt_ultra", 4},
 {nullptr, 0}};
