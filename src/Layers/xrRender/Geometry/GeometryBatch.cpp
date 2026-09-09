@@ -21,12 +21,38 @@ void GeometryCollector::BeginFrame(size_t staticPrefix) {
     // Static batches already occupy the front of this vector. Avoid releasing and
     // copying their buffer handles every frame; retire only last frame's dynamics.
     m_batches.resize(staticPrefix);
+    if (m_skinnedIndicesValid) {
+        while (!m_skinnedBatchIndices.empty() && m_skinnedBatchIndices.back() >= staticPrefix)
+            m_skinnedBatchIndices.pop_back();
+    }
 
     // Reset statistics
     m_stats = Stats{};
 }
 
 void GeometryCollector::EndFrame() {
+    if (!m_skinnedIndicesValid) {
+        m_skinnedBatchIndices.clear();
+        for (size_t i = 0; i < m_batches.size(); ++i)
+            if (m_batches[i].isSkinned) m_skinnedBatchIndices.push_back(i);
+        m_skinnedIndicesValid = true;
+    }
+
+    // Optional runtime equivalence check; keep the full scan out of normal play.
+    static const bool checkIndex = strstr(Core.Params, "-geometry_batch_check") != nullptr;
+    if (checkIndex && Device.dwFrame % 120 == 0) {
+        size_t expected = 0;
+        for (size_t i = 0; i < m_batches.size(); ++i) {
+            if (!m_batches[i].isSkinned) continue;
+            R_ASSERT2(expected < m_skinnedBatchIndices.size() && m_skinnedBatchIndices[expected] == i,
+                "Skinned batch index differs from full collection scan");
+            ++expected;
+        }
+        R_ASSERT2(expected == m_skinnedBatchIndices.size(), "Skinned batch index contains stale entries");
+        Msg("* [GeometryBatchIndex] frame=%u batches=%zu skinned=%zu verified=1",
+            Device.dwFrame, m_batches.size(), expected);
+    }
+
     // Update statistics
     m_stats.numBatches = static_cast<u32>(m_batches.size());
 }
@@ -38,9 +64,12 @@ void GeometryCollector::Submit(const GeometryBatch& batch) {
     // NOTE: pipeline can be nullptr during collection, will be set later from visual->shader
 
     m_batches.push_back(batch);
+    if (m_skinnedIndicesValid && batch.isSkinned)
+        m_skinnedBatchIndices.push_back(m_batches.size() - 1);
 }
 
 void GeometryCollector::Sort() {
+    m_skinnedIndicesValid = false;
     // ═══════════════════════════════════════════════════════
     //  RENDER ORDER SORTING (using SSA + shader flags)
     // ═══════════════════════════════════════════════════════

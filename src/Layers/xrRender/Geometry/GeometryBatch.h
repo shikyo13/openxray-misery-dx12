@@ -171,7 +171,23 @@ public:
     const xr_vector<GeometryBatch>& GetBatches() const { return m_batches; }
 
     // Get batches for routing (non-const, for Week 16 dynamic routing)
-    xr_vector<GeometryBatch>& GetBatchesMutable() { return m_batches; }
+    xr_vector<GeometryBatch>& GetBatchesMutable() {
+        m_skinnedIndicesValid = false;
+        return m_batches;
+    }
+
+    // Preserve collection order, including any skinned level-static visuals.
+    // Mutable access falls back to scanning until EndFrame rebuilds the index.
+    template <typename Visitor>
+    void ForEachSkinnedBatch(Visitor&& visit) const {
+        if (!m_skinnedIndicesValid) {
+            for (const auto& batch : m_batches)
+                if (batch.isSkinned) visit(batch);
+            return;
+        }
+        for (size_t index : m_skinnedBatchIndices)
+            visit(m_batches[index]);
+    }
 
     // Sort batches for optimal rendering
     void Sort();
@@ -187,6 +203,8 @@ public:
 
 private:
     xr_vector<GeometryBatch> m_batches;
+    xr_vector<size_t> m_skinnedBatchIndices;
+    bool m_skinnedIndicesValid = true;
     Stats m_stats;
 
     // Sorting key

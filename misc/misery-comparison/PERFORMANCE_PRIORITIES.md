@@ -6,6 +6,29 @@ The user's priority is to remove internal engine bottlenecks so native x64/DX12 
 
 User correction after the failed submission experiment: do not skip from submission timing to separate shadow optimization. Finish the parallel command-recording architecture first. Shadows may supply its first workload; that does not authorize prioritizing shadow-specific culling or draw optimizations ahead of it.
 
+## Priority 1: culling preparation checkpoint (2026-09-09 UTC)
+
+The collector now maintains ordered skinned-batch indices while retaining the level-static prefix. The skinned upload visits those entries instead of scanning the whole scene. It preserves static skinned visuals and submission order. Mutable access or sorting invalidates the index and uses a full-scan fallback until `EndFrame` rebuilds it. Rigid, terrain and skinned culling now reuse the existing binding-set cache, as their compaction passes already did. No shader, visibility criterion, shadow algorithm, quality or simulation callback changed.
+
+The pinned NVRHI `Externals/nvrhi/doc/ProgrammingGuide.md` distinguishes bindings, which retain resource references, from volatile constant-buffer contents, which are written in command-list order. The existing cache keys include the resources, layout and view parameters; resize clears cached binding sets and retired textures release matching references. This reuses those existing lifetime mechanisms.
+
+Candidate executable `c0544acd2cda9d6c9b4fa320de58fbd646a18d1ddeac50e9581fdb5e8ce6add7` was built from parent `37ea59d0b933cc4652d67956637f0e28975f064c` plus archived patch `ca0668212aac7b871137b3d5dd6a591f99e250e70c59026d2eff555b62e4357f`. Matching PDB, exact source-file hashes and build logs are in workspace `work/runtime/cpu-culling-preparation-043`. The 0.43 play package remains unchanged.
+
+AX (`DX12_CULL_PREP_BASELINE_043_AX`, 0.43 executable) and AY (`DX12_CULL_PREP_CANDIDATE_043_AY`) completed the existing four-scene comparison at 3440x1440 with matching initial profiles, controller, replays, cameras and clocks. Both use FXAA, AO-high, 16x filtering, conventional/grass shadows, FG off and parallel recording on. CPU/GPU/slow-frame tracing is enabled in both. The index-equivalence diagnostic is off during these timings. All game, PresentMon and GPU-sampler exits are 0.
+
+| Scene | Skinned culling CPU ms before / after | Total renderer CPU ms before / after | Application FPS before / after | Application p99 ms before / after |
+|---|---:|---:|---:|---:|
+| Interior | 0.3262 / 0.2909 | 6.1428 / 6.1714 | 96.37 / 94.90 | 14.88 / 14.72 |
+| Outdoor | 0.2941 / 0.2739 | 5.4826 / 5.5062 | 89.64 / 91.34 | 14.73 / 14.77 |
+| Rain | 0.2880 / 0.2570 | 5.4179 / 5.4246 | 93.72 / 95.12 | 14.70 / 14.91 |
+| Night | 0.2544 / 0.2109 | 5.6532 / 5.6725 | 92.14 / 92.57 | 15.42 / 15.41 |
+
+The skinned pass is 0.020-0.044 ms cheaper in this pair. Ordinary culling changes by only 0.002-0.005 ms. **No total-renderer or consistent FPS/p99 improvement is established.** Game workloads differ, including transient additional lights/faces in AY. Each window has fourteen GPU samples; mean NVIDIA utilization is 95-97%, with sampled background engines at most 0.327%. PresentMon records application API intervals, not displayed-frame timing, mode, latency or drops. All eight stills were inspected without an obvious new rendering regression. Each run retains 836 legacy shader failure lines, with no matched fatal/device/NVRHI error.
+
+AZ (`DX12_CULL_PREP_RELOAD_043_AZ`) completed two full Zaton unload/reloads with native D3D12 debug/DRED and NVRHI validation, parallel recording, DLSS Quality and FSR FG. The optional `-geometry_batch_check` matched every skinned index and its order against a full scan in fourteen samples, including a load-time empty skinned set and populated sets of 191-192. Thirty-three worker samples have distinct threads and positive overlap. Exit 0; last successful FG dispatch count 1731. All 153 inventory entries retain contents, condition and ammo; raw equality is false only because bolt ID 11077 becomes 14848. Grouse's 22,927-byte custom data is exact after both reloads. All three stills retain terrain, grass and the weapon; changed clouds across reload do not establish exact weather parity. There are 2216 legacy shader failures and no matched fatal/native/NVRHI error. Different-level transitions, long sessions and generated-frame temporal quality remain unqualified.
+
+Evidence: workspace `outputs/implementation-evidence/MISERY_DX12_CULL_PREPARATION_043_SUMMARY.json` and each run's `analysis.json` or `reload-analysis.json`. The unique reload files are archived, its control restored, and normal 0.41 staging executable/PDB/profile restored and hash-verified. Retain this bounded preparation change; keep parallel optional. Next, inspect the remaining repeated static-material classification in rigid upload preparation before another performance run. Separate shadow/caster optimization remains deferred.
+
 ## 0.43 delivery and native-resolution qualification (2026-09-09 UTC)
 
 Delivered independent package `D:\Codex\MISERY-DX12\outputs\MISERY_DX12_DEV_0.43`, with 17,170 initially SHA-verified files / 11,453,744,227 bytes. Compiled source is `a70a2ee050f16f04432e86a7b6db012046e4d86f`; the actual package log reports that identity. Executable SHA-256 is `39a6c9683fef395ec749d5f539312d76b0c42d1eae50ad8fa3a1cf1a2d27e2e9`, with matching archived PDB. This delivers the retained-static geometry change below, the session-only recording control and optional low-rate workload counts. The normal launcher remains serial; parallel is optional.

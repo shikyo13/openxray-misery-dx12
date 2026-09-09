@@ -2275,12 +2275,7 @@ void GPUCullingManager::UploadSkinnedObjects(fg::RenderContext* ctx, const Geome
     m_skinnedPools.FlushUploads(m_device->GetNVRHIDevice(), cmdList);
 
     const bool mdiEnabled = IsSkinnedMDIEnabled();
-    const auto& batches = geometry->GetBatches();
-
-    for (const auto& batch : batches) {
-        if (!batch.isSkinned)
-            continue;
-
+    geometry->ForEachSkinnedBatch([&](const GeometryBatch& batch) {
         GPUObjectData obj;
         obj.position = batch.worldBoundsCenter;
         obj.radius = batch.worldBoundsRadius;
@@ -2335,7 +2330,7 @@ void GPUCullingManager::UploadSkinnedObjects(fg::RenderContext* ctx, const Geome
             args.baseVertexLocation = batch.baseVertex;
             m_skinnedDrawArgsData.push_back(args);
         }
-    }
+    });
 
     m_skinnedResidualCount = static_cast<u32>(m_skinnedObjectData.size());
     u32 total = m_skinnedResidualCount;
@@ -2714,7 +2709,8 @@ GPUCullOutput GPUCullingManager::SetupCullingPass(
                    .BufferUAV("g_VisibleCount", set.visibleCountBuffer)
                    .BufferUAV("g_Visibility", set.visibilityBuffer);
 
-                nvrhi::BindingSetHandle bindingSet = nvDevice->createBindingSet(bsb.Build(), mgr->m_cullLayout);
+                nvrhi::BindingSetHandle bindingSet = framegraph::GetPassResourceCache().GetOrCreateBindingSet(
+                    bsb.Build(), mgr->m_cullLayout, nvDevice);
                 R_ASSERT2(bindingSet, "Failed to create culling binding set");
 
                 // Set compute state and dispatch culling
@@ -2884,7 +2880,8 @@ GPUCullOutput GPUCullingManager::SetupCullingPass(
                           .BufferUAV("g_VisibleCount", mgr->m_terrainVisibleCountBuffer)
                           .BufferUAV("g_Visibility", mgr->m_terrainVisibilityBuffer);
 
-                nvrhi::BindingSetHandle terrainBindingSet = nvDevice->createBindingSet(terrainBsb.Build(), mgr->m_cullLayout);
+                nvrhi::BindingSetHandle terrainBindingSet = framegraph::GetPassResourceCache().GetOrCreateBindingSet(
+                    terrainBsb.Build(), mgr->m_cullLayout, nvDevice);
                 R_ASSERT2(terrainBindingSet, "Terrain culling binding set creation failed");
 
                 nvrhi::ComputeState terrainState;
@@ -3323,7 +3320,8 @@ framegraph::VirtualResourceHandle GPUCullingManager::SetupSkinnedCullingPass(
                    .BufferUAV("g_VisibleCount", mgr->m_skinnedVisibleCountBuffer)
                    .BufferUAV("g_Visibility", visibility);
 
-                nvrhi::BindingSetHandle bindingSet = nvDevice->createBindingSet(bsb.Build(), mgr->m_cullLayout);
+                nvrhi::BindingSetHandle bindingSet = framegraph::GetPassResourceCache().GetOrCreateBindingSet(
+                    bsb.Build(), mgr->m_cullLayout, nvDevice);
                 R_ASSERT2(bindingSet, "Failed to create skinned culling binding set");
 
                 nvrhi::ComputeState state;
@@ -3355,7 +3353,8 @@ framegraph::VirtualResourceHandle GPUCullingManager::SetupSkinnedCullingPass(
                        .BufferSRV("g_Visibility", mgr->m_skinnedVisibilityBuffer)
                        .BufferUAV("g_DrawArgs", mgr->m_skinnedDrawArgsBuffer);
 
-                nvrhi::BindingSetHandle gateBindingSet = nvDevice->createBindingSet(gateBsb.Build(), mgr->m_skinnedArgsGateLayout);
+                nvrhi::BindingSetHandle gateBindingSet = framegraph::GetPassResourceCache().GetOrCreateBindingSet(
+                    gateBsb.Build(), mgr->m_skinnedArgsGateLayout, nvDevice);
                 R_ASSERT2(gateBindingSet, "Failed to create skinned args gate binding set");
 
                 nvrhi::ComputeState gateState;
