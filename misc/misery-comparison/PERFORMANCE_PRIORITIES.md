@@ -21,8 +21,8 @@ Local GPU time sums the two sequential partition ranges. Foliage uses `DetailDra
 
 Current work order:
 
-1. Investigate and reduce avoidable GPU work in local shadows, the largest measured pass in these scenes. The source currently interleaves cached depth copies with dynamic/tree/skinned/detail work for each face. Determine whether copies, transitions, repeated geometry or shader work dominate, then change a concrete inefficiency. Retain moving and offscreen shadows, cache correctness and current quality.
-2. Address sun-shadow and outdoor foliage costs where the scene measurements justify them. Rank candidates against their actual cost and expected benefit rather than requiring completion of a renderer-architecture checklist.
+1. Inspect sun-shadow raster/material work and outdoor foliage drawing using the latest pass timings and existing source. BP measures about 1.7-1.8 ms for daytime sun shadows and 1.4-2.2 ms for outdoor foliage drawing. Select a concrete avoidable cost before changing either path; preserve caster coverage, wind, lighting, geometry quality and normal callbacks.
+2. Retain the delivered grouped local-shadow copies. The follow-up argument batching experiment below has mixed results and remains opt-in; do not spend more benchmark cycles tuning it without a specific new explanation or change. Local shadows remain costly, so revisit further drawing or shader work when its expected benefit exceeds the other candidates.
 3. Investigate reproducible game-update stalls and remaining CPU work when they limit smoothness or the intended frame rate. Retain the tested optional parallel recorder; revisit further load balancing when CPU limits justify it. Async compute, new graphics features and higher capacity limits require a demonstrated benefit before implementation.
 
 Use the existing captures and profiling tools. Before accepting a change, compare native frame times, tail latency and affected visuals with settings disclosed, and use focused runtime checks for affected resource lifetimes or gameplay. Update the DX9/DX12 comparison after a measured milestone. Reliability defects that block the intended experience continue to take precedence.
@@ -30,6 +30,29 @@ Use the existing captures and profiling tools. Before accepting a change, compar
 The unfinished cost-based recording splitter is preserved, unbuilt and untested, in workspace `work/runtime/deferred-recording-balance-043` (raw sources, parent and SHA-verified patch). The working source has returned to the tested recorder at `6ce2a3a36d1edc07113c6045b516141639dc6102`. No executable, settings, package or published benchmark changed during this reprioritization.
 
 Evidence: workspace `outputs/implementation-evidence/MISERY_DX12_RECORD_PARTITIONS_043_SUMMARY.json` and BD/BE `partition-analysis.json`. [Microsoft's CPU/GPU bottleneck explanation](https://devblogs.microsoft.com/directx/cpu-and-gpu-boundedness/) supports choosing work according to the limiting processor. [NVIDIA's command-buffer guide](https://developer.nvidia.com/blog/advanced-api-performance-command-buffers/) supports parallel recording while accounting for command-list overhead, GPU idle time and pipeline drains from frequently mixed copy/dispatch/draw work. The suggested local-shadow opportunity is a source-based hypothesis until measured.
+
+## Latest experiment: shadow indirect argument uploads (2026-09-09 UTC)
+
+Optional `-local_shadow_batch_args` collects dynamic-rigid and animated-tree indirect commands for all owned local-shadow faces before drawing. Each nonempty group uploads once into a partition-owned buffer, and faces draw their original ordered ranges at byte offsets. Cold/moved-light static-cache refreshes retain separate scratch buffers. Original frustum/tree/light-sphere predicates, shaders, draw ordering, skinned/detail draws and quality settings remain intact. `-shadow_args_validate` reconstructs the original command sequence and compares its bytes, including empty selections. The normal launcher does not enable this experiment.
+
+Configure/build exited 0. Exact tested source is parent `048bfe8ea1a7d8bf441faf2f51757e9e08a91144` plus patch SHA-256 `82964a89871318c8c52a439926594daaff667d1f072b3037ad2889981d75e5b4`. Executable SHA-256 `6e5a474ca03fdeebda951e1da3849cf9114436d20e42e44e1f7223d8b32b822a`; matching PDB and raw source identities are archived in workspace `work/runtime/shadow-args-044`. NVRHI remains pinned at `dcf5f012187e9482d99b71d224ba09304cffb35e`.
+
+BO/BP compare this same executable with the new switch OFF/ON. Both keep `-local_shadow_batch_copies`, serial recording, native 3440x1440, FXAA, AO-high, 16x filtering, conventional/grass shadows and FG off. CPU/GPU/slow-frame tracing is enabled in both; starting profile/controller/replays/cameras and game clocks match.
+
+| Scene | Local CPU ms OFF / ON | Local GPU ms OFF / ON | FPS OFF / ON | Application p99 ms OFF / ON |
+|---|---:|---:|---:|---:|
+| Interior | 2.733 / 2.573 | 2.484 / 2.070 | 90.23 / 96.18 | 20.57 / 14.56 |
+| Outdoor | 2.350 / 2.235 | 2.323 / 2.383 | 82.76 / 83.64 | 17.32 / 16.17 |
+| Rain | 2.346 / 2.184 | 2.496 / 2.352 | 77.35 / 88.28 | 18.05 / 16.72 |
+| Night | 2.888 / 3.087 | 2.917 / 2.991 | 90.12 / 89.46 | 15.45 / 16.58 |
+
+Retain as experimental and off by default. Daytime local CPU falls 0.12-0.16 ms, but GPU results are mixed and night worsens. These are one sequential pair, not isolated proof of the full FPS differences. BO has more background GPU activity (up to 2.394% per sampled engine versus 0.839% in BP) and a cluster of interior render/update stalls near 63 seconds. The stall cause is unproven. Night mean lights change 42.79 to 49.10 and spatial objects 468.86 to 488.86, while face means are 141.28/140.41. Other GPU pass costs also vary. BO has 13-14 GPU samples per scene and BP has 14; CPU snapshots do not continuously measure contention. Application API intervals do not establish displayed-frame, latency or drop behavior.
+
+BN completed two full Zaton unload/reloads with native DX12 validation, parallel partitions, DLSS Quality and FSR FG. All 58 active sampled local partitions passed ordered command equivalence; the diagnostic also runs between trace samples. Inventory contents/condition/ammo match across all three 153-item captures; raw bolt IDs change. Grouse's 22,927 authored bytes match exactly. Last successful FG dispatch count is 1783. Animated-tree commands and empty rigid selections were exercised; no warm dynamic-rigid draws were observed in this reload scene. Native warnings 679/820/821 and existing legacy shader failures remain, with no matched fatal/native/NVRHI error.
+
+All eleven new stills were opened and inspected: eight BO/BP comparison images and three BN reload images. Interior NPC/counter/fence/floor lighting and shadow edges, outdoor terrain/vegetation and rain/fog remain without obvious new corruption. Wind/rain patterns and reload clouds differ; very dark night images limit subtle assessment. This is not complete effects parity, moving-shadow or temporal/HDR quality proof. Both games/PresentMon/samplers and the native reload processes exited 0. Fourteen unique reload files were archived, hash verified and removed; control restored byte-for-byte. Protected normal 0.41 workspace EXE/PDB/profile were restored and rehashed. Delivered 0.44 and the fixed DX9 reference remain preserved.
+
+Evidence: workspace `outputs/implementation-evidence/MISERY_DX12_SHADOW_ARGS_044_SUMMARY.json`, BN `reload-analysis.json` and BO/BP `args-analysis.json`. The existing `outputs/MISERY_DX9_DX12_COMPARISON_044.html#shadow-args-experiment` now includes four separate experimental sliders and the mixed results, while retaining the delivered-build comparison. No new package or default promotion. Next: inspect the remaining sun/foliage costs before implementing another change; do not repeat these completed checks absent new evidence.
 
 ## Latest delivery: 0.44 (2026-09-09 UTC)
 

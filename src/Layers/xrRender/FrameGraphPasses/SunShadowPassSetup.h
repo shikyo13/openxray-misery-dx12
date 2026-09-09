@@ -7,15 +7,21 @@ namespace xray::render { class MaterialCache; class GeometryCollector; }
 namespace xray::render::framegraph { class FrameGraph; }
 namespace xray::render::fg { class RenderDevice; class RenderContext; class GPUCullingManager; }
 namespace xray::render::fg { class FGDetailManager; }
+namespace xray::render::fg { struct IndirectDrawArgs; }
 namespace xray::render::fg::decals { class OverlayManager; }
 
 namespace xray::render::fg::passes {
 struct SkinningPassState;
+struct ShadowDrawRange {
+    u32 first[3] = {};
+    u32 count[3] = {};
+};
 struct ShadowMapPassState {
     nvrhi::GraphicsPipelineHandle pipeline;
     nvrhi::BindingLayoutHandle layout;
     nvrhi::BufferHandle constants;
     nvrhi::BufferHandle drawArgs[3];
+    nvrhi::BufferHandle preparedDrawArgs[3];
     nvrhi::GraphicsPipelineHandle detailPipeline;
     nvrhi::ComputePipelineHandle detailCullPipeline;
     nvrhi::BindingLayoutHandle detailLayout, detailCullLayout;
@@ -36,10 +42,15 @@ struct SunShadowPassState : ShadowMapPassState {
 };
 
 void InitializeShadowMapResources(RenderDevice* device, ShadowMapPassState& state);
+ShadowDrawRange PrepareWorldShadowDraws(GPUCullingManager* geometry, const CFrustum& frustum,
+    const xr_vector<u32>* candidates, u32 groups, u32 treeFilter, xr_vector<IndirectDrawArgs>* commands);
+u32 UploadWorldShadowDraws(RenderContext* context, ShadowMapPassState& state,
+    const xr_vector<IndirectDrawArgs>* commands);
 u32 DrawWorldShadowMap(RenderContext* context, RenderDevice* device, GPUCullingManager* geometry,
     const Fmatrix& viewProjection, const CFrustum& frustum, nvrhi::IFramebuffer* framebuffer,
     ShadowMapPassState& state, const xr_vector<u32>* candidates = nullptr, u32 groups = 7,
-    u32 treeFilter = 0); // 0: all, 1: fixed geometry, 2: animated trees only.
+    u32 treeFilter = 0, const ShadowDrawRange* prepared = nullptr,
+    const xr_vector<IndirectDrawArgs>* preparedCommands = nullptr); // treeFilter: 0 all, 1 fixed, 2 animated.
 bool DrawDetailShadowMap(RenderContext* context, RenderDevice* device, FGDetailManager* details,
     ShadowMapPassState& state, const Fmatrix& viewProjection, const CFrustum& frustum,
     nvrhi::IFramebuffer* framebuffer, const Fvector4* lightSphere = nullptr);

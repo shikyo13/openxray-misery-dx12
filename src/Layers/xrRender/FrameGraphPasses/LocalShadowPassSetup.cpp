@@ -303,6 +303,9 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
             u32 worldCount = 0, skinnedCount = 0, detailCount = 0, renderedFaces = 0, staticUpdates = 0;
             u32 treeCount = 0, groupedCopies = 0;
             const bool batchCopies = strstr(Core.Params, "-local_shadow_batch_copies") != nullptr;
+            const bool batchArgs = strstr(Core.Params, "-local_shadow_batch_args") != nullptr;
+            const bool validateArgs = batchArgs && strstr(Core.Params, "-shadow_args_validate");
+            u32 argumentUploads = 0, argumentDraws = 0, argumentDrawn = 0;
             if (canRender) {
                 lap(0);
                 const auto needsStaticUpdate = [&](u32 face) {
@@ -364,6 +367,39 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                             candidates[group].push_back(i);
                     }
                 };
+                const auto collectTrees = [&](const light* source) {
+                    treeCandidates[0].clear();
+                    for (u32 i : animatedTrees) {
+                        const float radius = source->range + staticObjects[i].radius;
+                        if (staticObjects[i].position.distance_to_sqr(source->position) <= radius * radius)
+                            treeCandidates[0].push_back(i);
+                    }
+                };
+                xr_vector<IndirectDrawArgs> preparedArgs[3];
+                xr_vector<ShadowDrawRange> dynamicRanges, treeRanges;
+                if (batchArgs) {
+                    // Each partition uploads a disjoint command stream once.
+                    // Static-cache refreshes retain their separate scratch buffers.
+                    dynamicRanges.resize(endFace - firstFace);
+                    treeRanges.resize(endFace - firstFace);
+                    u32 preparedOwner = u32(-1);
+                    for (u32 face = firstFace; face < endFace; ++face) {
+                        if (!state.visibleFaces[face]) continue;
+                        const auto* source = ClusteredLightManager::Instance().GetLightSources()[state.owners[face]];
+                        if (state.owners[face] != preparedOwner) {
+                            preparedOwner = state.owners[face];
+                            collect(2, geometry->GetDynamicObjectData(), source);
+                            collectTrees(source);
+                        }
+                        dynamicRanges[face - firstFace] = PrepareWorldShadowDraws(geometry, state.frusta[face],
+                            candidates, 4, 0, preparedArgs);
+                        treeRanges[face - firstFace] = PrepareWorldShadowDraws(geometry, state.frusta[face],
+                            treeCandidates, 1, 2, preparedArgs);
+                    }
+                    for (const auto& commands : preparedArgs) argumentDraws += u32(commands.size());
+                    argumentUploads = UploadWorldShadowDraws(context, drawing, preparedArgs);
+                    lap(1);
+                }
                 u32 lastOwner = u32(-1);
                 bool staticCandidatesReady = false;
                 for (u32 face = firstFace; face < endFace; ++face) {
@@ -373,12 +409,9 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                     if (state.owners[face] != lastOwner) {
                         lastOwner = state.owners[face];
                         staticCandidatesReady = false;
-                        collect(2, geometry->GetDynamicObjectData(), source);
-                        treeCandidates[0].clear();
-                        for (u32 i : animatedTrees) {
-                            const float radius = source->range + staticObjects[i].radius;
-                            if (staticObjects[i].position.distance_to_sqr(source->position) <= radius * radius)
-                                treeCandidates[0].push_back(i);
+                        if (!batchArgs || validateArgs) {
+                            collect(2, geometry->GetDynamicObjectData(), source);
+                            collectTrees(source);
                         }
                         // A cubemap's corners extend beyond the spherical light
                         // range. Keep only characters that can shadow this light,
@@ -423,12 +456,17 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                         command->copyTexture(texture, nvrhi::TextureSlice().setArraySlice(face),
                             saved.texture, nvrhi::TextureSlice().setArraySlice(lightFace));
                     lap(2);
-                    worldCount += DrawWorldShadowMap(context, data.device, geometry,
-                        state.matrices[face], state.frusta[face], framebuffer, drawing, candidates, 4);
+                    const u32 dynamicDraws = DrawWorldShadowMap(context, data.device, geometry,
+                        state.matrices[face], state.frusta[face], framebuffer, drawing, candidates, 4, 0,
+                        batchArgs ? &dynamicRanges[face - firstFace] : nullptr, preparedArgs);
+                    worldCount += dynamicDraws;
                     // Wind moves authored tree vertices even though their instance transforms are static.
                     // Draw them over the fixed-geometry cache each frame.
-                    treeCount += DrawWorldShadowMap(context, data.device, geometry,
-                        state.matrices[face], state.frusta[face], framebuffer, drawing, treeCandidates, 1, 2);
+                    const u32 treeDraws = DrawWorldShadowMap(context, data.device, geometry,
+                        state.matrices[face], state.frusta[face], framebuffer, drawing, treeCandidates, 1, 2,
+                        batchArgs ? &treeRanges[face - firstFace] : nullptr, preparedArgs);
+                    treeCount += treeDraws;
+                    if (batchArgs) argumentDrawn += dynamicDraws + treeDraws;
                     lap(3);
                     skinnedCount += DrawSkinnedSunShadows(context, data.device, geometry, data.collector,
                         data.overlays, state.matrices[face], state.frusta[face], framebuffer, *data.skinning, &skinnedCandidates);
@@ -441,11 +479,13 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
             }
             R_ASSERT2(!batchCopies || groupedCopies + staticUpdates == renderedFaces,
                 "Every local shadow face must receive exactly one cached depth copy");
+            R_ASSERT2(!batchArgs || argumentDrawn == argumentDraws,
+                "Every prepared local shadow command must be drawn exactly once");
             if (trace) {
-                Msg("* [LocalShadow] frame=%u size=%u points=%u spots=%u faces=%u rendered=%u static_updates=%u budget=%d omitted=%u world=%u skinned=%u detail=%u trees=%u part=%u parts=%u first=%u end=%u grouped_copies=%u",
+                Msg("* [LocalShadow] frame=%u size=%u points=%u spots=%u faces=%u rendered=%u static_updates=%u budget=%d omitted=%u world=%u skinned=%u detail=%u trees=%u part=%u parts=%u first=%u end=%u grouped_copies=%u args_uploads=%u args_draws=%u args_validated=%d",
                     Device.dwFrame, state.resolution, state.pointLights, state.spotLights, u32(state.matrices.size()),
                     renderedFaces, staticUpdates, ps_r_local_shadow_faces, state.omittedLights, worldCount, skinnedCount, detailCount, treeCount,
-                    partition, partitions, firstFace, endFace, groupedCopies);
+                    partition, partitions, firstFace, endFace, groupedCopies, argumentUploads, argumentDraws, validateArgs);
                 Msg("* [LocalShadowCPU] frame=%u time=%u init_ms=%.3f candidates_ms=%.3f static_copy_ms=%.3f dynamic_ms=%.3f skinned_ms=%.3f detail_ms=%.3f",
                     Device.dwFrame, Device.dwTimeGlobal, cpu[0], cpu[1], cpu[2], cpu[3], cpu[4], cpu[5]);
             }

@@ -40,6 +40,23 @@ struct alignas(16) DetailShadowCullConstants {
 };
 static_assert(sizeof(DetailShadowCullConstants) == 416);
 
+void AppendWorldShadowDraws(const xr_vector<IndirectDrawArgs>& original,
+    const xr_vector<GPUObjectData>& objects, const CFrustum& frustum,
+    const xr_vector<u32>* candidates, u32 treeFilter, xr_vector<IndirectDrawArgs>& visible)
+{
+    R_ASSERT(original.size() == objects.size());
+    const u32 candidateCount = candidates ? u32(candidates->size()) : u32(original.size());
+    for (u32 candidate = 0; candidate < candidateCount; ++candidate) {
+        const u32 i = candidates ? (*candidates)[candidate] : candidate;
+        const bool tree = (objects[i].flags & GPU_INSTANCE_TREE_WIND) != 0;
+        if ((treeFilter == 1 && tree) || (treeFilter == 2 && !tree)) continue;
+        if (!frustum.testSphere_dirty(objects[i].position, objects[i].radius)) continue;
+        auto args = original[i];
+        args.instanceCount = 1; args.startInstanceLocation = i;
+        visible.push_back(args);
+    }
+}
+
 bool ConfigureDetailShadowWindow(DetailShadowCullConstants& constants, const FGDetailManager& dm)
 {
     float minX = constants.cameraRange.x - constants.cameraRange.w;
@@ -375,9 +392,53 @@ bool DrawDetailShadowMap(RenderContext* context, RenderDevice* device, FGDetailM
     return DrawDetailShadowMapImpl(context, device, details, state, viewProjection, frustum, framebuffer, lightSphere);
 }
 
+ShadowDrawRange PrepareWorldShadowDraws(GPUCullingManager* geometry, const CFrustum& frustum,
+    const xr_vector<u32>* candidates, u32 groups, u32 treeFilter, xr_vector<IndirectDrawArgs>* commands)
+{
+    ShadowDrawRange range;
+    const auto append = [&](u32 group, const xr_vector<IndirectDrawArgs>& original,
+        const xr_vector<GPUObjectData>& objects, nvrhi::IBuffer* instances) {
+        if (!(groups & (1u << group)) || original.empty() || !instances) return;
+        range.first[group] = u32(commands[group].size());
+        AppendWorldShadowDraws(original, objects, frustum, candidates ? &candidates[group] : nullptr,
+            treeFilter, commands[group]);
+        R_ASSERT2(u64(commands[group].size()) * sizeof(IndirectDrawArgs) <= u32(-1),
+            "Prepared shadow argument offsets exceed the indirect API range");
+        range.count[group] = u32(commands[group].size()) - range.first[group];
+    };
+    append(0, geometry->GetStaticDrawArgsData(), geometry->GetStaticObjectData(), geometry->GetStaticInstanceBuffer());
+    append(1, geometry->GetTerrainDrawArgsData(), geometry->GetTerrainObjectData(), geometry->GetTerrainInstanceBuffer());
+    append(2, geometry->GetDynamicDrawArgsData(), geometry->GetDynamicObjectData(), geometry->GetDynamicInstanceBuffer());
+    return range;
+}
+
+u32 UploadWorldShadowDraws(RenderContext* context, ShadowMapPassState& state,
+    const xr_vector<IndirectDrawArgs>* commands)
+{
+    auto* command = context->GetCommandList();
+    u32 uploads = 0;
+    for (u32 group = 0; group < 3; ++group) {
+        if (commands[group].empty()) continue;
+        const u64 bytes = commands[group].size() * sizeof(IndirectDrawArgs);
+        auto& buffer = state.preparedDrawArgs[group];
+        if (!buffer || buffer->getDesc().byteSize < bytes) {
+            nvrhi::BufferDesc desc;
+            desc.byteSize = bytes; desc.isDrawIndirectArgs = true;
+            desc.debugName = "PreparedLocalShadowDrawArgs";
+            desc.initialState = nvrhi::ResourceStates::IndirectArgument; desc.keepInitialState = true;
+            buffer = command->getDevice()->createBuffer(desc);
+            R_ASSERT2(buffer, "Prepared local shadow argument allocation failed");
+        }
+        command->writeBuffer(buffer, commands[group].data(), bytes);
+        ++uploads;
+    }
+    return uploads;
+}
+
 u32 DrawWorldShadowMap(RenderContext* context, RenderDevice* device, GPUCullingManager* geometry,
     const Fmatrix& viewProjection, const CFrustum& frustum, nvrhi::IFramebuffer* framebuffer,
-    ShadowMapPassState& state, const xr_vector<u32>* candidates, u32 groups, u32 treeFilter)
+    ShadowMapPassState& state, const xr_vector<u32>* candidates, u32 groups, u32 treeFilter,
+    const ShadowDrawRange* prepared, const xr_vector<IndirectDrawArgs>* preparedCommands)
 {
     auto* command = context->GetCommandList();
     auto* nvDevice = command->getDevice();
@@ -391,30 +452,33 @@ u32 DrawWorldShadowMap(RenderContext* context, RenderDevice* device, GPUCullingM
     auto drawSet = [&](u32 group, const xr_vector<IndirectDrawArgs>& original,
         const xr_vector<GPUObjectData>& objects, nvrhi::IBuffer* instances, bool terrain) {
         if (!(groups & (1u << group)) || original.empty() || !instances) return;
-        R_ASSERT(original.size() == objects.size());
         xr_vector<IndirectDrawArgs> visible;
-        const u32 candidateCount = candidates ? u32(candidates[group].size()) : u32(original.size());
-        visible.reserve(candidateCount);
-        for (u32 candidate = 0; candidate < candidateCount; ++candidate) {
-            const u32 i = candidates ? candidates[group][candidate] : candidate;
-            const bool tree = (objects[i].flags & GPU_INSTANCE_TREE_WIND) != 0;
-            if ((treeFilter == 1 && tree) || (treeFilter == 2 && !tree)) continue;
-            if (!frustum.testSphere_dirty(objects[i].position, objects[i].radius)) continue;
-            auto args = original[i];
-            args.instanceCount = 1; args.startInstanceLocation = i;
-            visible.push_back(args);
+        const bool validate = prepared && strstr(Core.Params, "-shadow_args_validate");
+        if (!prepared || validate) {
+            visible.reserve(candidates ? candidates[group].size() : original.size());
+            AppendWorldShadowDraws(original, objects, frustum, candidates ? &candidates[group] : nullptr,
+                treeFilter, visible);
         }
-        if (visible.empty()) return;
-        const u64 bytes = visible.size() * sizeof(IndirectDrawArgs);
-        auto& buffer = state.drawArgs[group];
-        if (!buffer || buffer->getDesc().byteSize < bytes) {
+        const u32 drawCount = prepared ? prepared->count[group] : u32(visible.size());
+        const u32 offset = prepared ? prepared->first[group] * sizeof(IndirectDrawArgs) : 0;
+        const u64 bytes = u64(drawCount) * sizeof(IndirectDrawArgs);
+        if (validate) {
+            R_ASSERT(preparedCommands && drawCount == visible.size());
+            R_ASSERT(u64(prepared->first[group]) + drawCount <= preparedCommands[group].size());
+            R_ASSERT2(!bytes || !memcmp(visible.data(), preparedCommands[group].data() + prepared->first[group], bytes),
+                "Prepared shadow draw commands differ from the original face/caster selection");
+        }
+        if (!drawCount) return;
+        auto& buffer = prepared ? state.preparedDrawArgs[group] : state.drawArgs[group];
+        if (!prepared && (!buffer || buffer->getDesc().byteSize < bytes)) {
             nvrhi::BufferDesc desc;
             desc.byteSize = original.size() * sizeof(IndirectDrawArgs);
             desc.isDrawIndirectArgs = true; desc.debugName = "SunShadowDrawArgs";
             desc.initialState = nvrhi::ResourceStates::IndirectArgument; desc.keepInitialState = true;
             buffer = nvDevice->createBuffer(desc);
         }
-        command->writeBuffer(buffer, visible.data(), bytes);
+        R_ASSERT(buffer && u64(offset) + bytes <= buffer->getDesc().byteSize);
+        if (!prepared) command->writeBuffer(buffer, visible.data(), bytes);
         SunShadowDrawConstants constants;
         constants.viewProjection = viewProjection;
         constants.options.set(terrain ? 1.f : 0.f, 0.f, 0.f, 0.f);
@@ -434,8 +498,8 @@ u32 DrawWorldShadowMap(RenderContext* context, RenderDevice* device, GPUCullingM
         draw.indirectParams = buffer;
         draw.viewport.addViewportAndScissorRect(nvrhi::Viewport(0.f, float(framebuffer->getFramebufferInfo().width), 0.f, float(framebuffer->getFramebufferInfo().width), 0.f, 1.f));
         command->setGraphicsState(draw);
-        command->drawIndexedIndirect(0, u32(visible.size()));
-        count += u32(visible.size());
+        command->drawIndexedIndirect(offset, drawCount);
+        count += drawCount;
     };
     drawSet(0, geometry->GetStaticDrawArgsData(), geometry->GetStaticObjectData(), geometry->GetStaticInstanceBuffer(), false);
     drawSet(1, geometry->GetTerrainDrawArgsData(), geometry->GetTerrainObjectData(), geometry->GetTerrainInstanceBuffer(), true);
