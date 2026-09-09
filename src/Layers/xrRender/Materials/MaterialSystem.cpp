@@ -225,6 +225,7 @@ bool MaterialSystem::HasTextures(const char* textureName) const
 
 void MaterialSystem::ClearCaches()
 {
+    ++m_cacheRevision;
     m_materialCache.clear();
     m_textureCache.clear();
 

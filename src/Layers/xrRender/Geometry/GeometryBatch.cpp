@@ -21,9 +21,11 @@ void GeometryCollector::BeginFrame(size_t staticPrefix) {
     // Static batches already occupy the front of this vector. Avoid releasing and
     // copying their buffer handles every frame; retire only last frame's dynamics.
     m_batches.resize(staticPrefix);
-    if (m_skinnedIndicesValid) {
+    if (m_batchIndicesValid) {
         while (!m_skinnedBatchIndices.empty() && m_skinnedBatchIndices.back() >= staticPrefix)
             m_skinnedBatchIndices.pop_back();
+        while (!m_rigidUpdateBatchIndices.empty() && m_rigidUpdateBatchIndices.back() >= staticPrefix)
+            m_rigidUpdateBatchIndices.pop_back();
     }
 
     // Reset statistics
@@ -31,11 +33,14 @@ void GeometryCollector::BeginFrame(size_t staticPrefix) {
 }
 
 void GeometryCollector::EndFrame() {
-    if (!m_skinnedIndicesValid) {
+    const u64 materialRevision = MaterialSystem::Instance().GetCacheRevision();
+    if (!m_batchIndicesValid || m_materialCacheRevision != materialRevision) {
         m_skinnedBatchIndices.clear();
+        m_rigidUpdateBatchIndices.clear();
         for (size_t i = 0; i < m_batches.size(); ++i)
-            if (m_batches[i].isSkinned) m_skinnedBatchIndices.push_back(i);
-        m_skinnedIndicesValid = true;
+            IndexBatch(i);
+        m_batchIndicesValid = true;
+        m_materialCacheRevision = materialRevision;
     }
 
     // Optional runtime equivalence check; keep the full scan out of normal play.
@@ -49,8 +54,18 @@ void GeometryCollector::EndFrame() {
             ++expected;
         }
         R_ASSERT2(expected == m_skinnedBatchIndices.size(), "Skinned batch index contains stale entries");
-        Msg("* [GeometryBatchIndex] frame=%u batches=%zu skinned=%zu verified=1",
-            Device.dwFrame, m_batches.size(), expected);
+        size_t rigidExpected = 0;
+        for (size_t i = 0; i < m_batches.size(); ++i) {
+            const auto& batch = m_batches[i];
+            if (batch.isSkinned) continue;
+            if (!batch.isTerrain && !batch.IsStrictB2F() && batch.isStatic) continue;
+            R_ASSERT2(rigidExpected < m_rigidUpdateBatchIndices.size() && m_rigidUpdateBatchIndices[rigidExpected] == i,
+                "Rigid upload index differs from full collection scan");
+            ++rigidExpected;
+        }
+        R_ASSERT2(rigidExpected == m_rigidUpdateBatchIndices.size(), "Rigid upload index contains stale entries");
+        Msg("* [GeometryBatchIndex] frame=%u batches=%zu skinned=%zu verified=1 rigid_updates=%zu",
+            Device.dwFrame, m_batches.size(), expected, rigidExpected);
     }
 
     // Update statistics
@@ -64,12 +79,20 @@ void GeometryCollector::Submit(const GeometryBatch& batch) {
     // NOTE: pipeline can be nullptr during collection, will be set later from visual->shader
 
     m_batches.push_back(batch);
-    if (m_skinnedIndicesValid && batch.isSkinned)
-        m_skinnedBatchIndices.push_back(m_batches.size() - 1);
+    if (m_batchIndicesValid)
+        IndexBatch(m_batches.size() - 1);
+}
+
+void GeometryCollector::IndexBatch(size_t index) {
+    const auto& batch = m_batches[index];
+    if (batch.isSkinned)
+        m_skinnedBatchIndices.push_back(index);
+    else if (!batch.isStatic || batch.isTerrain || batch.IsStrictB2F())
+        m_rigidUpdateBatchIndices.push_back(index);
 }
 
 void GeometryCollector::Sort() {
-    m_skinnedIndicesValid = false;
+    m_batchIndicesValid = false;
     // ═══════════════════════════════════════════════════════
     //  RENDER ORDER SORTING (using SSA + shader flags)
     // ═══════════════════════════════════════════════════════

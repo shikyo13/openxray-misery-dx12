@@ -172,7 +172,7 @@ public:
 
     // Get batches for routing (non-const, for Week 16 dynamic routing)
     xr_vector<GeometryBatch>& GetBatchesMutable() {
-        m_skinnedIndicesValid = false;
+        m_batchIndicesValid = false;
         return m_batches;
     }
 
@@ -180,12 +180,26 @@ public:
     // Mutable access falls back to scanning until EndFrame rebuilds the index.
     template <typename Visitor>
     void ForEachSkinnedBatch(Visitor&& visit) const {
-        if (!m_skinnedIndicesValid) {
+        if (!m_batchIndicesValid) {
             for (const auto& batch : m_batches)
                 if (batch.isSkinned) visit(batch);
             return;
         }
         for (size_t index : m_skinnedBatchIndices)
+            visit(m_batches[index]);
+    }
+
+    // Once opaque static GPU data is uploaded, only terrain, transparency and
+    // dynamic rigid batches need CPU rebuilding. GPU visibility stays per-frame.
+    template <typename Visitor>
+    void ForEachRigidUploadBatch(bool includeCachedStatic, Visitor&& visit) const {
+        if (includeCachedStatic || !m_batchIndicesValid ||
+            m_materialCacheRevision != MaterialSystem::Instance().GetCacheRevision()) {
+            for (const auto& batch : m_batches)
+                if (!batch.isSkinned) visit(batch);
+            return;
+        }
+        for (size_t index : m_rigidUpdateBatchIndices)
             visit(m_batches[index]);
     }
 
@@ -204,8 +218,12 @@ public:
 private:
     xr_vector<GeometryBatch> m_batches;
     xr_vector<size_t> m_skinnedBatchIndices;
-    bool m_skinnedIndicesValid = true;
+    xr_vector<size_t> m_rigidUpdateBatchIndices;
+    bool m_batchIndicesValid = true;
+    u64 m_materialCacheRevision = 0;
     Stats m_stats;
+
+    void IndexBatch(size_t index);
 
     // Sorting key
     static u64 ComputeSortKey(const GeometryBatch& batch);

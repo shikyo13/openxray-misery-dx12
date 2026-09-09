@@ -6,6 +6,27 @@ The user's priority is to remove internal engine bottlenecks so native x64/DX12 
 
 User correction after the failed submission experiment: do not skip from submission timing to separate shadow optimization. Finish the parallel command-recording architecture first. Shadows may supply its first workload; that does not authorize prioritizing shadow-specific culling or draw optimizations ahead of it.
 
+## Priority 1: rigid upload preparation checkpoint (2026-09-09 UTC)
+
+The collector retains an ordered list of rigid batches whose CPU upload data needs rebuilding: terrain, transparency and dynamic geometry. Once the existing static GPU cache is populated, upload preparation visits that list instead of repeatedly classifying every unchanged static batch. Mutable access, sorting or a material-cache revision invalidates the selection; the initial upload still includes all rigid batches. GPU visibility remains evaluated every frame. This is CPU preparation work, with no change to shaders, shadow algorithms, visibility criteria, quality or game callbacks.
+
+Candidate executable `46b7910c50e80258b34f47c87e2b2e6a3fd768705b889e612229d121a1950b03` was built from parent `644871ab2286995833e36c6f37bbec675cfc6557` plus archived patch `48ecaf7ff031ec5d9c6c5684824a2a5d6650ca71318aefef1bc925187064679b`. Matching PDB, all five tested source hashes and build logs are retained in workspace `work/runtime/rigid-upload-index-043`. The delivered 0.43 package remains unchanged.
+
+AY (the prior candidate capture) and BA (`DX12_RIGID_UPLOAD_CANDIDATE_043_BA`) use matching initial profiles, controller, replays, cameras and clocks at 3440x1440, FXAA, AO-high, 16x, conventional/grass shadows and FG off. Parallel recording and CPU/GPU tracing are on in both; the full-scan index diagnostic is off. Both game/PresentMon/sampler runs exit 0. AY started about 22 minutes before BA; this is one sequential comparison, not a fresh randomized control.
+
+| Scene | Rigid culling CPU ms before / after | Total renderer CPU ms before / after | Application FPS before / after | Application p99 ms before / after |
+|---|---:|---:|---:|---:|
+| Interior | 0.2830 / 0.1038 | 6.1714 / 6.0181 | 94.90 / 95.10 | 14.72 / 14.12 |
+| Outdoor | 0.2893 / 0.1163 | 5.5062 / 5.4168 | 91.34 / 91.92 | 14.77 / 14.42 |
+| Rain | 0.2839 / 0.1158 | 5.4246 / 5.2978 | 95.12 / 95.54 | 14.91 / 14.19 |
+| Night | 0.2819 / 0.1123 | 5.6725 / 5.5449 | 92.57 / 93.44 | 15.41 / 15.38 |
+
+The rigid pass uses 0.168-0.179 ms less CPU time (about 59-63%) in this pair. Total renderer CPU is 0.089-0.153 ms lower, but changing light/face workloads and approximately 96% GPU utilization prevent attributing the small whole-frame FPS differences to this edit alone. Each BA scene has fourteen GPU samples, with zero sampled non-game engine activity inside the measurement windows. PresentMon measures application intervals; display mode, latency and dropped-frame evidence are unavailable. All four BA stills were inspected without obvious new corruption. Both native captures retain 836 legacy shader failures and no matched fatal/device/NVRHI error.
+
+BB (`DX12_RIGID_UPLOAD_RELOAD_043_BB`) completes two full Zaton unload/reloads with native D3D12 debug/DRED, NVRHI validation, DLSS Quality, FSR FG and parallel recording. The optional full-scan diagnostic verifies both ordered lists in fifteen samples; the rigid update list contains 1,720 entries among roughly 22,000 total batches. All 153 inventory contents/condition/ammo and Grouse's 22,927-byte data survive both reloads; only the raw bolt ID changes from 11077 to 14848. All three reload stills retain terrain, grass and the weapon. Exit 0, 33 distinct-thread overlap samples, last successful FG dispatch count 1733; 2216 legacy shader failures and no matched fatal/native/NVRHI error. Cloud changes across reload, different-level transitions, generated-frame temporal quality and long sessions remain unqualified.
+
+Detailed evidence: workspace `outputs/implementation-evidence/MISERY_DX12_RIGID_UPLOAD_043_SUMMARY.json` and BB's `reload-analysis.json`. The fourteen unique reload probe files are archived, their control restored, and normal 0.41 staging executable/PDB/profile restored and hash-verified. Retain this bounded CPU improvement; parallel stays optional. Priority 1 remains unfinished. Next, inspect partitioning and ownership of the existing recording jobs so more CPU workers can record the same draws safely. Separate shadow/caster algorithm, culling and quality optimization remains priority 2 and deferred.
+
 ## Priority 1: culling preparation checkpoint (2026-09-09 UTC)
 
 The collector now maintains ordered skinned-batch indices while retaining the level-static prefix. The skinned upload visits those entries instead of scanning the whole scene. It preserves static skinned visuals and submission order. Mutable access or sorting invalidates the index and uses a full-scan fallback until `EndFrame` rebuilds it. Rigid, terrain and skinned culling now reuse the existing binding-set cache, as their compaction passes already did. No shader, visibility criterion, shadow algorithm, quality or simulation callback changed.

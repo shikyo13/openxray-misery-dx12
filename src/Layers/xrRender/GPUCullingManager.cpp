@@ -1894,14 +1894,7 @@ void GPUCullingManager::UploadSceneObjects(fg::RenderContext* ctx, const Geometr
 
     {
     ZoneScopedN("Upload::Rebuild");
-    for (u32 i = 0; i < totalBatches; i++) {
-        const auto& batch = batches[i];
-
-        // Skip skinned batches - they use a separate per-draw rendering path
-        // with bone matrices and cannot use the GPU-driven multi-draw system
-        if (batch.isSkinned)
-            continue;
-
+    geometry->ForEachRigidUploadBatch(!m_staticDataCached, [&](const GeometryBatch& batch) {
         // Route terrain batches to separate arrays for terrain shader rendering
         if (batch.isTerrain) {
             // ─────────────────────────────────────────────────────
@@ -1943,12 +1936,12 @@ void GPUCullingManager::UploadSceneObjects(fg::RenderContext* ctx, const Geometr
             inst.hemiScale = 1.0f;
             inst.hemiBias = 0.0f;
             m_terrainInstanceData.push_back(inst);
-            continue;
+            return;
         }
 
         if (batch.IsStrictB2F()) {
             appendBatch(batch, m_transparentObjectData, m_transparentDrawArgsData, m_transparentMaterialIDData, m_transparentInstanceData);
-            continue;
+            return;
         }
 
         if (batch.isStatic) {
@@ -1959,7 +1952,7 @@ void GPUCullingManager::UploadSceneObjects(fg::RenderContext* ctx, const Geometr
         } else {
             appendBatch(batch, m_dynamicObjectData, m_dynamicDrawArgsData, m_dynamicMaterialIDData, m_dynamicInstanceData);
         }
-    }
+    });
     }
 
     // Set object counts with total cap

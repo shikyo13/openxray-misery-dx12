@@ -101,6 +101,7 @@ public:
      * Clear all caches (call on level unload)
      */
     void ClearCaches();
+    u64 GetCacheRevision() const { return m_cacheRevision; }
 
     /**
      * Get statistics for debugging
@@ -134,6 +135,7 @@ private:
     // Caches (thread-safe reads after init)
     xr_map<shared_str, MaterialInfo> m_materialCache;
     xr_map<shared_str, TextureSet> m_textureCache;
+    u64 m_cacheRevision = 0;
 
     // Default empty texture set for missing textures
     TextureSet m_emptyTextureSet;
