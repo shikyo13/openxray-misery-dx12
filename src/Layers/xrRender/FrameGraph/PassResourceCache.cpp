@@ -159,6 +159,85 @@ nvrhi::ITexture* PassResourceCache::GetDummyShadowMap2D(nvrhi::IDevice* device) 
     return m_dummyShadowMap2D;
 }
 
+nvrhi::ITexture* PassResourceCache::GetAuthoredMaterialLUT(nvrhi::IDevice* device)
+{
+    if (m_authoredMaterialLUT) return m_authoredMaterialLUT;
+    // Same four material slices and byte quantization as r4_rendertarget_build_textures.
+    constexpr u32 TEX_material_LdotN = 128, TEX_material_LdotH = 256, TEX_material_Count = 4;
+    xr_vector<u16> data(TEX_material_LdotN * TEX_material_LdotH * TEX_material_Count);
+    for (u32 slice = 0; slice < TEX_material_Count; ++slice)
+        for (u32 y = 0; y < TEX_material_LdotH; ++y)
+            for (u32 x = 0; x < TEX_material_LdotN; ++x)
+            {
+                float ld = float(x) / float(TEX_material_LdotN - 1);
+                float ls = float(y) / float(TEX_material_LdotH - 1) + EPS_S;
+                ls *= powf(ld, 1 / 32.f);
+                float fd, fs;
+                switch (slice)
+                {
+                case 0:
+                { // looks like OrenNayar
+                    fd = powf(ld, 0.75f); // 0.75
+                    fs = powf(ls, 16.f) * .5f;
+                }
+                break;
+                case 1:
+                { // looks like Blinn
+                    fd = powf(ld, 0.90f); // 0.90
+                    fs = powf(ls, 24.f);
+                }
+                break;
+                case 2:
+                { // looks like Phong
+                    fd = ld; // 1.0
+                    fs = powf(ls * 1.01f, 128.f);
+                }
+                break;
+                case 3:
+                { // looks like Metal
+                    float s0 = _abs(1 - _abs(0.05f * _sin(33.f * ld) + ld - ls));
+                    float s1 = _abs(1 - _abs(0.05f * _cos(33.f * ld * ls) + ld - ls));
+                    float s2 = _abs(1 - _abs(ld - ls));
+                    fd = ld; // 1.0
+                    fs = powf(_max(_max(s0, s1), s2), 24.f);
+                    fs *= powf(ld, 1 / 7.f);
+                }
+                break;
+                default: fd = fs = 0;
+                }
+                s32 _d = clampr(iFloor(fd * 255.5f), 0, 255);
+                s32 _s = clampr(iFloor(fs * 255.5f), 0, 255);
+                if ((y == (TEX_material_LdotH - 1)) && (x == (TEX_material_LdotN - 1)))
+                {
+                    _d = 255;
+                    _s = 255;
+                }
+
+                data[(slice * TEX_material_LdotH + y) * TEX_material_LdotN + x] = u16(_s * 256 + _d);
+            }
+    nvrhi::TextureDesc desc;
+    desc.width = TEX_material_LdotN;
+    desc.height = TEX_material_LdotH;
+    desc.depth = TEX_material_Count;
+    desc.dimension = nvrhi::TextureDimension::Texture3D;
+    desc.format = nvrhi::Format::RG8_UNORM;
+    desc.debugName = "AuthoredMaterialLUT";
+    desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    desc.keepInitialState = true;
+    m_authoredMaterialLUT = device->createTexture(desc);
+    R_ASSERT2(m_authoredMaterialLUT, "Authored material lookup creation failed");
+    auto upload = device->createCommandList();
+    R_ASSERT2(upload, "Authored material upload command list creation failed");
+    upload->open();
+    upload->writeTexture(m_authoredMaterialLUT, 0, 0, data.data(),
+        TEX_material_LdotN * sizeof(u16), TEX_material_LdotN * TEX_material_LdotH * sizeof(u16));
+    upload->close();
+    device->executeCommandList(upload);
+    Msg("* [AuthoredMaterialLUT] uploaded 128x256x4 RG8_UNORM bytes=%u crc32=%08x",
+        u32(data.size() * sizeof(u16)), crc32(data.data(), u32(data.size() * sizeof(u16))));
+    return m_authoredMaterialLUT;
+}
+
 nvrhi::ISampler* PassResourceCache::GetSamplerByName(const char* smpName, nvrhi::IDevice* device)
 {
     if (strstr(smpName, "smp_nofilter") || strstr(smpName, "smp_smap") || strstr(smpName, "smp_jitter"))
@@ -490,6 +569,7 @@ void PassResourceCache::Clear() {
     m_commonShadowCmp = nullptr;
     m_dummyShadowMap = nullptr;
     m_dummyShadowMap2D = nullptr;
+    m_authoredMaterialLUT = nullptr;
 
     Msg("* [PassResourceCache] Cleared all caches");
 }

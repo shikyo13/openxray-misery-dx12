@@ -42,10 +42,11 @@ inline const char* GetTextureTypeName(TextureType type) {
 // GPU-side material representation - must match HLSL exactly!
 // Uses SM6 bindless texture indices from ResourceDescriptorHeap
 //
-// Layout (48 bytes total):
+// Layout (64 bytes total):
 //   Bytes 0-15:  Texture descriptor indices (4× u32)
 //   Bytes 16-31: Material properties
 //   Bytes 32-47: Authored hemisphere and bump/detail texture indices
+//   Bytes 48-63: Authored material coordinate and padding
 
 struct alignas(16) MaterialData {
     // Descriptor heap indices (UINT32_MAX = invalid/not present)
@@ -63,8 +64,10 @@ struct alignas(16) MaterialData {
     u32 normalCorrectionIndex = INVALID_TEXTURE_INDEX;
     u32 detailNormalIndex = INVALID_TEXTURE_INDEX;
     u32 detailCorrectionIndex = INVALID_TEXTURE_INDEX;
+    float authoredMaterial = 0.375f;
+    float materialPadding[3] = {};
 };
-static_assert(sizeof(MaterialData) == 48, "MaterialData must be 48 bytes for GPU alignment");
+static_assert(sizeof(MaterialData) == 64, "MaterialData must be 64 bytes for GPU alignment");
 
 // Material flags (must match HLSL)
 enum MaterialFlags : u32 {
@@ -87,12 +90,13 @@ enum MaterialFlags : u32 {
 // Terrain uses 4-layer detail blending with RGBA mask
 // Each layer has: color, normal, and optional PBR textures
 //
-// Layout (64 bytes total):
+// Layout (80 bytes total):
 //   Bytes 0-7:   Base and mask indices
 //   Bytes 8-23:  Detail color indices (R/G/B/A)
 //   Bytes 24-39: Detail normal indices (R/G/B/A)
 //   Bytes 40-55: Detail PBR indices (R/G/B/A)
 //   Bytes 56-63: Properties
+//   Bytes 64-79: Authored material coordinate and padding
 
 constexpr u32 MAX_TERRAIN_MATERIALS = 512 * 4;
 
@@ -122,7 +126,9 @@ struct alignas(16) TerrainMaterialData {
     // Properties
     float detailScale;       // Uniform tiling scale for all 4 detail layers
     u32 flags;               // MAT_FLAG_TERRAIN, MAT_FLAG_HAS_PBR_LAYER
+    float authoredMaterial = 0.375f;
+    float materialPadding[3] = {};
 };
-static_assert(sizeof(TerrainMaterialData) == 64, "TerrainMaterialData must be 64 bytes for GPU alignment");
+static_assert(sizeof(TerrainMaterialData) == 80, "TerrainMaterialData must be 80 bytes for GPU alignment");
 
 } // namespace xray::render::fg::bindless

@@ -110,6 +110,7 @@ int ps_r_ssgi_debug = 0;
 int ps_r_hemi = 1; // 0 legacy flat ambient, 1 authored sky visibility, 2 diagnostic.
 int ps_r_env_diffuse = 1; // 0 uniform sky, 1 authored environment diffuse, 2 irradiance diagnostic.
 int ps_r_bump_mode = 1; // 0 prior reconstruction, 1 authored bump/detail data, 2 normal diagnostic.
+int ps_r_material_mode = 1; // 0 generic PBR, 1 authored response, 2 category, 3 environment specular.
 int ps_r_terrain_mode = 1; // 0 prior reconstruction, 1 authored layers, 2 normals, 3 gloss.
 u32 ps_r_aa = 1;
 int ps_r_fsr_fg = 0;
@@ -939,6 +940,7 @@ void xrRender_initconsole()
     CMD4(CCC_Integer, "r_env_diffuse", &ps_r_env_diffuse, 0, 2);
     CMD4(CCC_Integer, "r_bump_mode", &ps_r_bump_mode, 0, 2);
     CMD4(CCC_Integer, "r_terrain_mode", &ps_r_terrain_mode, 0, 3);
+    CMD4(CCC_Integer, "r_material_mode", &ps_r_material_mode, 0, 3);
     CMD3(CCC_Token, "r_aa", &ps_r_aa, qaa_fg_token);
     CMD4(CCC_Integer, "r_fsr_fg", &ps_r_fsr_fg, 0, 1);
     CMD4(CCC_Integer, "r_fsr_fg_capture", &ps_r_fsr_fg_capture, 0, 64);

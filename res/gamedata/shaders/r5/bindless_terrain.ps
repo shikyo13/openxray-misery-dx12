@@ -179,7 +179,8 @@ PS_OUTPUT main(PS_INPUT input)
     // ═══════════════════════════════════════════════════════
 
     // Terrain stores hemisphere visibility in its base texture alpha.
-    f_forward fwd = output_forward_pbr(albedo, N, input.worldPos, metallic, roughness, ao, input.position, false, baseSample.a);
+    f_forward fwd = output_forward_pbr(albedo, N, input.worldPos, metallic, roughness, ao, input.position, false, baseSample.a,
+        (mat.flags & MAT_FLAG_HAS_PBR_LAYER) ? -1.0 : mat.authoredMaterial, gloss);
     output.color = float4(fwd.color.rgb, 1.0);
     output.normal = fwd.normal;
     output.baseColor = fwd.baseColor;

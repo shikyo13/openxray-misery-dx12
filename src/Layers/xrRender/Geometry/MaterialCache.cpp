@@ -1160,6 +1160,9 @@ u32 MaterialCache::PreRegisterTerrainMaterial(dxRender_Visual* visual)
     matData.pbrA_Index = INVALID_TEXTURE_INDEX;
 
     matData.flags = MAT_FLAG_TERRAIN;
+    matData.authoredMaterial = (TextureDescr.GetMaterial(visual->textureName) + 0.5f) / 4.f;
+    if (strstr(Core.Params, "-graphics_trace"))
+        Msg("* [AuthoredTerrainMaterial] texture='%s' coordinate=%.9g", visual->textureName.c_str(), matData.authoredMaterial);
 
     if (visual->textureName.size() > 0) {
         matData.detailScale = GetDetailScale(visual->textureName);
@@ -1604,6 +1607,7 @@ void MaterialCache::FinalizePendingMaterials(fg::RenderContext* ctx)
             }
         }
 
+        matData.authoredMaterial = (TextureDescr.GetMaterial(diffuseName) + 0.5f) / 4.f;
         auto& texDescMgr = TextureDescr;
         shared_str bumpName = texDescMgr.GetBumpName(diffuseName);
         if (matData.flags & MAT_FLAG_WATER)
@@ -1690,6 +1694,9 @@ void MaterialCache::FinalizePendingMaterials(fg::RenderContext* ctx)
         }
         if (updated) {
             materialBuffer.UpdateMaterial(materialID, matData);
+            if (strstr(Core.Params, "-graphics_trace"))
+                Msg("* [AuthoredMaterial] id=%u texture='%s' coordinate=%.9g pbr=%u",
+                    materialID, diffuseName.c_str(), matData.authoredMaterial, (matData.flags & MAT_FLAG_HAS_PBR) ? 1u : 0u);
             if (strstr(Core.Params, "-graphics_trace") && (matData.flags & MAT_FLAG_HAS_NORMAL) && !(matData.flags & MAT_FLAG_WATER))
                 Msg("* [BumpMaterial] id=%u base='%s' normal=%u correction=%u detail_normal=%u detail_correction=%u",
                     materialID, diffuseName.c_str(), matData.normalIndex, matData.normalCorrectionIndex,

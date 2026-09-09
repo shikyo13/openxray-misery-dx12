@@ -22,6 +22,8 @@ extern ECORE_API int ps_r_hemi;
 extern ECORE_API int ps_r_env_diffuse;
 extern ECORE_API int ps_r_bump_mode;
 extern ECORE_API int ps_r_terrain_mode;
+extern ECORE_API int ps_r_material_mode;
+extern float ps_r2_gloss_factor;
 extern ECORE_API u32 ps_r_aa;
 extern ECORE_API int ps_r_fsr_fg;
 extern ECORE_API int ps_r_fsr_fg_capture;

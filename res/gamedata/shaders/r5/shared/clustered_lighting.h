@@ -69,7 +69,9 @@ float3 EvaluateClusteredLights(
     float roughness,
     float2 screenPos,
     float linearDepth,
-    uint diffuseMode)
+    uint diffuseMode,
+    float authoredMaterial = -1.0,
+    float authoredGloss = 0.0)
 {
     uint numLights = (uint)cluster_params.w;
     if (numLights == 0)
@@ -94,7 +96,7 @@ float3 EvaluateClusteredLights(
         float3 toLight = lightPos - worldPos;
         float distSq = dot(toLight, toLight);
         float3 L = normalize(toLight);
-        float atten = PointLightAttenuation(distSq, invRangeSq);
+        float atten = authoredMaterial >= 0.0 ? saturate(1.0 - distSq * invRangeSq) : PointLightAttenuation(distSq, invRangeSq);
 
         if (lightType > 0.5f)
         {
@@ -127,10 +129,12 @@ float3 EvaluateClusteredLights(
         if (atten > 0.001f)
         {
             atten *= SampleLocalShadow(light, worldPos, N);
-            float3 litColor = PBRDirectLighting(
-                albedo, N, V, L,
-                lightColor * atten,
-                metallic, roughness, diffuseMode);
+            float3 litColor;
+            [branch] if (authoredMaterial >= 0.0)
+                litColor = AuthoredDirectLighting(albedo, N, V, L, lightColor, authoredMaterial, authoredGloss) * atten;
+            else
+                litColor = PBRDirectLighting(albedo, N, V, L, lightColor * atten,
+                    metallic, roughness, diffuseMode);
             totalLight += litColor;
         }
     }

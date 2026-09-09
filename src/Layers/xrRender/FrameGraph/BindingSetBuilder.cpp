@@ -333,6 +333,12 @@ nvrhi::BindingSetDesc BindingSetBuilder::Build()
         R_ASSERT2(texture, "Forward environment lighting requires a valid cubemap");
         m_desc.bindings.push_back(nvrhi::BindingSetItem::Texture_SRV(resource.slot, texture));
     }
+    for (const auto& resource : m_lists->srvs) {
+        if (!NameMatches(resource.name, "g_AuthoredMaterialLUT")) continue;
+        auto* renderer = static_cast<FrameGraphRenderer*>(GEnv.Render);
+        auto* texture = GetPassResourceCache().GetAuthoredMaterialLUT(renderer->GetRenderDevice()->GetNVRHIDevice());
+        m_desc.bindings.push_back(nvrhi::BindingSetItem::Texture_SRV(resource.slot, texture));
+    }
     AddSamplers();
 
     std::sort(m_desc.bindings.begin(), m_desc.bindings.end(),

@@ -41,8 +41,8 @@ PS_OUTPUT main(PS_INPUT input)
     float3 albedo = diffuseSample.rgb;
 
     float3 N = normalize(input.normal);
-    float gloss = 0.0;
-    if (mat.flags & MAT_FLAG_HAS_NORMAL)
+    float gloss = material_settings.z > 0.5 ? 2.0 / 255.0 : 0.0;
+    if ((mat.flags & MAT_FLAG_HAS_NORMAL) && mat.normalIndex != INVALID_TEXTURE_INDEX)
     {
         BumpSample bump = SampleNormal(mat, input.texcoord, material_settings.x);
         float3x3 TBN = float3x3(
@@ -75,7 +75,8 @@ PS_OUTPUT main(PS_INPUT input)
     SkinnedDrawRecord rec = skinned_mdi_record(input.drawIndex);
     albedo = mdi_apply_splat_color(rec, albedo, input.worldPos, input.texcoord);
 
-    f_forward fwd = output_forward_pbr(albedo, N, input.worldPos, metallic, roughness, ao, input.position, false, rec.hemi);
+    f_forward fwd = output_forward_pbr(albedo, N, input.worldPos, metallic, roughness, ao, input.position, false, rec.hemi,
+        (mat.flags & MAT_FLAG_HAS_PBR) ? -1.0 : mat.authoredMaterial, gloss);
     output.color = float4(fwd.color.rgb, diffuseSample.a);
     output.normal = fwd.normal;
     output.baseColor = fwd.baseColor;

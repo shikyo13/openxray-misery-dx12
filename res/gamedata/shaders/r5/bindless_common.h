@@ -40,6 +40,8 @@ struct MaterialData
     uint normalCorrectionIndex;
     uint detailNormalIndex;
     uint detailCorrectionIndex;
+    float authoredMaterial;
+    float materialPadding[3];
 };
 
 // Material flags
@@ -58,7 +60,7 @@ struct MaterialData
 // ═══════════════════════════════════════════════════════
 //  TERRAIN MATERIAL DATA (matches C++ TerrainMaterialData)
 // ═══════════════════════════════════════════════════════
-// 64 bytes - 4-layer detail blending with RGBA mask
+// 80 bytes - 4-layer detail blending with RGBA mask and material response
 
 struct TerrainMaterialData
 {
@@ -87,6 +89,8 @@ struct TerrainMaterialData
     // Properties
     float detailScale;      // Uniform scale for all 4 detail layers
     uint flags;             // MAT_FLAG_TERRAIN, MAT_FLAG_HAS_PBR_LAYER
+    float authoredMaterial;
+    float materialPadding[3];
 };
 
 // ═══════════════════════════════════════════════════════

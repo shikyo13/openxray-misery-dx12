@@ -229,7 +229,7 @@ inline void FillGlobalConstants(GlobalConstants& cb, u32 width = Device.dwWidth,
     cb.tree_wave.set(0, 0, 0, 0);
     cb.environment_color.set(0, 0, 0, 0);
     cb.environment_settings.set(float(ps_r_env_diffuse), 0, 0, 0);
-    cb.material_settings.set(float(ps_r_bump_mode), float(ps_r_terrain_mode), 0, 0);
+    cb.material_settings.set(float(ps_r_bump_mode), float(ps_r_terrain_mode), float(ps_r_material_mode), ps_r2_gloss_factor);
     if (g_pGamePersistent) {
         const auto& env = g_pGamePersistent->Environment().CurrentEnv;
         const float rotation = PI_MUL_2 * Device.fTimeGlobal / _max(env.m_fTreeRotation, EPS_S);
