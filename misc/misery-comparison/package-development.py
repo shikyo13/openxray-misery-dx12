@@ -11,6 +11,8 @@ import re
 parser = argparse.ArgumentParser()
 parser.add_argument('--version', required=True)
 parser.add_argument('--output-root', type=Path, help='Directory for the independent package; defaults to project outputs.')
+parser.add_argument('--batch-shadow-copies', action='store_true', help='Enable the tested grouped shadow-copy path in the normal launcher.')
+parser.add_argument('--build-identity', type=Path, help='Archived executable/PDB and compiled source identity to preserve with this package.')
 args = parser.parse_args()
 if not re.fullmatch(r'\d+\.\d+(?:\.\d+)?', args.version):
     raise SystemExit('Version must contain two or three numeric components.')
@@ -34,6 +36,16 @@ def sha(path):
 def ignore_diagnostics(folder, names):
     return [name for name in names if name.startswith('dx12_') and name.endswith('.script')]
 
+build_identity = None
+if args.build_identity:
+    build_identity = json.loads(args.build_identity.read_text(encoding='utf-8-sig'))
+    for name, key in (('xr_3da.exe', 'exe_sha256'), ('xr_3da.pdb', 'pdb_sha256')):
+        if sha(source / 'bin' / name) != build_identity[key]:
+            raise SystemExit('Staged binary differs from the specified build identity: ' + name)
+    patch = args.build_identity.parent / 'source.patch'
+    if sha(patch) != build_identity['source_patch_sha256']:
+        raise SystemExit('Archived source patch differs from the specified build identity.')
+
 game.mkdir(parents=True)
 for folder in ('resources', 'levels', 'localization', 'patches', 'mp', 'gamedata', 'bin'):
     shutil.copytree(source / folder, game / folder, ignore=ignore_diagnostics)
@@ -53,8 +65,14 @@ for scene in ('interior', 'outdoor', 'rain', 'night'):
 shutil.copytree(work / 'misery-compat', package / 'compatibility-overlay', ignore=shutil.ignore_patterns('.git'))
 
 # Windows double-click launcher; all writable paths remain in this package.
+launch_arguments = '-fsltx fsgame.ltx -nosplash'
+if args.batch_shadow_copies:
+    launch_arguments += ' -local_shadow_batch_copies'
 (package / 'Launch MISERY DX12.cmd').write_text(
-    '@echo off\ncd /d "%~dp0game"\nbin\\xr_3da.exe -fsltx fsgame.ltx -nosplash\n', encoding='ascii')
+    '@echo off\ncd /d "%~dp0game"\nbin\\xr_3da.exe ' + launch_arguments + '\n', encoding='ascii')
+if build_identity:
+    shutil.copy2(args.build_identity, package / 'build-identity.json')
+    shutil.copy2(patch, package / 'source.patch')
 
 records = []
 for path in sorted(game.rglob('*')):
@@ -84,6 +102,13 @@ manifest = {
     'copied_bytes': sum(record['bytes'] for record in records),
     'copy_verification': 'Every packaged game file matches the independently staged runtime by SHA256',
     'reference_install': 'Preserved; no original save imported, converted or modified',
+    'launch_arguments': launch_arguments,
+    'batch_shadow_copies_in_normal_launcher': args.batch_shadow_copies,
 }
+if build_identity:
+    manifest['packaging_source_commit'] = manifest['source_commit']
+    manifest['source_commit'] = build_identity['committed_source']
+    manifest['build_identity'] = build_identity
+    manifest['pdb_sha256'] = build_identity['pdb_sha256']
 (package / 'manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
 print(json.dumps({k:v for k,v in manifest.items() if k != 'files'}, indent=2), flush=True)
