@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "SunShadowPassSetup.h"
 #include "SkinningPassSetup.h"
+#include "Layers/xrRender/Decals/OverlayManager.h"
 #include "DetailPassSetup.h"
 #include "PassCommon.h"
 #include "ShaderConstants.h"
@@ -483,6 +484,17 @@ framegraph::VirtualResourceHandle setupSunShadowPass(
             data.device = device; data.geometry = geometry; data.materials = materials; data.state = &state;
             data.collector = collector; data.skinning = &skinning; data.overlays = overlays;
             data.details = details;
+            if (state.enabled) builder.SetPassParallelRecording(handle,
+                [&data](RenderContext& context, const framegraph::FrameGraph&) {
+                    if (!data.geometry || !data.geometry->IsMegaDataUploaded()) return;
+                    data.materials->FinalizePendingMaterials(&context);
+                    bindless::MaterialBuffer::Instance().Upload(&context);
+                    GetOrCreateDrawIndexBuffer("SunShadow", context.GetCommandList()->getDevice());
+                    if (data.overlays) data.overlays->UploadSplats(context.GetCommandList());
+                    if (data.skinning->initialized)
+                        for (u32 cascade = 0; cascade < 3; ++cascade)
+                            PrepareSkinnedShadowBones(&context, data.geometry, data.collector, data.state->frustum[cascade]);
+                });
         },
         [](const PassData& data, const framegraph::FrameGraph& graph, RenderContext* context) {
             auto& state = *data.state;
@@ -491,9 +503,11 @@ framegraph::VirtualResourceHandle setupSunShadowPass(
             command->clearDepthStencilTexture(texture, nvrhi::AllSubresources, true, 1.f, false, 0);
             auto* geometry = data.geometry;
             if (!state.enabled || !geometry || !geometry->IsMegaDataUploaded()) return;
-            data.materials->FinalizePendingMaterials(context);
             auto& materialBuffer = bindless::MaterialBuffer::Instance();
-            materialBuffer.Upload(context);
+            if (!context->IsParallelRecording()) {
+                data.materials->FinalizePendingMaterials(context);
+                materialBuffer.Upload(context);
+            }
             auto* nvDevice = command->getDevice();
             auto& cache = framegraph::GetPassResourceCache();
             u32 counts[3] = {};

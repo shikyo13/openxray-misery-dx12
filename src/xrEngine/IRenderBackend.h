@@ -75,6 +75,11 @@ public:
     virtual void ExecuteCommandList(nvrhi::ICommandList* commandList) {}
     virtual void ExecuteCommandLists(nvrhi::ICommandList* const* commandLists, u32 count) {}
 
+    virtual bool SupportsParallelRecording() const { return false; }
+    // Insert closed worker lists after the graphics prefix and open a new tail.
+    // EndFrame submits the complete ordered frame in one batch.
+    virtual void AppendGraphicsRecording(nvrhi::ICommandList* const* lists, u32 count) {}
+
     // ═══════ Swap Chain ═══════
     virtual nvrhi::ITexture* GetBackBuffer() = 0;
     virtual u32 GetCurrentBackBufferIndex() const { return 0; }

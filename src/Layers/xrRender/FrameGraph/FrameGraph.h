@@ -12,6 +12,7 @@
 #include "xrCore/Profiler/CPUProfiler.h"
 
 #include <cstdio>
+#include <functional>
 #include <type_traits>
 
 class IRenderBackend;
@@ -84,6 +85,14 @@ public:
     // Mark pass as having side effects (writes to external resources, prevents culling)
     void SetPassHasSideEffects(PassHandle pass);
 
+    template <typename F>
+    void SetPassParallelRecording(PassHandle handle, F&& prepare) {
+        auto* pass = GetPassNode(handle);
+        VERIFY(pass);
+        pass->parallelRecording = true;
+        pass->prepareRecording = m_frameArena.Make<PassCallback<std::decay_t<F>>>(std::forward<F>(prepare));
+    }
+
     // Template method for lambda-based passes (Frostbite pattern)
     template <typename PassData, typename Setup, typename Execute>
     PassData& addCallbackPass(const char* name, Setup&& setupFunc, Execute&& executeFunc)
@@ -132,7 +141,7 @@ public:
     //  EXECUTE PHASE (AFTER COMPILE)
     // PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 
-    void Execute();
+    void Execute(const std::function<void(fg::RenderContext&)>& initializeRecording = {});
 
     // PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
     //  RESET (FOR NEXT FRAME)
@@ -236,6 +245,9 @@ private:
 
     // Statistics
     Statistics m_stats;
+    struct RecordingJob;
+    xr_map<shared_str, xr_unique_ptr<RecordingJob>> m_recordingJobs;
+    u32 m_nextRecordingTrace = 0;
 
     // PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
     //  COMPILATION PHASES
@@ -253,7 +265,7 @@ private:
     //  HELPER METHODS
     // PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 
-    void ExecutePass(PassNode* pass, nvrhi::ICommandList* cmdList);
+    void ExecutePass(PassNode* pass, nvrhi::ICommandList* cmdList, fg::RenderContext* context = nullptr);
 
     ResourceNode* GetResourceNode(VirtualResourceHandle handle);
     const ResourceNode* GetResourceNode(VirtualResourceHandle handle) const;

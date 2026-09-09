@@ -1,6 +1,8 @@
 #include "stdafx.h"
 #include "LocalShadowPassSetup.h"
 #include "SkinningPassSetup.h"
+#include "PassCommon.h"
+#include "Layers/xrRender/Decals/OverlayManager.h"
 #include "Layers/xrRender/ClusteredLightManager.h"
 #include "Layers/xrRender/light.h"
 #include "Layers/xrRender/FrameGraph/FrameGraph.h"
@@ -154,6 +156,22 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
             data.texture = pb.createTexture("rt_LocalShadow", desc);
             data.device = device; data.geometry = geometry; data.materials = materials; data.state = &state;
             data.collector = collector; data.skinning = &skinning; data.overlays = overlays; data.details = details;
+            if (!state.matrices.empty()) builder.SetPassParallelRecording(handle,
+                [&data](RenderContext& context, const framegraph::FrameGraph&) {
+                    if (!data.geometry || !data.geometry->IsMegaDataUploaded()) return;
+                    data.materials->FinalizePendingMaterials(&context);
+                    bindless::MaterialBuffer::Instance().Upload(&context);
+                    GetOrCreateDrawIndexBuffer("SunShadow", context.GetCommandList()->getDevice());
+                    if (data.overlays) data.overlays->UploadSplats(context.GetCommandList());
+                    if (!data.skinning->initialized) return;
+                    const auto& state = *data.state;
+                    for (u32 face = 0; face < state.matrices.size(); ++face) {
+                        if (!state.visibleFaces[face]) continue;
+                        const auto* light = ClusteredLightManager::Instance().GetLightSources()[state.owners[face]];
+                        const Fvector4 sphere{light->position.x, light->position.y, light->position.z, light->range};
+                        PrepareSkinnedShadowBones(&context, data.geometry, data.collector, state.frusta[face], &sphere);
+                    }
+                });
         },
         [](const PassData& data, const framegraph::FrameGraph& graph, RenderContext* context) {
             auto& state = *data.state;
@@ -190,8 +208,10 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
             u32 worldCount = 0, skinnedCount = 0, detailCount = 0, renderedFaces = 0, staticUpdates = 0;
             u32 treeCount = 0;
             if (canRender) {
-                data.materials->FinalizePendingMaterials(context);
-                bindless::MaterialBuffer::Instance().Upload(context);
+                if (!context->IsParallelRecording()) {
+                    data.materials->FinalizePendingMaterials(context);
+                    bindless::MaterialBuffer::Instance().Upload(context);
+                }
                 if (state.outputTexture != texture) {
                     state.outputFramebuffers.clear();
                     state.outputTexture = texture;

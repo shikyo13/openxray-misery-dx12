@@ -48,6 +48,8 @@ public:
 
     void ExecuteCommandList(nvrhi::ICommandList* commandList) override;
     void ExecuteCommandLists(nvrhi::ICommandList* const* commandLists, u32 count) override;
+    bool SupportsParallelRecording() const override { return true; }
+    void AppendGraphicsRecording(nvrhi::ICommandList* const* lists, u32 count) override;
 
     // ═══════ Buffer Upload ═══════
     void UploadBufferData(nvrhi::IBuffer* buffer, const void* data, size_t size) override;
@@ -111,6 +113,9 @@ private:
     // NVRHI wrapper
     nvrhi::DeviceHandle m_nvrhiDevice;
     nvrhi::CommandListHandle m_commandList;  // Per-frame command list for rendering
+    xr_vector<nvrhi::CommandListHandle> m_graphicsSegments;
+    xr_vector<nvrhi::CommandListHandle> m_recordedFrameLists;
+    u32 m_graphicsSegmentIndex = 0;
     nvrhi::CommandListHandle m_computeCommandList;  // Async compute command list
     nvrhi::CommandListHandle m_uploadCommandList;  // Persistent upload command list (out-of-frame)
     nvrhi::TextureHandle m_backBuffers[BACK_BUFFER_COUNT];

@@ -317,6 +317,8 @@ public:
     // ═══════════════════════════════════════════════════════
 
     bool IsInRenderPass() const { return m_inRenderPass; }
+    bool IsParallelRecording() const { return m_parallelRecording; }
+    void SetParallelRecording(bool enabled) { m_parallelRecording = enabled; }
 
     // ═══════════════════════════════════════════════════════
     //  INTERNAL
@@ -338,6 +340,7 @@ private:
 
     // State tracking
     bool m_inRenderPass = false;
+    bool m_parallelRecording = false;
     RenderPassDesc m_currentRenderPass;
     nvrhi::FramebufferHandle m_currentFramebuffer;
     nvrhi::GraphicsState m_currentState;  // Track current graphics state

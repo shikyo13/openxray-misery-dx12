@@ -2437,6 +2437,14 @@ void GPUCullingManager::BeginSkinnedFrame(bool trackMotionHistory)
     }
 }
 
+u32 GPUCullingManager::GetPreparedSkeletonOffset(CKinematics* skeleton) const
+{
+    if (!m_boneBufferInitialized || !skeleton || !skeleton->LL_BoneCount()) return 0;
+    R_ASSERT2(skeleton->fg_bone_upload_frame == m_boneUploadFrameId,
+        "Parallel shadow recording requires skeleton uploads in the preceding graphics batch");
+    return skeleton->fg_bone_upload_offset;
+}
+
 u32 GPUCullingManager::GetOrUploadSkeleton(nvrhi::ICommandList* cmdList, CKinematics* skeleton)
 {
     if (!m_boneBufferInitialized || !skeleton || !cmdList)

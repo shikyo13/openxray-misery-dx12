@@ -79,6 +79,7 @@ void GPUProfiler::ReleaseTimerQuery(nvrhi::TimerQueryHandle query)
 
 void GPUProfiler::BeginPass(nvrhi::ICommandList* cmdList, const char* name, bool isAsync)
 {
+    std::lock_guard<std::mutex> recordingLock(m_recordingMutex);
     if (!m_enabled || !m_device || !cmdList || !name)
         return;
 
@@ -97,6 +98,7 @@ void GPUProfiler::BeginPass(nvrhi::ICommandList* cmdList, const char* name, bool
 
 void GPUProfiler::EndPass(nvrhi::ICommandList* cmdList, const char* name)
 {
+    std::lock_guard<std::mutex> recordingLock(m_recordingMutex);
     if (!m_enabled || !m_device || !cmdList || !name)
         return;
 

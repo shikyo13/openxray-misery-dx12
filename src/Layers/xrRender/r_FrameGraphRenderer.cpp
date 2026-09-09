@@ -570,10 +570,20 @@ void FrameGraphRenderer::Render() {
     passes::FillDynamicTransforms(dynamicTransformsData);
     cmdList->writeBuffer(dynamicTransformsCB, &dynamicTransformsData, sizeof(dynamicTransformsData));
 
+    std::function<void(fg::RenderContext&)> initializeRecording;
+    if (ps_fg_render_mode == FG_RENDER_DX12 && strstr(Core.Params, "-fg_parallel_record")) {
+        initializeRecording = [&](fg::RenderContext& context) {
+            auto* command = context.GetCommandList();
+            // Volatile constant addresses are local to each recording instance.
+            command->writeBuffer(staticGlobalsCB, &staticGlobalsData, sizeof(staticGlobalsData));
+            command->writeBuffer(dynamicTransformsCB, &dynamicTransformsData, sizeof(dynamicTransformsData));
+        };
+    }
+
     {
         ZoneScopedN("FG::Execute");
         const auto cpuBegin = std::chrono::high_resolution_clock::now();
-        m_framegraph->Execute();
+        m_framegraph->Execute(initializeRecording);
         traceCpuStage("Execute", cpuBegin);
     }
     if (cpuTrace && m_graphicsTrace) {

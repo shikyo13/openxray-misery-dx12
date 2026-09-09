@@ -190,6 +190,8 @@ void D3D12Backend::Shutdown() {
     m_bindlessLayout = nullptr;
     for (auto& bb : m_backBuffers)
         bb = nullptr;
+    m_recordedFrameLists.clear();
+    m_graphicsSegments.clear();
     m_commandList = nullptr;
     m_computeCommandList = nullptr;
     m_uploadCommandList = nullptr;
@@ -605,6 +607,11 @@ void D3D12Backend::BeginFrame() {
         m_gcTask = nullptr;
     }
 
+    if (m_graphicsSegments.empty()) m_graphicsSegments.push_back(m_commandList);
+    m_graphicsSegmentIndex = 0;
+    m_recordedFrameLists.clear();
+    m_commandList = m_graphicsSegments.front();
+
     m_currentBackBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
 
     {
@@ -627,7 +634,15 @@ void D3D12Backend::EndFrame() {
     // NVRHI handles fence signaling internally
     {
         ZoneScopedN("D3D12::ExecuteCommandList");
-        m_lastGraphicsInstanceID = m_nvrhiDevice->executeCommandList(m_commandList);
+        if (m_recordedFrameLists.empty()) {
+            m_lastGraphicsInstanceID = m_nvrhiDevice->executeCommandList(m_commandList);
+        } else {
+            m_recordedFrameLists.push_back(m_commandList);
+            xr_vector<nvrhi::ICommandList*> ordered;
+            ordered.reserve(m_recordedFrameLists.size());
+            for (const auto& list : m_recordedFrameLists) ordered.push_back(list.Get());
+            m_lastGraphicsInstanceID = m_nvrhiDevice->executeCommandLists(ordered.data(), ordered.size());
+        }
     }
 
     // ═══════════════════════════════════════════════════════
@@ -714,9 +729,29 @@ void D3D12Backend::UploadBufferData(nvrhi::IBuffer* buffer, const void* data, si
 }
 
 nvrhi::ICommandList* D3D12Backend::CreateCommandList() {
-    // TODO: Implement when parallel command list recording is needed
-    // The caller would need to manage the returned pointer's lifetime via RefCountPtr
-    return nullptr;
+    if (!m_nvrhiDevice) return nullptr;
+    nvrhi::CommandListParameters params;
+    params.enableImmediateExecution = false;
+    return m_nvrhiDevice->createCommandList(params).Detach();
+}
+
+void D3D12Backend::AppendGraphicsRecording(nvrhi::ICommandList* const* lists, u32 count) {
+    R_ASSERT(m_inFrame && lists && count);
+    m_commandList->close();
+    m_recordedFrameLists.push_back(m_commandList);
+    for (u32 i = 0; i < count; ++i) {
+        R_ASSERT(lists[i]);
+        m_recordedFrameLists.push_back(lists[i]);
+    }
+    ++m_graphicsSegmentIndex;
+    if (m_graphicsSegmentIndex == m_graphicsSegments.size()) {
+        nvrhi::CommandListHandle tail;
+        tail.Attach(CreateCommandList());
+        R_ASSERT2(tail, "Graphics recording tail allocation failed");
+        m_graphicsSegments.push_back(tail);
+    }
+    m_commandList = m_graphicsSegments[m_graphicsSegmentIndex];
+    m_commandList->open();
 }
 
 void D3D12Backend::BeginDebugEvent(pcstr name) {

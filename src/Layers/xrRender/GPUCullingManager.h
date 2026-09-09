@@ -450,6 +450,7 @@ public:
     // Get bone offset for a skeleton, uploading if not already done this frame
     // Returns offset (in bone count) into global buffer
     u32 GetOrUploadSkeleton(nvrhi::ICommandList* cmdList, CKinematics* skeleton);
+    u32 GetPreparedSkeletonOffset(CKinematics* skeleton) const;
 
     // Get the global bone buffer for shader binding
     nvrhi::IBuffer* GetGlobalBoneBuffer() const { return m_globalBoneBuffer.Get(); }

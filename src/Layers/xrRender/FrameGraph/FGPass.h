@@ -124,6 +124,8 @@ struct PassNode {
 
     // Execution
     IPassCallback* executeCallback = nullptr;
+    IPassCallback* prepareRecording = nullptr;
+    bool parallelRecording = false;
 
     // Compilation state
     bool culled = false;                 // Removed during optimization
@@ -156,6 +158,8 @@ struct PassNode {
         dependsOn.clear();
         dependents.clear();
         executeCallback = nullptr;
+        prepareRecording = nullptr;
+        parallelRecording = false;
         culled = false;
         executionOrder = INVALID_INDEX;
         depth = 0;

@@ -4,6 +4,7 @@
 #pragma once
 
 #include <nvrhi/nvrhi.h>
+#include <mutex>
 #include "Common/Common.hpp"
 #include "Layers/xrRender/RenderContext/RenderDevice.h"
 
@@ -174,6 +175,8 @@ public:
     void ResetStats();
 
 private:
+    // Only cache lookup/mutation is serialized; command recording stays outside this lock.
+    mutable std::recursive_mutex m_mutex;
     PassResourceCache() = default;
     ~PassResourceCache() = default;
 

@@ -205,6 +205,7 @@ ShaderLoader::ShaderResult ShaderLoader::LoadVertexShader(
     const char* name,
     const char* entryPoint)
 {
+    std::lock_guard<std::recursive_mutex> recordingLock(m_recordingMutex);
     ShaderResult result;
 
     // ═══════════════════════════════════════════════════
@@ -340,6 +341,7 @@ ShaderLoader::ShaderResult ShaderLoader::LoadPixelShader(
     const char* name,
     const char* entryPoint)
 {
+    std::lock_guard<std::recursive_mutex> recordingLock(m_recordingMutex);
     ShaderResult result;
 
     // ═══════════════════════════════════════════════════
@@ -479,6 +481,7 @@ ShaderLoader::ShaderResult ShaderLoader::LoadComputeShader(
     const char* name,
     const char* entryPoint)
 {
+    std::lock_guard<std::recursive_mutex> recordingLock(m_recordingMutex);
     ShaderResult result;
 
     // ═══════════════════════════════════════════════════
@@ -1114,6 +1117,7 @@ ExtractedReflection* ShaderLoader::GetCachedReflection(
     const char* shaderName,
     const char* extension)
 {
+    std::lock_guard<std::recursive_mutex> recordingLock(m_recordingMutex);
     xr_string key = xr_string(shaderName) + extension;
     auto it = m_reflectionCache.find(key);
 

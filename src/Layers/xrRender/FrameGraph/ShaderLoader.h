@@ -1,5 +1,6 @@
 // xrRender/FrameGraph/ShaderLoader.h
 #pragma once
+#include <mutex>
 
 #include "Layers/xrRender/RenderContext/RenderDevice.h"
 #include "Layers/xrRender/RenderContext/ResourceHandle.h"
@@ -199,6 +200,7 @@ private:
         xray::render::SlangCompiler::Stage stage
     );
 
+    std::recursive_mutex m_recordingMutex;
     xray::render::SlangCompiler* m_slangCompiler;
     xray::render::SlangCompiler::Target m_target = xray::render::SlangCompiler::Target::DXIL;
     ShaderCache m_cache;

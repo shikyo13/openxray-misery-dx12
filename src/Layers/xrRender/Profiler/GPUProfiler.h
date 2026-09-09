@@ -1,4 +1,5 @@
 #pragma once
+#include <mutex>
 
 #include "xrCore/Profiler/ProfilerTypes.h"
 #include <nvrhi/nvrhi.h>
@@ -54,6 +55,7 @@ private:
     void ReleaseTimerQuery(nvrhi::TimerQueryHandle query);
 
 private:
+    std::mutex m_recordingMutex;
     nvrhi::IDevice* m_device = nullptr;
 
     // Timer query pool

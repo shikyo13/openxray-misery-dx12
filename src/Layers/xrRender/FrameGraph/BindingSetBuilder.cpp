@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "BindingSetBuilder.h"
+#include <mutex>
 #include "Layers/xrRender/ClusteredLightManager.h"
 #include "Layers/xrRender/r_FrameGraphRenderer.h"
 #include "Layers/xrRender/RenderContext/RenderDevice.h"
@@ -33,6 +34,7 @@ static void DeduplicateBySlotAndClass(xr_vector<BindingSetBuilder::ReflectedReso
 
 namespace {
 
+std::mutex s_reflectionMutex;
 using ReflectionKey = std::pair<const void*, const void*>;
 xr_map<ReflectionKey, BindingSetBuilder::ReflectedLists> s_reflectedListsCache;
 
@@ -71,6 +73,8 @@ void Collect(BindingSetBuilder::ReflectedLists& lists,
 const BindingSetBuilder::ReflectedLists& GetOrBuildReflectedLists(
     const ExtractedReflection* a, const ExtractedReflection* b, nvrhi::IDevice* device)
 {
+    std::lock_guard<std::mutex> lock(s_reflectionMutex);
+    // Invalidation/settings changes occur after recording jobs join.
     // Reflected sampler bindings must follow live texture-filtering settings.
     static int anisotropy = -1;
     if (anisotropy != fg::ps_r__tf_Anisotropic) {
@@ -107,6 +111,7 @@ const BindingSetBuilder::ReflectedLists& GetOrBuildReflectedLists(
 
 void BindingSetBuilder::InvalidateReflectionCache()
 {
+    std::lock_guard<std::mutex> lock(s_reflectionMutex);
     s_reflectedListsCache.clear();
 }
 

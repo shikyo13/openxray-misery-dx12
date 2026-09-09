@@ -84,6 +84,9 @@ struct SkinningPassState {
 
 void InitializeSkinningResources(fg::RenderDevice* device, const nvrhi::FramebufferInfoEx& fbInfo, SkinningPassState& state);
 
+void PrepareSkinnedShadowBones(RenderContext* context, GPUCullingManager* gpuCulling,
+    const GeometryCollector* geometry, const CFrustum& frustum, const Fvector4* lightSphere = nullptr);
+
 u32 DrawSkinnedSunShadows(RenderContext* context, RenderDevice* device, GPUCullingManager* gpuCulling,
     const GeometryCollector* geometry, decals::OverlayManager* overlays, const Fmatrix& viewProjection,
     const CFrustum& frustum, nvrhi::IFramebuffer* framebuffer, SkinningPassState& state,

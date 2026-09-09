@@ -53,6 +53,7 @@ nvrhi::SamplerHandle PassResourceCache::GetOrCreateSampler(
     const nvrhi::SamplerDesc& desc,
     nvrhi::IDevice* device)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     u64 key = HashString(passName);
 
     auto it = m_samplers.find(key);
@@ -71,6 +72,7 @@ nvrhi::SamplerHandle PassResourceCache::GetOrCreateSampler(
 }
 
 nvrhi::ISampler* PassResourceCache::GetAnisoWrapSampler(nvrhi::IDevice* device) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     const float anisotropy = float(clampr(fg::ps_r__tf_Anisotropic, 1, 16));
     if (!m_commonAnisoWrap || m_commonAnisoWrap->getDesc().maxAnisotropy != anisotropy) {
         nvrhi::SamplerDesc desc;
@@ -83,6 +85,7 @@ nvrhi::ISampler* PassResourceCache::GetAnisoWrapSampler(nvrhi::IDevice* device) 
 }
 
 nvrhi::ISampler* PassResourceCache::GetLinearWrapSampler(nvrhi::IDevice* device) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_commonLinearWrap) {
         nvrhi::SamplerDesc desc;
         desc.setAllAddressModes(nvrhi::SamplerAddressMode::Repeat);
@@ -93,6 +96,7 @@ nvrhi::ISampler* PassResourceCache::GetLinearWrapSampler(nvrhi::IDevice* device)
 }
 
 nvrhi::ISampler* PassResourceCache::GetLinearClampSampler(nvrhi::IDevice* device) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_commonLinearClamp) {
         nvrhi::SamplerDesc desc;
         desc.setAllAddressModes(nvrhi::SamplerAddressMode::ClampToEdge);
@@ -103,6 +107,7 @@ nvrhi::ISampler* PassResourceCache::GetLinearClampSampler(nvrhi::IDevice* device
 }
 
 nvrhi::ISampler* PassResourceCache::GetPointClampSampler(nvrhi::IDevice* device) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_commonPointClamp) {
         nvrhi::SamplerDesc desc;
         desc.setAllAddressModes(nvrhi::SamplerAddressMode::ClampToEdge);
@@ -113,6 +118,7 @@ nvrhi::ISampler* PassResourceCache::GetPointClampSampler(nvrhi::IDevice* device)
 }
 
 nvrhi::ISampler* PassResourceCache::GetShadowCmpSampler(nvrhi::IDevice* device) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_commonShadowCmp) {
         nvrhi::SamplerDesc desc;
         desc.reductionType = nvrhi::SamplerReductionType::Comparison;
@@ -129,6 +135,7 @@ nvrhi::ISampler* PassResourceCache::GetShadowCmpSampler(nvrhi::IDevice* device) 
 }
 
 nvrhi::ITexture* PassResourceCache::GetDummyShadowMap(nvrhi::IDevice* device) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_dummyShadowMap) {
         nvrhi::TextureDesc desc;
         desc.width = 1;
@@ -145,6 +152,7 @@ nvrhi::ITexture* PassResourceCache::GetDummyShadowMap(nvrhi::IDevice* device) {
 }
 
 nvrhi::ITexture* PassResourceCache::GetDummyShadowMap2D(nvrhi::IDevice* device) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_dummyShadowMap2D) {
         nvrhi::TextureDesc desc;
         desc.width = 1;
@@ -161,6 +169,7 @@ nvrhi::ITexture* PassResourceCache::GetDummyShadowMap2D(nvrhi::IDevice* device) 
 
 nvrhi::ITexture* PassResourceCache::GetAuthoredMaterialLUT(nvrhi::IDevice* device)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (m_authoredMaterialLUT) return m_authoredMaterialLUT;
     // Same four material slices and byte quantization as r4_rendertarget_build_textures.
     constexpr u32 TEX_material_LdotN = 128, TEX_material_LdotH = 256, TEX_material_Count = 4;
@@ -240,6 +249,7 @@ nvrhi::ITexture* PassResourceCache::GetAuthoredMaterialLUT(nvrhi::IDevice* devic
 
 nvrhi::ISampler* PassResourceCache::GetSamplerByName(const char* smpName, nvrhi::IDevice* device)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (strstr(smpName, "smp_nofilter") || strstr(smpName, "smp_smap") || strstr(smpName, "smp_jitter"))
         return GetPointClampSampler(device);
     if (strstr(smpName, "smp_rtlinear"))
@@ -260,6 +270,7 @@ nvrhi::BindingLayoutHandle PassResourceCache::GetOrCreateBindingLayout(
     const nvrhi::BindingLayoutDesc& desc,
     nvrhi::IDevice* device)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     u64 key = HashString(passName);
 
     auto it = m_bindingLayouts.find(key);
@@ -282,6 +293,7 @@ nvrhi::BindingLayoutHandle PassResourceCache::GetOrCreateBindingLayoutFromReflec
     const ExtractedReflection& csReflection,
     nvrhi::IDevice* device)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     auto desc = BindingLayoutBuilder::Build(csReflection, nvrhi::ShaderType::Compute);
     return GetOrCreateBindingLayout(passName, desc, device);
 }
@@ -292,6 +304,7 @@ nvrhi::BindingLayoutHandle PassResourceCache::GetOrCreateBindingLayoutFromReflec
     const ExtractedReflection& psReflection,
     nvrhi::IDevice* device)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     auto desc = BindingLayoutBuilder::Build(vsReflection, psReflection);
     return GetOrCreateBindingLayout(passName, desc, device);
 }
@@ -338,6 +351,7 @@ nvrhi::GraphicsPipelineHandle PassResourceCache::GetOrCreatePipeline(
     const nvrhi::FramebufferInfo& fbInfo,
     nvrhi::IDevice* device)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     u64 key = HashGraphicsPipelineKey(passName, desc, fbInfo);
 
     auto it = m_graphicsPipelines.find(key);
@@ -363,6 +377,7 @@ nvrhi::ComputePipelineHandle PassResourceCache::GetOrCreateComputePipeline(
     const nvrhi::ComputePipelineDesc& desc,
     nvrhi::IDevice* device)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     u64 key = HashString(passName);
 
     auto it = m_computePipelines.find(key);
@@ -389,6 +404,7 @@ nvrhi::FramebufferHandle PassResourceCache::GetOrCreateFramebuffer(
     const nvrhi::FramebufferDesc& desc,
     nvrhi::IDevice* device)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     // Key combines pass name with all render target pointers
     // This ensures we reuse framebuffers when the same RTs are bound
     u64 key = HashString(passName);
@@ -428,6 +444,7 @@ nvrhi::InputLayoutHandle PassResourceCache::GetOrCreateInputLayout(
     nvrhi::IShader* vertexShader,
     nvrhi::IDevice* device)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     // Key combines pass name with vertex shader pointer
     u64 key = HashCombine(HashString(passName), HashPointer(vertexShader));
 
@@ -456,6 +473,7 @@ nvrhi::BufferHandle PassResourceCache::GetOrCreateStaticBuffer(
     const nvrhi::BufferDesc& desc,
     nvrhi::IDevice* device)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     // Key combines pass name with buffer name
     u64 key = HashCombine(HashString(passName), HashString(bufferName));
 
@@ -475,6 +493,7 @@ nvrhi::BufferHandle PassResourceCache::GetOrCreateStaticBuffer(
 }
 
 bool PassResourceCache::HasStaticBuffer(const char* passName, const char* bufferName) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     u64 key = HashCombine(HashString(passName), HashString(bufferName));
     return m_staticBuffers.find(key) != m_staticBuffers.end();
 }
@@ -483,6 +502,7 @@ nvrhi::IBuffer* PassResourceCache::GetOrCreateVolatileCB(
     const char* passName, const char* bufferName,
     u32 byteSize, fg::RenderDevice* device, u32 maxVersions)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     u64 key = HashCombine(HashString(passName), HashString(bufferName));
     auto it = m_volatileCBs.find(key);
     if (it != m_volatileCBs.end()) {
@@ -534,6 +554,7 @@ nvrhi::BindingSetHandle PassResourceCache::GetOrCreateBindingSet(
     nvrhi::IBindingLayout* layout,
     nvrhi::IDevice* device)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     u64 key = HashBindingSetDesc(desc, layout);
     auto it = m_bindingSets.find(key);
     if (it != m_bindingSets.end()) {
@@ -553,6 +574,7 @@ nvrhi::BindingSetHandle PassResourceCache::GetOrCreateBindingSet(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 void PassResourceCache::Clear() {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_samplers.clear();
     m_bindingLayouts.clear();
     m_graphicsPipelines.clear();
@@ -575,12 +597,14 @@ void PassResourceCache::Clear() {
 }
 
 void PassResourceCache::ClearFramebufferDependent() {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_framebuffers.clear();
     m_graphicsPipelines.clear();
     m_bindingSets.clear();
 }
 
 void PassResourceCache::ReleaseTextureReferences(nvrhi::ITexture* texture) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     // Command lists retain their own NVRHI references until GPU completion.
     // Remove only cached objects owning this retired texture; keep pipelines.
     for (auto it = m_bindingSets.begin(); it != m_bindingSets.end();) {
@@ -599,6 +623,7 @@ void PassResourceCache::ReleaseTextureReferences(nvrhi::ITexture* texture) {
 }
 
 void PassResourceCache::ResetStats() {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_stats = Stats{};
 }
 

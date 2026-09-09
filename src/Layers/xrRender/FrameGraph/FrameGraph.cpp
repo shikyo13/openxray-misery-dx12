@@ -5,8 +5,17 @@
 #include "../Profiler/GPUProfiler.h"
 #include "xrEngine/IRenderBackend.h"
 #include <chrono>
+#include <thread>
+#include "xrCore/Threading/TaskManager.hpp"
 
 namespace xray::render::framegraph {
+
+struct FrameGraph::RecordingJob {
+    nvrhi::CommandListHandle commandList;
+    xr_unique_ptr<fg::RenderContext> context;
+    std::chrono::steady_clock::time_point begin, end;
+    u64 thread = 0;
+};
 
 // PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 //  CONSTRUCTOR / DESTRUCTOR
@@ -236,29 +245,30 @@ void FrameGraph::Compile() {
 //  EXECUTE PHASE (STUB FOR NOW)
 // PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 
-void FrameGraph::ExecutePass(PassNode* pass, nvrhi::ICommandList* cmdList) {
+void FrameGraph::ExecutePass(PassNode* pass, nvrhi::ICommandList* cmdList, fg::RenderContext* context) {
     static const bool traceCpu = strstr(Core.Params, "-cpu_trace") != nullptr;
     const auto cpuBegin = traceCpu ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     cmdList->beginMarker(pass->name.c_str());
 
     xray::profiler::CPUZoneScope _zonePass(
-        xray::profiler::CPUProfiler::Instance().RegisterDynamicZone(pass->name.c_str()));
+        xray::profiler::CPUProfiler::Instance().IsEnabled() ?
+        xray::profiler::CPUProfiler::Instance().RegisterDynamicZone(pass->name.c_str()) : nullptr);
 
     if (m_gpuProfiler)
         m_gpuProfiler->BeginPass(cmdList, pass->name.c_str(), pass->isAsync);
 
-    (*pass->executeCallback)(*m_context, *this);
+    (*pass->executeCallback)(context ? *context : *m_context, *this);
 
     if (m_gpuProfiler)
         m_gpuProfiler->EndPass(cmdList, pass->name.c_str());
 
     cmdList->endMarker();
     if (traceCpu)
-        m_stats.passTimings[pass->name] = std::chrono::duration<float, std::milli>(
+        pass->lastExecutionTimeMs = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - cpuBegin).count();
 }
 
-void FrameGraph::Execute() {
+void FrameGraph::Execute(const std::function<void(fg::RenderContext&)>& initializeRecording) {
     ZoneScoped;
 
     VERIFY(m_compiled && "Must compile before execute");
@@ -302,8 +312,26 @@ void FrameGraph::Execute() {
     }
 
     bool syncInserted = false;
+    auto* recordingBackend = m_renderDevice->GetBackend();
+    const bool parallel = initializeRecording && recordingBackend->SupportsParallelRecording() &&
+        !hasAsyncCompute && TaskScheduler && TaskScheduler->GetWorkersCount() > 1 &&
+        !xray::profiler::CPUProfiler::Instance().IsEnabled();
+    static bool reportedRecordingPlan = false;
+    if (initializeRecording && !reportedRecordingPlan && Device.dwTimeGlobal >= 20000) {
+        reportedRecordingPlan = true;
+        Msg("* [ParallelPlan] eligible=%u backend=%u async=%u workers=%u cpu_profiler=%u",
+            parallel, recordingBackend->SupportsParallelRecording(), hasAsyncCompute,
+            TaskScheduler ? u32(TaskScheduler->GetWorkersCount()) : 0,
+            xray::profiler::CPUProfiler::Instance().IsEnabled());
+        for (size_t i = 0; i < m_sortedPasses.size(); ++i) {
+            const auto* pass = m_sortedPasses[i];
+            Msg("* [ParallelPlan] order=%u parallel=%u culled=%u pass=%s",
+                u32(i), pass->parallelRecording, pass->culled, pass->name.c_str());
+        }
+    }
 
-    for (PassNode* pass : m_sortedPasses) {
+    for (size_t passIndex = 0; passIndex < m_sortedPasses.size(); ++passIndex) {
+        PassNode* pass = m_sortedPasses[passIndex];
         if (pass->culled || !pass->executeCallback)
             continue;
 
@@ -324,8 +352,69 @@ void FrameGraph::Execute() {
             }
         }
 
+        if (parallel && pass->parallelRecording) {
+            size_t end = passIndex;
+            while (end < m_sortedPasses.size()) {
+                auto* candidate = m_sortedPasses[end];
+                if (!candidate->parallelRecording || candidate->culled || !candidate->executeCallback) break;
+                ++end;
+            }
+            if (end - passIndex >= 2) {
+                // Shared uploads precede every worker list in GPU submission order.
+                for (size_t i = passIndex; i < end; ++i) {
+                    auto* candidate = m_sortedPasses[i];
+                    R_ASSERT(candidate->prepareRecording);
+                    (*candidate->prepareRecording)(*m_context, *this);
+                }
+                xr_vector<RecordingJob*> jobs;
+                xr_vector<Task*> tasks;
+                xr_vector<nvrhi::ICommandList*> ordered;
+                for (size_t i = passIndex; i < end; ++i) {
+                    auto* candidate = m_sortedPasses[i];
+                    auto& owner = m_recordingJobs[candidate->name];
+                    if (!owner) {
+                        owner = xr_make_unique<RecordingJob>();
+                        owner->commandList.Attach(recordingBackend->CreateCommandList());
+                        R_ASSERT2(owner->commandList, "Worker graphics command-list creation failed");
+                        owner->context = xr_make_unique<fg::RenderContext>(m_renderDevice, owner->commandList);
+                        owner->context->SetParallelRecording(true);
+                    }
+                    auto* job = owner.get();
+                    jobs.push_back(job);
+                    ordered.push_back(job->commandList.Get());
+                    tasks.push_back(&TaskScheduler->AddTask([this, candidate, job, &initializeRecording] {
+                        job->thread = u64(std::hash<std::thread::id>{}(std::this_thread::get_id()));
+                        job->begin = std::chrono::steady_clock::now();
+                        job->commandList->open();
+                        initializeRecording(*job->context);
+                        ExecutePass(candidate, job->commandList, job->context.get());
+                        job->commandList->close();
+                        job->end = std::chrono::steady_clock::now();
+                    }));
+                }
+                for (auto* task : tasks) TaskScheduler->Wait(*task);
+                recordingBackend->AppendGraphicsRecording(ordered.data(), u32(ordered.size()));
+                graphicsCmdList = recordingBackend->GetCommandList();
+                m_context->SetCommandList(graphicsCmdList);
+                initializeRecording(*m_context);
+                if (strstr(Core.Params, "-cpu_trace") && Device.dwTimeGlobal >= m_nextRecordingTrace) {
+                    m_nextRecordingTrace = Device.dwTimeGlobal + 1000;
+                    const auto overlap = std::min(jobs[0]->end, jobs[1]->end) - std::max(jobs[0]->begin, jobs[1]->begin);
+                    const double overlapMs = std::max(0.0, std::chrono::duration<double, std::milli>(overlap).count());
+                    Msg("* [ParallelRecord] frame=%u time=%u jobs=%u threads=%llu,%llu overlap_ms=%.3f",
+                        Device.dwFrame, Device.dwTimeGlobal, u32(jobs.size()), jobs[0]->thread, jobs[1]->thread, overlapMs);
+                }
+                passIndex = end - 1;
+                continue;
+            }
+        }
         ExecutePass(pass, graphicsCmdList);
     }
+
+    if (strstr(Core.Params, "-cpu_trace"))
+        for (const auto* pass : m_sortedPasses)
+            if (!pass->culled && pass->executeCallback)
+                m_stats.passTimings[pass->name] = pass->lastExecutionTimeMs;
 
     // ═══════════════════════════════════════════════════════
     //  TRANSITION IMPORTED BACKBUFFER TO PRESENT STATE
@@ -754,6 +843,17 @@ void FrameGraph::TopologicalSort() {
 
     u32 executionOrder = 0;
     while (!queue.empty()) {
+        // Keep ready, independently recordable passes adjacent without moving
+        // any pass ahead of its dependencies. Serial execution keeps its order.
+        if (strstr(Core.Params, "-fg_parallel_record") && !m_sortedPasses.empty() &&
+            m_sortedPasses.back()->parallelRecording) {
+            for (size_t i = queue.size(); i > 0; --i) {
+                if (queue[i - 1]->parallelRecording) {
+                    std::swap(queue[i - 1], queue.back());
+                    break;
+                }
+            }
+        }
         PassNode* current = queue.back();
         queue.pop_back();
 

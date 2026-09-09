@@ -109,6 +109,11 @@ bool RenderDevice::InitializeFromBackend(IRenderBackend* backend) {
         bool QueryVideoMemoryInfo(VideoMemoryInfo& out) const override { return m_ref->QueryVideoMemoryInfo(out); }
         nvrhi::IDevice* GetDevice() const override { return m_ref->GetDevice(); }
         nvrhi::ICommandList* GetCommandList() const override { return m_ref->GetCommandList(); }
+        nvrhi::ICommandList* CreateCommandList() override { return m_ref->CreateCommandList(); }
+        bool SupportsParallelRecording() const override { return m_ref->SupportsParallelRecording(); }
+        void AppendGraphicsRecording(nvrhi::ICommandList* const* lists, u32 count) override {
+            m_ref->AppendGraphicsRecording(lists, count);
+        }
         nvrhi::ITexture* GetBackBuffer() override { return m_ref->GetBackBuffer(); }
         void Present(bool vsync) override { m_ref->Present(vsync); }
         std::pair<u32, u32> GetBackBufferSize() const override { return m_ref->GetBackBufferSize(); }
