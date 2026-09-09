@@ -1,0 +1,82 @@
+-- Same-process ABBA / BAAB comparison. Normal MISERY callbacks stay active.
+local stage, next_time, case_index, finished = "init", 0, 1, false
+local cases = {
+    {"day_off_a", "outdoor", 0, 9},
+    {"day_on_a", "outdoor", 1, 9},
+    {"day_on_b", "outdoor", 1, 9},
+    {"day_off_b", "outdoor", 0, 9},
+    {"night_on_a", "night", 1, 23},
+    {"night_off_a", "night", 0, 23},
+    {"night_off_b", "night", 0, 23},
+    {"night_on_b", "night", 1, 23}
+}
+local function emit(message)
+    local row = string.format("%d|%s", time_global(), message):gsub("%s", "|")
+    assert(#row + #"comparison_event|" < 64, "comparison marker is too long")
+    get_console():execute("comparison_event|" .. row)
+    get_console():execute("flush")
+end
+local function step()
+    if not db.actor or time_global() < next_time then return end
+    local console, item = get_console(), cases[case_index]
+    if stage == "init" then
+        console:execute("main_menu off")
+        device():pause(false)
+        emit("loaded")
+        stage, next_time = "place", time_global() + 12000
+    elseif stage == "place" then
+        level.set_time_factor(1)
+        console:execute("hud_draw off")
+        console:execute("hud_weapon off")
+        local torch = db.actor:object("device_torch")
+        if torch then torch:enable_torch(false) end
+        local minutes = (item[4]*60-level.get_time_hours()*60-level.get_time_minutes()+1440)%1440
+        level.change_game_time(0, math.floor(minutes/60), minutes%60)
+        level.set_weather("af3_day_clear", true)
+        db.actor:set_actor_position(vector():set(164.53406, -5.55935, 152.64307))
+        stage, next_time = "camera", time_global() + 6000
+    elseif stage == "camera" then
+        console:execute("demo_play graphics_comparison_" .. item[2])
+        stage, next_time = "mode", time_global() + 10000
+    elseif stage == "mode" then
+        console:execute("fg_parallel_record " .. item[3])
+        emit("mode\t" .. item[1] .. "\t" .. item[3])
+        stage, next_time = "begin", time_global() + 3000
+    elseif stage == "begin" then
+        emit("begin\t" .. item[1])
+        emit(string.format("clock\t%d:%02d\taf3_day_clear", level.get_time_hours(),level.get_time_minutes()))
+        local camera, direction = device().cam_pos, device().cam_dir
+        emit(string.format("pos\t%.5f,%.5f,%.5f",camera.x,camera.y,camera.z))
+        emit(string.format("dir\t%.5f,%.5f,%.5f",direction.x,direction.y,direction.z))
+        emit(string.format("lens\t%.5f\t%.5f",device().fov,device().aspect_ratio))
+        stage, next_time = "end", time_global() + 15000
+    elseif stage == "end" then
+        emit("end\t" .. item[1])
+        console:execute("screenshot comparison_" .. item[1])
+        stage, next_time = "advance", time_global() + 1500
+    elseif stage == "advance" then
+        case_index = case_index + 1
+        if case_index > #cases then
+            emit("complete")
+            finished = true
+            console:execute("quit")
+        else
+            stage = cases[case_index][2] == item[2] and "mode" or "place"
+        end
+    end
+end
+function update()
+    if finished then return end
+    local ok, err = pcall(step)
+    if not ok then
+        emit(("error\t" .. stage .. "\t" .. tostring(err)):sub(1,35))
+        finished = true
+        get_console():execute("quit")
+    end
+end
+function main()
+    while not finished do
+        update()
+        coroutine.yield()
+    end
+end

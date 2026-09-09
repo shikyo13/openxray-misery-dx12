@@ -594,6 +594,7 @@ private:
     xr_unique_ptr<xray::profiler::GPUProfiler> m_gpuProfiler;
     IWriter* m_graphicsTrace = nullptr;
     u64 m_graphicsTraceTicks = 0;
+    u32 m_nextWorkloadTrace = 0;
     xr_unique_ptr<xray::profiler::StatsOverlay> m_statsOverlay;
 
     // ═══════════════════════════════════════════════════

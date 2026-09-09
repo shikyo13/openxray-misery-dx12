@@ -571,7 +571,7 @@ void FrameGraphRenderer::Render() {
     cmdList->writeBuffer(dynamicTransformsCB, &dynamicTransformsData, sizeof(dynamicTransformsData));
 
     std::function<void(fg::RenderContext&)> initializeRecording;
-    if (ps_fg_render_mode == FG_RENDER_DX12 && strstr(Core.Params, "-fg_parallel_record")) {
+    if (ps_fg_render_mode == FG_RENDER_DX12 && ps_fg_parallel_record) {
         initializeRecording = [&](fg::RenderContext& context) {
             auto* command = context.GetCommandList();
             // Volatile constant addresses are local to each recording instance.
@@ -590,6 +590,20 @@ void FrameGraphRenderer::Render() {
         for (const auto& timing : m_framegraph->GetStatistics().passTimings)
             m_graphicsTrace->w_printf("cpu_pass,%u,%u,%u,%u,%s,%.6f\n", Device.dwFrame,
                 Device.dwTimeGlobal, ps_r_aa, ps_r_ssao, timing.first.c_str(), timing.second);
+        if (Device.dwTimeGlobal >= m_nextWorkloadTrace) {
+            m_nextWorkloadTrace = Device.dwTimeGlobal + 1000;
+            size_t localFaces = 0, visibleFaces = 0;
+            if (m_localShadowMap.is_valid()) {
+                const auto& local = m_blackboard->get<passes::LocalShadowPassState>();
+                localFaces = local.matrices.size();
+                visibleFaces = std::count(local.visibleFaces.begin(), local.visibleFaces.end(), true);
+            }
+            Msg("* [RenderWorkload] frame=%u time=%u parallel=%d static=%zu batches=%zu spatial=%zu offscreen=%zu lights=%u local_faces=%zu visible_faces=%zu sun=%d hud=%zu particles=%zu",
+                Device.dwFrame, Device.dwTimeGlobal, ps_fg_parallel_record, m_cachedStaticBatches.size(),
+                m_geometryCollector->GetBatches().size(), m_lstRenderables.size(), m_shadowCasterCandidates.size(),
+                fg::ClusteredLightManager::Instance().GetLightCount(), localFaces, visibleFaces,
+                m_sunShadowMap.is_valid() ? 1 : 0, m_hudBatches.size(), m_worldParticleBatches.size());
+        }
     }
 
     if (m_gpuCullingManager && psDeviceFlags.test(rsStatistic))
@@ -947,6 +961,17 @@ void FrameGraphRenderer::RenderStatsOverlay()
 
 void FrameGraphRenderer::SetupFrame() {
     const bool levelLoaded = g_pGamePersistent && g_pGameLevel;
+    using CpuClock = std::chrono::steady_clock;
+    const bool cpuTrace = m_graphicsTrace && strstr(Core.Params, "-cpu_trace");
+    auto cpuBegin = cpuTrace ? CpuClock::now() : CpuClock::time_point{};
+    auto traceStage = [&](pcstr name) {
+        if (!cpuTrace) return;
+        const auto end = CpuClock::now();
+        m_graphicsTrace->w_printf("cpu_stage,%u,%u,%u,%u,%s,%.6f\n", Device.dwFrame,
+            Device.dwTimeGlobal, ps_r_aa, ps_r_ssao, name,
+            std::chrono::duration<double, std::milli>(end - cpuBegin).count());
+        cpuBegin = CpuClock::now();
+    };
 
     if (m_gpuCullingManager) {
         {
@@ -965,6 +990,8 @@ void FrameGraphRenderer::SetupFrame() {
         ZoneScopedN("Readback::LightStats");
         fg::ClusteredLightManager::Instance().ProcessStatsReadback();
     }
+
+    traceStage("Readbacks");
 
     m_lstRenderables.clear();
     m_shadowCasterCandidates.clear();
@@ -1049,6 +1076,8 @@ void FrameGraphRenderer::SetupFrame() {
         }
     }
 
+    traceStage("SpatialQuery");
+
     {
         ZoneScopedN("SetupFrame::CollectorBegin");
         m_geometryCollector->BeginFrame();
@@ -1058,6 +1087,8 @@ void FrameGraphRenderer::SetupFrame() {
 
         fg::ClusteredLightManager::Instance().BeginFrame();
     }
+
+    traceStage("CollectorBegin");
 
     if (levelLoaded) {
         ZoneScopedN("SetupFrame::CollectVisibleGeometry");
@@ -2628,6 +2659,18 @@ void FrameGraphRenderer::CollectVisibleGeometry() {
     if (!g_pGamePersistent)
         return;
 
+    using CpuClock = std::chrono::steady_clock;
+    const bool cpuTrace = m_graphicsTrace && strstr(Core.Params, "-cpu_trace");
+    auto cpuBegin = cpuTrace ? CpuClock::now() : CpuClock::time_point{};
+    auto traceStage = [&](pcstr name) {
+        if (!cpuTrace) return;
+        const auto end = CpuClock::now();
+        m_graphicsTrace->w_printf("cpu_stage,%u,%u,%u,%u,%s,%.6f\n", Device.dwFrame,
+            Device.dwTimeGlobal, ps_r_aa, ps_r_ssao, name,
+            std::chrono::duration<double, std::milli>(end - cpuBegin).count());
+        cpuBegin = CpuClock::now();
+    };
+
     const auto& sectors = scene_info::GetSceneSectors();
     u32 submittedStatic = 0;
 
@@ -2683,6 +2726,8 @@ void FrameGraphRenderer::CollectVisibleGeometry() {
         }
     }
 
+    traceStage("StaticGeometry");
+
     // ═══════════════════════════════════════════════════════
     //  PROCESS DYNAMIC GEOMETRY
     // ═══════════════════════════════════════════════════════
@@ -2718,8 +2763,12 @@ void FrameGraphRenderer::CollectVisibleGeometry() {
         submittedDynamic++;
     }
 
+    traceStage("DynamicGeometry");
+
     if (!collectedLights.empty())
         fg::ClusteredLightManager::Instance().CollectLightsParallel(collectedLights);
+
+    traceStage("LightCollection");
 
     if (strstr(Core.Params, "-light_trace") && Device.dwFrame % 60 == 0)
         Msg("* [DynamicLightCollection] frame=%u collected=%zu skipped_baked=%u",
@@ -2732,6 +2781,7 @@ void FrameGraphRenderer::CollectVisibleGeometry() {
     if (g_pGameLevel && g_pGameLevel->pHUD) {
         g_pGameLevel->pHUD->Render_Last(0);  // context_id = 0 (not using legacy contexts)
     }
+    traceStage("HudCollection");
 }
 
 void FrameGraphRenderer::add_Visual(IRenderable* root, IRenderVisual* V, Fmatrix& xform) {

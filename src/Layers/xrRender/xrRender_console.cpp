@@ -300,6 +300,7 @@ u32 ps_fg_render_mode = FG_RENDER_VULKAN;
 #endif
 
 int ps_fg_hot_reload_shaders = 0;
+int ps_fg_parallel_record = 0;
 const xr_token fg_render_mode_token[] = {
     {"dx12", FG_RENDER_DX12},
     {"vulkan", FG_RENDER_VULKAN},
@@ -720,6 +721,16 @@ public:
 };
 #endif
 
+// Experimental recording remains a session choice, initialized by the launcher.
+// Do not let a diagnostic crossover silently change the next normal launch.
+class CCC_ParallelRecord : public CCC_Integer
+{
+public:
+    CCC_ParallelRecord(LPCSTR name, int* value, int minimum, int maximum)
+        : CCC_Integer(name, value, minimum, maximum) {}
+    void Save(IWriter*) override {}
+};
+
 //  Allow real-time fog config reload
 
 //-----------------------------------------------------------------------
@@ -1040,6 +1051,8 @@ void xrRender_initconsole()
     // FrameGraph render backend (requires restart)
     CMD3(CCC_Token, "fg_render_mode", &ps_fg_render_mode, fg_render_mode_token);
     CMD4(CCC_Integer, "fg_hot_reload_shaders", &ps_fg_hot_reload_shaders, 0, 1);
+    ps_fg_parallel_record = strstr(Core.Params, "-fg_parallel_record") ? 1 : 0;
+    CMD4(CCC_ParallelRecord, "fg_parallel_record", &ps_fg_parallel_record, 0, 1);
 
 #ifdef DEBUG
     // TextureManager unit tests (Week 1 Day 2)
