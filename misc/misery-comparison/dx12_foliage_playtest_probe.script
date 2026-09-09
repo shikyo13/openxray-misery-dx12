@@ -1,0 +1,60 @@
+-- Bounded visual check for the foliage/death-prompt playtest report.
+-- Does not save, damage the actor, or alter key bindings.
+local function wait_ms(ms)
+    local deadline = time_global_async() + ms
+    while time_global_async() < deadline do coroutine.yield() end
+end
+function main()
+    while not db.actor do coroutine.yield() end
+    local out = assert(io.open("_appdata_/dx12_foliage_playtest_probe.tsv", "wb"))
+    local function write(text) out:write(text .. "\n"); out:flush() end
+    local function capture(name)
+        write("capture\t" .. name .. "\t" .. tostring(device().frame))
+        get_console():execute("screenshot")
+        wait_ms(900)
+    end
+    local console = get_console()
+    local sun = console:get_string("r_sun_shadows")
+    local details = console:get_string("r_detail_shadows")
+    local original_hud = console:get_string("hud_draw")
+    wait_ms(8000)
+    write("density\t" .. console:get_string("r__detail_density"))
+    capture("arrival_foliage")
+    level.set_time_factor(1)
+    level.change_game_time(0, (9 - level.get_time_hours() + 24) % 24, 0)
+    level.set_weather("af3_day_clear", true)
+    local anchor = alife():object(get_story_object_id("zat_a2_stalker_barmen")).position
+    local wanted = vector():set(anchor.x + 40, anchor.y, anchor.z - 25)
+    local vertex = level.vertex_id(wanted)
+    assert(level.valid_vertex(vertex), "Invalid foliage test vertex")
+    local p = level.vertex_position(vertex)
+    assert(p:distance_to(wanted) < 3, "Foliage test position mismatch")
+    db.actor:set_actor_position(p)
+    db.actor:activate_slot(0)
+    local torch = db.actor:object("device_torch")
+    if torch then torch:enable_torch(false) end
+    console:execute("hud_draw off")
+    local aim = vector():set(p.x - 6, p.y + .3, p.z + 7)
+    local function settle(ms)
+        local deadline = time_global_async() + ms
+        while time_global_async() < deadline do
+            db.actor:actor_look_at_point(aim)
+            coroutine.yield()
+        end
+    end
+    for _, test in ipairs({{"all_shadows", 1, 1}, {"no_detail_shadows", 1, 0}, {"no_sun_shadows", 0, 0}}) do
+        console:execute("r_sun_shadows " .. test[2])
+        console:execute("r_detail_shadows " .. test[3])
+        settle(3500)
+        capture(test[1])
+    end
+    console:execute("r_sun_shadows " .. sun)
+    console:execute("r_detail_shadows " .. details)
+    console:execute("hud_draw " .. original_hud)
+    start_tutorial("game_over")
+    wait_ms(4300)
+    capture("death_prompt")
+    write("complete"); out:close()
+    stop_tutorial()
+    console:execute("quit")
+end

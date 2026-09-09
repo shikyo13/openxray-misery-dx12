@@ -6,6 +6,7 @@
 #include "Layers/xrRender/ResourceManager/TextureManager.h"
 #include "Layers/xrRender/FrameGraph/ShaderLoader.h"
 #include "xrCore/Text/StringConversion.hpp"
+#include "xrEngine/xr_level_controller.h"
 
 extern ENGINE_API bool g_bRendering;
 extern ENGINE_API Fvector2 g_current_font_scale;
@@ -196,10 +197,30 @@ void FGFontRender::BuildGeometry(CGameFont& owner)
 
     for (const auto& str : owner.strings)
     {
+        // StringTable encodes action names as a marker followed by an action ID.
+        // Expand them before both glyph generation and alignment, as the legacy
+        // font renderer does. This also preserves localized key names.
+        pcstr text = str.string;
+        xr_string expanded;
+        if (strchr(text, GAME_ACTION_MARK))
+        {
+            for (pcstr cursor = text; *cursor; ++cursor)
+            {
+                if (*cursor == GAME_ACTION_MARK && cursor[1])
+                {
+                    const auto action = static_cast<EGameActions>(static_cast<u8>(*++cursor));
+                    if (action < kLASTACTION)
+                        expanded += GetActionBinding(action);
+                }
+                else
+                    expanded += *cursor;
+            }
+            text = expanded.c_str();
+        }
         xr_wide_char wsStr[MAX_MB_CHARS];
         const u16 len = owner.IsMultibyte()
-            ? mbhMulti2Wide(wsStr, nullptr, MAX_MB_CHARS, str.string)
-            : xr_strlen(str.string);
+            ? mbhMulti2Wide(wsStr, nullptr, MAX_MB_CHARS, text)
+            : xr_strlen(text);
         if (len == 0)
             continue;
 
@@ -210,7 +231,7 @@ void FGFontRender::BuildGeometry(CGameFont& owner)
 
         float fSize = 0.f;
         if (str.align)
-            fSize = owner.IsMultibyte() ? owner.SizeOf_(wsStr) : owner.SizeOf_(str.string);
+            fSize = owner.IsMultibyte() ? owner.SizeOf_(wsStr) : owner.SizeOf_(text);
 
         switch (str.align)
         {
@@ -235,7 +256,7 @@ void FGFontRender::BuildGeometry(CGameFont& owner)
 
         for (u16 j = 0; j < len; ++j)
         {
-            const u16 wc = owner.IsMultibyte() ? wsStr[1 + j] : (u16)(u8)str.string[j];
+            const u16 wc = owner.IsMultibyte() ? wsStr[1 + j] : (u16)(u8)text[j];
             const Fvector charTC = owner.GetCharTC(wc);
 
             const float scw = charTC.z * g_current_font_scale.x;
