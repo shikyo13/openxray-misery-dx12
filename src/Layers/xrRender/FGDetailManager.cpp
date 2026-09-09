@@ -181,6 +181,18 @@ void FGDetailManager::Unload()
     windStateReady = false;
     windNoisePhase = 0.0f;
 
+    // The level-unload caller has drained GPU work before retiring these slots.
+    if (GEnv.Backend)
+    {
+        if (buildDetailsTexture && buildDetailsBindlessIndex != UINT32_MAX)
+            GEnv.Backend->UnregisterBindlessTexture(buildDetailsBindlessIndex);
+        if (buildDetailsPbrTexture && buildDetailsPbrBindlessIndex != UINT32_MAX)
+            GEnv.Backend->UnregisterBindlessTexture(buildDetailsPbrBindlessIndex);
+    }
+    buildDetailsBindlessIndex = 0;
+    buildDetailsPbrBindlessIndex = 0;
+    buildDetailsPbrTexture = nullptr;
+    heightmapTexture = nullptr;
     DestroyGPUBuffers();
 
     for (CDetail* detail : detail_models)
@@ -189,6 +201,10 @@ void FGDetailManager::Unload()
 
     slot_aabbs.clear();
     slotDataCPU.clear();
+    slot_count = 0;
+    cachedModelGPUData.clear();
+    m_lastDensity = -1.f;
+    m_instancesNeedRegeneration = true;
 
     if (dtFS)
     {
@@ -1388,6 +1404,13 @@ void FGDetailManager::DestroyGPUBuffers()
     graphicsBindingLayout = nullptr;
     decalBindingLayout = nullptr;
     billboardBindingLayout = nullptr;
+    // A loading frame must not rebuild an incomplete graphics pipeline from
+    // retained blade shaders before the billboard shaders have been reloaded.
+    vertexShader = nullptr;
+    pixelShader = nullptr;
+    decalVertexShader = nullptr;
+    decalPixelShader = nullptr;
+    inputLayout = nullptr;
     billboardVertexShader = nullptr;
     billboardPixelShader = nullptr;
 
@@ -1930,6 +1953,8 @@ void FGDetailManager::UploadBufferData(nvrhi::ICommandList* cmdList)
     pulledVertexData.shrink_to_fit();
 
     cmdList->writeBuffer(slotAABBBuffer, slot_aabbs.data(), slot_aabbs.size() * sizeof(SlotAABB));
+    if (strstr(Core.Params, "-cpu_trace"))
+        Msg("* [DetailUpload] frame=%u slots=%zu models=%zu", Device.dwFrame, slotDataCPU.size(), cachedModelGPUData.size());
 }
 
 bool FGDetailManager::CreateComputePipeline(fg::RenderDevice* renderDevice)

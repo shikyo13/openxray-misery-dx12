@@ -6,6 +6,27 @@ The user's priority is to remove internal engine bottlenecks so native x64/DX12 
 
 User correction after the failed submission experiment: do not skip from submission timing to separate shadow optimization. Finish the parallel command-recording architecture first. Shadows may supply its first workload; that does not authorize prioritizing shadow-specific culling or draw optimizations ahead of it.
 
+## In-process level reload checkpoint (2026-09-09 UTC)
+
+Priority 1 remains active and opt-in. The existing save checks used separate processes, so a small additional controller now saves to a unique isolated slot and queues two full disconnect/reloads in one process. A same-level `load` uses the quickload path and would not exercise complete renderer level teardown. Normal MISERY callbacks continue throughout. Separate shadow/caster optimization remains priority 2.
+
+The first full reload exposed missing cleanup. The detail manager accumulated 37 authored models into 74 and hit the packed 64-model limit (AC). Calling its existing unload after draining GPU work fixed that failure, but the next rendered frame accessed cached visuals from the old level (AD). Those cached batches now invalidate at teardown. Subsequent runs exited cleanly but screenshots exposed missing terrain and grass (AE/AF). Terrain draw-data and detail initial-upload flags now reset with the level; this restored terrain while grass still disappeared (AG). Complete detail shader cleanup prevents loading frames from constructing an incomplete graphics pipeline from retained blade shaders before billboard shaders reload. Owned detail texture slots retire after the GPU wait, and grass generation state resets. No per-gameplay-frame wait, simulation reduction, visual-quality reduction or shadow algorithm change was added.
+
+Final candidate SHA-256: `d217d8cda0cd688ff83907841c871e450ff957e2ff4ad2b36cb8d56ab6817ddb`, retained with PDB and exact source patch in workspace `work/runtime/detail-shader-reload-041`.
+
+| Run | Configuration | Result |
+|---|---|---|
+| `DX12_INPROCESS_RELOAD_041_AH` | Parallel recording, DLSS Quality, FSR FG, native debug layer and `-cpu_trace` | Two full Zaton reloads and exit 0. Thirty-three sampled groups used distinct threads with positive overlap. Each load has 37 detail models, uploads 1439 terrain draw records, and uploads the new detail data. No native validation or NVRHI error. Last FG dispatch count 1671. |
+| `DX12_INPROCESS_RELOAD_041_AI` | Same binary and profile, parallel recording; native diagnostics and CPU tracing off | Two full reloads and exit 0; no fatal/device/NVRHI error. Last FG dispatch count 2063. No worker samples were requested in this run. |
+
+Both post-reload screenshots from each final run were inspected: terrain and grass remain visible. Earlier AE/AF/AG visual failures are retained and are not counted as passes merely because the processes exited 0. Each final run preserves all 153 inventory entries' contents, condition and ammo, plus the complete 22,927-byte Grouse custom data. Raw inventory equality is false: bolt ID 11077 becomes 14848 after reload. All other identity rows match.
+
+Both final logs retain 2070 legacy shader compilation failures (690 per level load); loading frames can also log that the detail graphics pipeline is not ready before its shader set reloads. This is bounded lifecycle qualification, not complete effects parity, different-level transition coverage, extended memory/eviction testing or generated-frame temporal-quality certification. Cloud/weather appearance changes after saving/loading were not assessed as exact weather parity. No FPS gain is claimed.
+
+The versioned `dx12_inprocess_reload_041.script` reads a unique lowercase save name from the isolated profile's `_appdata_/dx12_inprocess_reload_041_run.txt`. Start with no state files or save for that name and use the existing `run-graphics-comparison.ps1` with `-ScriptNamespace dx12_inprocess_reload_041`. Each evidence folder preserves that name, the exact controller, save, snapshots, executable identity, log, profiles and screenshots. Summary: workspace `outputs/implementation-evidence/MISERY_DX12_INPROCESS_RELOAD_SUMMARY.json`.
+
+Next: obtain controlled CPU critical-path and frame-time measurements before promoting parallel recording. Recheck current background GPU use and sample it during the run; the no-game queries at this checkpoint's start and end both showed 0% utilization. Broader lifecycle and gameplay qualification remain unfinished. Normal 0.41 executable/PDB/profile were restored and hash-verified. The original installation, fixed DX9 reference, delivered package and published comparison were not changed in this checkpoint.
+
 ## Resize reliability checkpoint (2026-09-09 UTC)
 
 Priority 1 remains active. This fixes a reproduced integration failure encountered while qualifying parallel recording; separate shadow/caster optimization remains priority 2. Candidate SHA-256 `c9665f2de363199ce5ae32c1f212aa19ad494e28abdd6e9b3ef8983d9e77d52d` is preserved in workspace `work/runtime/resize-material-lifetime-041`. The delivered package remains 0.41 and parallel recording remains opt-in.

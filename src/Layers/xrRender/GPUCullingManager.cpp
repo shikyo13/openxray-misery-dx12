@@ -2187,6 +2187,7 @@ void GPUCullingManager::UploadSceneObjects(fg::RenderContext* ctx, const Geometr
 void GPUCullingManager::InvalidateStaticCullingData()
 {
     m_staticDataCached = false;
+    m_staticTerrainDrawArgsUploaded = false;
     m_staticSet.objectsUploaded = false;
     m_staticSet.drawArgsUploaded = false;
     m_staticSet.objectCount = 0;

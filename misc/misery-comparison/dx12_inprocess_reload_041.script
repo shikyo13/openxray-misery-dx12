@@ -1,0 +1,101 @@
+-- Two complete level unload/reloads in one process, retaining normal game callbacks.
+-- The runner supplies a unique save/evidence name in the isolated profile.
+local function read_file(path)
+    local file = io.open(path, "rb")
+    if not file then return nil end
+    local data = file:read("*a")
+    file:close()
+    return data
+end
+
+local function write_file(path, data)
+    local file = assert(io.open(path, "wb"))
+    file:write(data)
+    file:close()
+end
+
+local function wait_ms(duration)
+    local deadline = time_global() + duration
+    while time_global() < deadline do coroutine.yield() end
+end
+
+local function emit(name)
+    get_console():execute(string.format("comparison_event|%d|%s|%d", time_global(), name, device().frame))
+    get_console():execute("flush")
+end
+
+local function capture(prefix, phase)
+    local items = {}
+    db.actor:iterate_inventory(function(_, item)
+        local ammo = item:is_weapon() and item:get_ammo_in_magazine() or -1
+        items[#items + 1] = string.format("%d\t%s\t%.9f\t%d", item:id(), item:section(), item:condition(), ammo)
+    end)
+    table.sort(items)
+    local inventory = table.concat(items, "\n") .. "\n"
+    write_file(prefix .. phase .. "_inventory.tsv", inventory)
+
+    local npc
+    alife():iterate_objects(function(obj)
+        if obj:section_name() == "zat_b38_stalker_cop" then npc = obj; return true end
+        return false
+    end)
+    assert(npc, "Grouse server object missing")
+    local packet = net_packet()
+    packet:w_begin(0)
+    npc:STATE_Write(packet)
+    packet:r_seek(2)
+    stpk_utils.parse_cse_alife_trader_abstract_properties_packet({}, packet)
+    packet:r_advance(18)
+    local ini = packet:r_stringZ()
+    assert(#ini > 16384, "Expected complete authored Grouse custom data")
+    write_file(prefix .. phase .. "_grouse_customdata.bin", ini)
+    write_file(prefix .. phase .. "_result.txt", string.format(
+        "phase=%s inventory_count=%d grouse_id=%d grouse_customdata_bytes=%d frame=%d time=%d\n",
+        phase, #items, npc.id, #ini, device().frame, time_global()))
+    return inventory, ini
+end
+
+function main()
+    local name = assert(read_file("_appdata_/dx12_inprocess_reload_041_run.txt")):match("^([a-z0-9_]+)%s*$")
+    assert(name and #name < 64, "Expected a unique isolated test save name")
+    local prefix = "_appdata_/" .. name .. "_"
+    local phase = tonumber(read_file(prefix .. "phase.txt") or "0")
+    assert(phase and phase >= 0 and phase <= 2, "Invalid or already completed probe state")
+    while not db.actor do coroutine.yield() end
+    get_console():execute("main_menu off")
+    device():pause(false)
+    get_console():execute("r_aa dlss_quality")
+    get_console():execute("r_fsr_fg 1")
+    if phase == 0 then
+        level.set_time_factor(1)
+        level.change_game_time(0, (9 - level.get_time_hours() + 24) % 24, 0)
+        level.set_weather("af3_day_clear", true)
+    end
+    emit("loaded_" .. phase)
+    wait_ms(12000)
+    local inventory, ini = capture(prefix, tostring(phase))
+    emit("captured_" .. phase)
+    get_console():execute("screenshot")
+    if phase == 0 then
+        get_console():execute("save " .. name)
+        wait_ms(3000)
+        local save = read_file("_appdata_/savedgames/" .. name .. ".scop")
+        assert(save and #save > 256, "Normal engine save was not written")
+    else
+        write_file(prefix .. phase .. "_comparison.txt", string.format(
+            "inventory_exact=%s grouse_customdata_exact=%s\n",
+            tostring(inventory == read_file(prefix .. "0_inventory.tsv")),
+            tostring(ini == read_file(prefix .. "0_grouse_customdata.bin"))))
+    end
+    if phase == 2 then
+        write_file(prefix .. "phase.txt", "complete\n")
+        emit("complete")
+        get_console():execute("quit")
+        return
+    end
+    write_file(prefix .. "phase.txt", tostring(phase + 1))
+    emit("reload_" .. phase)
+    -- Unlike same-level 'load', 'start' queues a full disconnect and level load.
+    get_console():execute("start server(" .. name .. "/single/alife/load) client(localhost)")
+    -- This level's script process is discarded; -run_script starts main again.
+end

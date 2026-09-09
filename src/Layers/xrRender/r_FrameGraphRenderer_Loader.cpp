@@ -5,6 +5,7 @@
 #include "xrCore/FMesh.hpp"
 #include "Common/LevelStructure.hpp"
 #include "xrEngine/IGame_Persistent.h"
+#include "xrEngine/IRenderBackend.h"
 #include "xrCore/stream_reader.h"
 
 #if defined(USE_DX11)
@@ -17,6 +18,8 @@
 
 // D3D12: Shader compilation
 #include "Layers/xrRender/FrameGraph/ShaderLoader.h"
+#include "Layers/xrRender/FrameGraph/Blackboard.h"
+#include "Layers/xrRender/FrameGraphPasses/DetailPassSetup.h"
 #include "Layers/xrRender/Materials/MaterialSystem.h"
 #include "Layers/xrRender/FGDetailManager.h"
 #include "Layers/xrRender/PBRConverter/PBRTextureConverter.h"
@@ -349,6 +352,22 @@ void FrameGraphRenderer::level_Unload()
         return;
     if (!b_loaded)
         return;
+
+    // Level resources can still be referenced by the last submitted frame.
+    // Release details here as well: the renderer itself survives level reloads.
+    if (GEnv.Backend)
+        GEnv.Backend->WaitForIdle();
+    if (auto* details = GetDetailManager())
+        details->Unload();
+    // Newly allocated detail buffers need their initial data uploaded again.
+    if (m_blackboard)
+        m_blackboard->get_or_add<passes::DetailPassState>() = {};
+
+    // Cached batches contain raw visual pointers into the level being destroyed.
+    m_cachedStaticBatches.clear();
+    m_staticBatchesCached = false;
+    if (auto* culling = GetGPUCullingManager())
+        culling->InvalidateStaticCullingData();
 
     // HOM
     m_HOM.Unload();
