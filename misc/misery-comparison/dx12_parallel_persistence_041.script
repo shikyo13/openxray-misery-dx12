@@ -1,0 +1,92 @@
+-- Isolated read-only snapshots around a normal engine save and fresh-process reload.
+-- All existing game callbacks and A-life continue to run.
+local prefix = "_appdata_/dx12_parallel_persistence_041_"
+
+local function read_file(path)
+    local file = io.open(path, "rb")
+    if not file then return nil end
+    local data = file:read("*a")
+    file:close()
+    return data
+end
+
+local function write_file(path, data)
+    local file = assert(io.open(path, "wb"))
+    file:write(data)
+    file:close()
+end
+
+local function wait_ms(duration)
+    local deadline = time_global() + duration
+    while time_global() < deadline do coroutine.yield() end
+end
+
+local function capture(phase)
+    local items = {}
+    db.actor:iterate_inventory(function(_, item)
+        local ammo = item:is_weapon() and item:get_ammo_in_magazine() or -1
+        items[#items + 1] = string.format("%d\t%s\t%.9f\t%d", item:id(), item:section(), item:condition(), ammo)
+    end)
+    table.sort(items)
+    local inventory = table.concat(items, "\n") .. "\n"
+    write_file(prefix .. phase .. "_inventory.tsv", inventory)
+
+    local npc
+    alife():iterate_objects(function(obj)
+        if obj:section_name() == "zat_b38_stalker_cop" then
+            npc = obj
+            return true
+        end
+        return false
+    end)
+    assert(npc, "Grouse server object missing")
+    local id = npc.id
+    local packet = net_packet()
+    packet:w_begin(0)
+    npc:STATE_Write(packet)
+    -- Human STATE_Write serializes trader state before CSE_ALifeObject.
+    packet:r_seek(2)
+    stpk_utils.parse_cse_alife_trader_abstract_properties_packet({}, packet)
+    -- Graph(u16), distance(float), control(u32), node(u32), flags(u32).
+    packet:r_advance(18)
+    local ini = packet:r_stringZ()
+    assert(#ini > 16384, "Expected the complete authored Grouse custom data")
+    write_file(prefix .. phase .. "_grouse_customdata.bin", ini)
+    local report = string.format("phase=%s inventory_count=%d grouse_id=%d grouse_packet_bytes=%d grouse_customdata_bytes=%d frame=%d\n",
+        phase, #items, id, packet:w_tell(), #ini, device().frame)
+    write_file(prefix .. phase .. "_result.txt", report)
+    log("[DX12Persistence] " .. report)
+    return inventory, ini
+end
+
+function main()
+    while not db.actor do coroutine.yield() end
+    level.set_time_factor(1)
+    level.change_game_time(0, (9 - level.get_time_hours() + 24) % 24, 0)
+    level.set_weather("af3_day_clear", true)
+    wait_ms(12000)
+    local before = read_file(prefix .. "before_result.txt") and read_file(prefix .. "before_inventory.tsv")
+    if before then
+        local ok, inventory, ini = pcall(capture, "after")
+        if not ok then
+            write_file(prefix .. "error.txt", tostring(inventory))
+            get_console():execute("quit")
+            return
+        end
+        local result = string.format("inventory_exact=%s grouse_customdata_exact=%s\n",
+            tostring(inventory == before), tostring(ini == read_file(prefix .. "before_grouse_customdata.bin")))
+        write_file(prefix .. "comparison.txt", result)
+        log("[DX12Persistence] " .. result)
+        get_console():execute("save dx12_parallel_persistence_041_roundtrip")
+    else
+        local ok, message = pcall(capture, "before")
+        if not ok then
+            write_file(prefix .. "error.txt", tostring(message))
+            get_console():execute("quit")
+            return
+        end
+        get_console():execute("save dx12_parallel_persistence_041")
+    end
+    wait_ms(3000)
+    get_console():execute("quit")
+end
