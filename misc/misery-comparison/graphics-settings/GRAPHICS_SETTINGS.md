@@ -15,7 +15,7 @@ Advanced graphics changes and preset selections are staged until **Apply**. **Ca
 | Ambient occlusion | Ultra; radius 0.8, intensity 1 |
 | Sun shafts | High |
 | Object detail / view distance | 1.0 / 1.0 |
-| Grass density / range | 0.20 spacing / 49 range setting |
+| Grass density / range | 0.30 spacing (DX9 baseline) / 49 range setting |
 | Materials, sky/environment lighting, bloom | Authored material modes; bloom intensity 1 |
 | Tree wind / temporal water / soft water / NPC flashlights | On |
 | Frame generation / experimental SSGI / ray tracing | Off |
@@ -28,6 +28,8 @@ Parallax, depth of field and tessellation are marked **Not implemented**. Their 
 
 The preset definitions are `game/gamedata/configs/dx12_graphics.ltx`. Current saved settings are in `game/_appdata_/user.ltx`. The engine still writes compatibility commands such as `_preset`, `r3_msaa` and `texture_lod`; those are not the native menu's source of truth. The diagnostic launcher already records the full before/after profile and build identity.
 
-**The existing comparison report used a lighter configuration**: FXAA, 2048-pixel sun maps, 512-pixel local shadows, High AO, grass spacing 0.30 and object detail 0.75. Its FPS figures do not measure the new High Native preset. No replacement benchmark was run for this settings change.
+The foliage playtest hotfix restores the legacy randomized plant-size range and orientation; the earlier DX12 generator placed every plant at maximum size. Both High presets now retain DX9's 0.30 spacing for gameplay visibility. Reload a save after changing density.
+
+**The existing comparison report used a lighter configuration**: FXAA, 2048-pixel sun maps, 512-pixel local shadows, High AO and object detail 0.75. Its FPS figures do not measure the new High Native preset. No replacement benchmark was run for this settings change.
 
 Verification on 2026-09-09: native menu Apply/Cancel, preset and Custom state, saved-setting persistence, all settings tabs, and real-time refresh while a loaded game is paused passed. A fresh process loaded the save at 3440×1440 and logged successful native DLAA creation. Menu and game screenshots were inspected. The final loaded test exited 0; pre-existing legacy shader diagnostics also present in the previous 0.46 baseline remain in the log. This is a short functional/visual check, not a long campaign or performance result.
