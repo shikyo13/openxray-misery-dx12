@@ -31,7 +31,28 @@ The unfinished cost-based recording splitter is preserved, unbuilt and untested,
 
 Evidence: workspace `outputs/implementation-evidence/MISERY_DX12_RECORD_PARTITIONS_043_SUMMARY.json` and BD/BE `partition-analysis.json`. [Microsoft's CPU/GPU bottleneck explanation](https://devblogs.microsoft.com/directx/cpu-and-gpu-boundedness/) supports choosing work according to the limiting processor. [NVIDIA's command-buffer guide](https://developer.nvidia.com/blog/advanced-api-performance-command-buffers/) supports parallel recording while accounting for command-list overhead, GPU idle time and pipeline drains from frequently mixed copy/dispatch/draw work. The suggested local-shadow opportunity is a source-based hypothesis until measured.
 
-## Latest measured progress: grouped shadow copies (2026-09-09 UTC)
+## Latest delivery: 0.44 (2026-09-09 UTC)
+
+Delivered private package `D:\Codex\MISERY-DX12\outputs\MISERY_DX12_DEV_0.44` with grouped shadow copies enabled in the normal launcher and serial recording retained. The optional parallel launcher adds both existing parallel/partition flags. All 17,170 initial game files (11,453,828,707 bytes) were copied independently and SHA-verified. The package preserves the exact tested executable `d01c555fb2eb0011d57a6f39bc09d0d03689635d14abf5ef18fefc7de17ff0ea`, matching PDB, compiled parent/patch and committed source identity. No recompilation or renderer change after the BI/BJ/BK checks was required.
+
+Actual package run BL completed all four scenes. Its FPS was below the older AV recording, so a current-condition control BM used copied 0.43 executable/PDB files in the same new runtime directory. All initial game-file hashes match 0.43 except those two binaries. The original 0.43 package was not modified. Current 0.44 binaries and the normal profile were restored and rehashed immediately afterward.
+
+| Scene | 0.43 control FPS | 0.44 package FPS | 0.43 / 0.44 p99 ms |
+|---|---:|---:|---:|
+| Interior | 88.00 | 97.43 | 16.64 / 14.10 |
+| Outdoor | 82.37 | 86.19 | 16.56 / 15.86 |
+| Rain | 83.26 | 86.39 | 16.23 / 16.02 |
+| Night | 85.45 | 104.55 | 16.46 / 13.39 |
+
+The new build is 3.8-22.4% faster with lower p99 in every scene of this sequential pair. Both retain native 3440x1440, FXAA/AO-high/16x, grass/conventional shadows, FG off and serial recording. Pass timers are off, with one workload log per second. Cameras/lens/profiles/controller match; game clocks differ by up to one minute and simulation continues. Daytime local-face counts match at 201/132/126; night means are about 139. Fourteen GPU samples per scene, background engines below 1%. These are current observations, not a universal gain or a causal explanation for differences from older captures. API-only PresentMon does not establish displayed-frame, latency or drop behavior.
+
+Both games, PresentMon captures and GPU samplers exit 0. All eight BL/BM images were opened and inspected: geometry, NPC/counter lighting, terrain/foliage, rain/fog and dark night silhouettes are consistent. Wind/rain/HUD differences remain; night darkness limits subtle assessment. Each run retains 836 legacy shader failures with no matched fatal/device error. Prior BI native two-reload, DLSS/FG and partitioned-recording checks apply to this identical executable. Full campaign/effects, temporal/HDR quality, broader transitions and extended stability remain unfinished.
+
+Package post-test checks cover presence/size of all 17,170 files and SHA hashes of twelve critical or writable files, including restored executable/PDB/profile, included saves and camera replays. Protected normal 0.41 workspace staging was also restored and hash-verified. The fixed DX9 reference and earlier packages remain available. Updated workspace report `outputs/MISERY_DX9_DX12_COMPARISON_044.html` contains the actual package versus fixed DX9 sliders, refreshed settings and a separate current 0.43/0.44 comparison. Evidence: `outputs/implementation-evidence/MISERY_DX12_PACKAGE_044_SUMMARY.json`.
+
+Next: choose further GPU work from the remaining measured pass costs, retaining the delivered 0.44 baseline. Local shadows still take roughly 2.3-3.3 ms in the earlier traced copy-ON windows; inspect remaining repeated culling/drawing or shader costs before selecting another change. Sun shadows and foliage remain substantial. Do not rerun completed comparisons without a new change, failure or unresolved concern, and do not require a fixed multithreading-first sequence.
+
+## Earlier measured progress: grouped shadow copies (2026-09-09 UTC)
 
 The quieter BJ/BK comparison supports retaining `-local_shadow_batch_copies` for integration into the next development delivery. It reduces repeated copy/draw transitions without removing any caster type or changing shaders, culling, resolution or quality. The archived executable still requires the flag; delivered 0.43 and its normal launch behavior are unchanged at this checkpoint.
 
