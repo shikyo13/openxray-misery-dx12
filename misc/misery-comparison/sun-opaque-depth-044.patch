@@ -1,0 +1,134 @@
+diff --git a/src/Layers/xrRender/FrameGraphPasses/SunShadowPassSetup.cpp b/src/Layers/xrRender/FrameGraphPasses/SunShadowPassSetup.cpp
+index 4e4a7c9f9..5c385a8b0 100644
+--- a/src/Layers/xrRender/FrameGraphPasses/SunShadowPassSetup.cpp
++++ b/src/Layers/xrRender/FrameGraphPasses/SunShadowPassSetup.cpp
+@@ -346,7 +346,7 @@ void PrepareCascades(SunShadowPassState& state)
+     }
+ }
+ 
+-void InitializeShadowPipeline(RenderDevice* device, ShadowMapPassState& state)
++void InitializeShadowPipeline(RenderDevice* device, ShadowMapPassState& state, bool opaqueDepthOnly = false)
+ {
+     if (state.pipeline) return;
+     auto* nvDevice = device->GetNVRHIDevice();
+@@ -372,6 +372,13 @@ void InitializeShadowPipeline(RenderDevice* device, ShadowMapPassState& state)
+     nvrhi::FramebufferInfoEx fbInfo; fbInfo.depthFormat = nvrhi::Format::D32;
+     state.pipeline = cache.GetOrCreatePipeline("SunShadow", desc, fbInfo, nvDevice);
+     R_ASSERT2(state.pipeline, "Sun shadow pipeline creation failed");
++    if (opaqueDepthOnly) {
++        // Opaque depth uses the identical vertex/raster/depth state. Cutouts
++        // continue through sun_shadow.ps with their authored alpha threshold.
++        desc.PS = nullptr;
++        state.opaquePipeline = cache.GetOrCreatePipeline("SunShadowOpaque", desc, fbInfo, nvDevice);
++        R_ASSERT2(state.opaquePipeline, "Opaque sun shadow pipeline creation failed");
++    }
+     nvrhi::BufferDesc cb;
+     cb.byteSize = sizeof(SunShadowDrawConstants); cb.isConstantBuffer = true;
+     cb.isVolatile = true; cb.maxVersions = 8192; cb.debugName = "SunShadowDraw";
+@@ -459,6 +466,25 @@ u32 DrawWorldShadowMap(RenderContext* context, RenderDevice* device, GPUCullingM
+             AppendWorldShadowDraws(original, objects, frustum, candidates ? &candidates[group] : nullptr,
+                 treeFilter, visible);
+         }
++        u32 opaqueCount = 0;
++        if (state.opaquePipeline && !prepared) {
++            if (terrain) {
++                opaqueCount = u32(visible.size());
++            } else {
++                const auto& cpuInstances = group == 0 ? geometry->GetStaticInstanceData() : geometry->GetDynamicInstanceData();
++                R_ASSERT(cpuInstances.size() == original.size());
++                // Use the material flags actually consumed by sun_shadow.ps,
++                // rather than the batch's potentially different classification.
++                const auto opaqueEnd = std::stable_partition(visible.begin(), visible.end(),
++                    [&](const IndirectDrawArgs& args) {
++                        const u32 id = cpuInstances[args.startInstanceLocation].materialID;
++                        if (id >= materialBuffer.GetMaterialCount()) return false;
++                        const auto* material = materialBuffer.GetMaterial(id);
++                        return material && !(material->flags & bindless::MAT_FLAG_ALPHA_TEST);
++                    });
++                opaqueCount = u32(opaqueEnd - visible.begin());
++            }
++        }
+         const u32 drawCount = prepared ? prepared->count[group] : u32(visible.size());
+         const u32 offset = prepared ? prepared->first[group] * sizeof(IndirectDrawArgs) : 0;
+         const u64 bytes = u64(drawCount) * sizeof(IndirectDrawArgs);
+@@ -497,8 +523,20 @@ u32 DrawWorldShadowMap(RenderContext* context, RenderDevice* device, GPUCullingM
+         draw.indexBuffer = { geometry->GetMegaIndexBuffer(), nvrhi::Format::R32_UINT, 0 };
+         draw.indirectParams = buffer;
+         draw.viewport.addViewportAndScissorRect(nvrhi::Viewport(0.f, float(framebuffer->getFramebufferInfo().width), 0.f, float(framebuffer->getFramebufferInfo().width), 0.f, 1.f));
+-        command->setGraphicsState(draw);
+-        command->drawIndexedIndirect(offset, drawCount);
++        if (opaqueCount) {
++            draw.pipeline = state.opaquePipeline;
++            command->setGraphicsState(draw);
++            command->drawIndexedIndirect(offset, opaqueCount);
++        }
++        if (opaqueCount < drawCount) {
++            draw.pipeline = state.pipeline;
++            command->setGraphicsState(draw);
++            command->drawIndexedIndirect(offset + opaqueCount * sizeof(IndirectDrawArgs), drawCount - opaqueCount);
++        }
++        if (state.opaquePipeline) {
++            state.opaqueDraws += opaqueCount;
++            state.maskedDraws += drawCount - opaqueCount;
++        }
+         count += drawCount;
+     };
+     drawSet(0, geometry->GetStaticDrawArgsData(), geometry->GetStaticObjectData(), geometry->GetStaticInstanceBuffer(), false);
+@@ -522,7 +560,7 @@ framegraph::VirtualResourceHandle setupSunShadowPass(
+     // Shader hot-reload can clear the blackboard after spatial collection.
+     // Recreate the same camera/light volumes if that happened this frame.
+     PrepareSunShadowCascades(state);
+-    InitializeShadowPipeline(device, state);
++    InitializeShadowPipeline(device, state, strstr(Core.Params, "-sun_shadow_opaque_depth") != nullptr);
+     struct PassData {
+         framegraph::VirtualResourceHandle texture;
+         RenderDevice* device;
+@@ -582,6 +620,7 @@ framegraph::VirtualResourceHandle setupSunShadowPass(
+             u32 counts[3] = {};
+             u32 skinnedCounts[3] = {};
+             bool detailDraws[3] = {};
++            state.opaqueDraws = state.maskedDraws = 0;
+             for (u32 cascade = 0; cascade < 3; ++cascade) {
+                 nvrhi::FramebufferDesc fb;
+                 fb.setDepthAttachment(nvrhi::FramebufferAttachment().setTexture(texture).setArraySlice(cascade));
+@@ -593,11 +632,13 @@ framegraph::VirtualResourceHandle setupSunShadowPass(
+                     data.overlays, state.viewProjection[cascade], state.frustum[cascade], framebuffer, *data.skinning);
+                 detailDraws[cascade] = DrawDetailShadowMap(context, data.device, data.details, state, state.viewProjection[cascade], state.frustum[cascade], framebuffer);
+             }
++            R_ASSERT2(!state.opaquePipeline || state.opaqueDraws + state.maskedDraws == counts[0] + counts[1] + counts[2],
++                "Opaque and masked sun shadow ranges must cover every selected world caster");
+             if (strstr(Core.Params, "-shadow_trace") && Device.dwTimeGlobal >= state.nextTrace) {
+                 state.nextTrace = Device.dwTimeGlobal + 1000;
+-                Msg("* [SunShadow] frame=%u size=%u ranges=%.1f,%.1f,%.1f casters=%u,%u,%u skinned=%u,%u,%u",
++                Msg("* [SunShadow] frame=%u size=%u ranges=%.1f,%.1f,%.1f casters=%u,%u,%u skinned=%u,%u,%u opaque_depth=%u opaque=%u masked=%u",
+                     Device.dwFrame, state.resolution, state.splits.x, state.splits.y, state.splits.z, counts[0], counts[1], counts[2],
+-                    skinnedCounts[0], skinnedCounts[1], skinnedCounts[2]);
++                    skinnedCounts[0], skinnedCounts[1], skinnedCounts[2], unsigned(bool(state.opaquePipeline)), state.opaqueDraws, state.maskedDraws);
+                 Msg("* [DetailShadow] frame=%u draws=%u,%u,%u capacity=%u mode=%d distance=%.1f",
+                     Device.dwFrame, detailDraws[0], detailDraws[1], detailDraws[2], state.detailCapacity, ps_r__detail_gpu, ps_r_detail_shadow_distance);
+                 const auto globals = BuildStaticGlobals();
+diff --git a/src/Layers/xrRender/FrameGraphPasses/SunShadowPassSetup.h b/src/Layers/xrRender/FrameGraphPasses/SunShadowPassSetup.h
+index 91523a537..7a16a01a2 100644
+--- a/src/Layers/xrRender/FrameGraphPasses/SunShadowPassSetup.h
++++ b/src/Layers/xrRender/FrameGraphPasses/SunShadowPassSetup.h
+@@ -18,6 +18,8 @@ struct ShadowDrawRange {
+ };
+ struct ShadowMapPassState {
+     nvrhi::GraphicsPipelineHandle pipeline;
++    nvrhi::GraphicsPipelineHandle opaquePipeline;
++    u32 opaqueDraws = 0, maskedDraws = 0;
+     nvrhi::BindingLayoutHandle layout;
+     nvrhi::BufferHandle constants;
+     nvrhi::BufferHandle drawArgs[3];
+diff --git a/src/Layers/xrRender/GPUCullingManager.h b/src/Layers/xrRender/GPUCullingManager.h
+index b4286d5b2..97e043d71 100644
+--- a/src/Layers/xrRender/GPUCullingManager.h
++++ b/src/Layers/xrRender/GPUCullingManager.h
+@@ -269,6 +269,7 @@ public:
+     const xr_vector<GPUObjectData>& GetDynamicObjectData() const { return m_dynamicObjectData; }
+     const xr_vector<IndirectDrawArgs>& GetDynamicDrawArgsData() const { return m_dynamicDrawArgsData; }
+     const xr_vector<GPUInstanceData>& GetStaticInstanceData() const { return m_staticInstanceData; }
++    const xr_vector<GPUInstanceData>& GetDynamicInstanceData() const { return m_dynamicInstanceData; }
+ 
+     void SetRTAccelStructManager(RTAccelStructManager* mgr) { m_rtAccelMgr = mgr; }
+     RTAccelStructManager* GetRTAccelStructManager() const { return m_rtAccelMgr; }

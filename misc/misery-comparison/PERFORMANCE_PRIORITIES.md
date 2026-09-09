@@ -21,7 +21,7 @@ Local GPU time sums the two sequential partition ranges. Foliage uses `DetailDra
 
 Current work order:
 
-1. Inspect sun-shadow raster/material work and outdoor foliage drawing using the latest pass timings and existing source. BP measures about 1.7-1.8 ms for daytime sun shadows and 1.4-2.2 ms for outdoor foliage drawing. Select a concrete avoidable cost before changing either path; preserve caster coverage, wind, lighting, geometry quality and normal callbacks.
+1. Inspect outdoor foliage vertex/material work using the latest pass timings and existing source. BR/BS measures about 1.5-2.5 ms for outdoor foliage drawing, with live-scene variation. The opaque sun-shadow pixel-shader split below did not reduce its target pass cost and was removed from production source. Preserve caster coverage, wind, lighting, geometry quality and normal callbacks; do not repeat that experiment without a concrete new hypothesis.
 2. Retain the delivered grouped local-shadow copies. The follow-up argument batching experiment below has mixed results and remains opt-in; do not spend more benchmark cycles tuning it without a specific new explanation or change. Local shadows remain costly, so revisit further drawing or shader work when its expected benefit exceeds the other candidates.
 3. Investigate reproducible game-update stalls and remaining CPU work when they limit smoothness or the intended frame rate. Retain the tested optional parallel recorder; revisit further load balancing when CPU limits justify it. Async compute, new graphics features and higher capacity limits require a demonstrated benefit before implementation.
 
@@ -31,7 +31,34 @@ The unfinished cost-based recording splitter is preserved, unbuilt and untested,
 
 Evidence: workspace `outputs/implementation-evidence/MISERY_DX12_RECORD_PARTITIONS_043_SUMMARY.json` and BD/BE `partition-analysis.json`. [Microsoft's CPU/GPU bottleneck explanation](https://devblogs.microsoft.com/directx/cpu-and-gpu-boundedness/) supports choosing work according to the limiting processor. [NVIDIA's command-buffer guide](https://developer.nvidia.com/blog/advanced-api-performance-command-buffers/) supports parallel recording while accounting for command-list overhead, GPU idle time and pipeline drains from frequently mixed copy/dispatch/draw work. The suggested local-shadow opportunity is a source-based hypothesis until measured.
 
-## Latest experiment: shadow indirect argument uploads (2026-09-09 UTC)
+## Latest experiment: opaque sun-shadow depth (2026-09-09 UTC)
+
+Rejected for promotion: skipping the pixel shader on opaque world/terrain sun-shadow casters did not reduce the affected GPU pass. The three production C++ files were restored to parent `1488eb851b7c59507449eb41d1dbdeabffb61bf0`. The exact tested change remains in [sun-opaque-depth-044.patch](sun-opaque-depth-044.patch); `git apply --check` passed against that restored source. Delivered 0.44 remains normal. Do not repeat these checks without a concrete new hypothesis.
+
+The archived candidate's `-sun_shadow_opaque_depth` uses the actual CPU material alpha-test flags to stable-partition the existing visible command list. Opaque ranges use a null pixel shader; cutouts keep `sun_shadow.ps`. One upload serves the two ranges, with unchanged vertex/raster/depth state, resolution, bias and caster coverage. Skinned/detail and local-shadow paths retain their original behavior. A per-frame assertion checks the combined world-caster total.
+
+Configure/build exited 0. Compiled source is parent `1488eb851` plus patch SHA-256 `eb0f1a81dbb13193b71e124a803975e6aa9999f974b98bc8b18b8e05c9ef4ff4`. Executable SHA-256 `2f887b00702af3381363aa2d86fe8cfc17527df73ffb61e4880ed97432b808ed`; PDB, exact raw sources and identities are archived in workspace `work/runtime/sun-opaque-depth-044`. NVRHI remains pinned at `dcf5f012187e9482d99b71d224ba09304cffb35e`.
+
+BR/BS use the same executable, native 3440x1440, matching profiles/controller/replays/cameras/game clocks, FXAA/high AO/16x, conventional and grass shadows, serial recording and FG off. Both enable CPU/GPU/slow-frame traces and the delivered grouped local-shadow copies. Only BS adds the new sun flag; earlier indirect argument batching remains OFF.
+
+| Scene | Sun GPU ms OFF / ON | Sun CPU ms OFF / ON | Application FPS OFF / ON | p99 ms OFF / ON |
+|---|---:|---:|---:|---:|
+| Interior | 1.711 / 1.737 | 1.416 / 1.460 | 89.20 / 92.47 | 18.67 / 16.09 |
+| Outdoor | 1.762 / 1.804 | 1.412 / 1.444 | 80.77 / 83.35 | 17.26 / 16.14 |
+| Rain | 1.767 / 1.798 | 1.419 / 1.411 | 83.45 / 85.86 | 18.32 / 15.93 |
+| Night | 0.012 / 0.012, drawing inactive | 0.005 / 0.005 | 81.80 / 101.65 | 17.66 / 14.22 |
+
+These are one sequential pair with live simulation. The FPS increase cannot be credited to the edit: the largest change is at night while sun-shadow drawing is inactive. Night mean light counts are 51.03/42.52, local-shadow GPU time 3.423/2.432 ms, and foliage time also differs. ON has six more local faces in each daytime scene (207/138/132 versus 201/132/126), one extra light and different HUD/particle work. There are 13-14 GPU samples per scene, sampled background engines below 0.73%, and zero invalid in-window GPU counters. Preflight CPU snapshots are not continuous contention measurement. API-only PresentMon does not establish displayed frames, latency or drops.
+
+BQ completed two full Zaton unload/reloads with native DX12 validation, parallel partitions, DLSS Quality and FSR FG. All 35 sampled opaque/masked sums cover the original world-caster totals. Inventory contents/condition/ammo match across three 153-item captures; raw bolt IDs differ. Grouse's 22,927 authored bytes match; the final successful FG dispatch count is 1409. Existing native warnings 679/820/821 and 2,216 legacy shader failures remain, with no matched fatal/native/NVRHI error. BR/BS each retain 836 legacy shader failures and no matched fatal/device error. All owned games, captures and samplers exited 0.
+
+All eleven stills were opened and inspected: eight BR/BS images plus three BQ reload images. Counter/NPC/fence/floor shadow edges, terrain/bridge/foliage cutouts and rain/fog remain consistent without obvious new corruption. Dialogue text, wind and rain streaks differ. Very dark night images limit subtle shadow assessment. Stills do not establish moving-shadow, temporal FG, HDR or complete effects parity. Fourteen unique BQ probes were archived/hash-verified/removed, original control restored byte-exact, and protected normal 0.41 EXE/PDB/profile restored and rehashed. Delivered 0.44 and the fixed DX9 reference are preserved.
+
+Evidence: workspace `outputs/implementation-evidence/MISERY_DX12_SUN_OPAQUE_044_SUMMARY.json`, BQ `reload-analysis.json`, BR/BS `sun-opaque-analysis.json`, and existing report `outputs/MISERY_DX9_DX12_COMPARISON_044.html#sun-opaque-experiment` with four separate sliders. Earlier delivered-build and experiment data remain unchanged.
+
+[NVIDIA's PSO guide](https://developer.nvidia.com/blog/advanced-api-performance-pipeline-state-objects/) supports grouping draws by pipeline state. [GPU Gems' pipeline discussion](https://developer.nvidia.com/gpugems/gpugems/part-v-performance-and-practicalities/chapter-28-graphics-pipeline-performance) motivates eliminating fragment work in opaque depth passes. This older general advice informed the hypothesis; it did not establish a gain on the RTX 3090, and the measured result does not support promotion.
+
+## Earlier experiment: shadow indirect argument uploads (2026-09-09 UTC)
 
 Optional `-local_shadow_batch_args` collects dynamic-rigid and animated-tree indirect commands for all owned local-shadow faces before drawing. Each nonempty group uploads once into a partition-owned buffer, and faces draw their original ordered ranges at byte offsets. Cold/moved-light static-cache refreshes retain separate scratch buffers. Original frustum/tree/light-sphere predicates, shaders, draw ordering, skinned/detail draws and quality settings remain intact. `-shadow_args_validate` reconstructs the original command sequence and compares its bytes, including empty selections. The normal launcher does not enable this experiment.
 
