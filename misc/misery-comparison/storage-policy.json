@@ -10,5 +10,9 @@
   "max_retired_archive_gib": 10,
   "max_comparison_seconds": 600,
   "max_single_capture_gib": 1,
+  "playtest_evidence_root": "D:/Codex/MISERY-DX12/playtests",
+  "max_playtest_evidence_gib": 2,
+  "max_playtest_session_mib": 128,
+  "max_playtest_diagnostic_hours": 8,
   "notes": "Keep current plus one rollback. Retire the older rollback with verified user-data preservation before creating the next package. Routine builds stay in the existing runtime. Full packages are for user playtests or releases. Never prune source Git history, user saves, the original Steam installation, or the fixed DX9 reference. Heavy graphics/AI traces are for bounded diagnostics, not long playtests."
 }

@@ -1,6 +1,6 @@
 # Verified MISERY comparison workflow
 
-Storage cleanup is complete: 44 obsolete payloads retired and about 496 GB reclaimed. Current action: prepare the user's long playtest on delivered 0.46. See [STATUS.md](STATUS.md). The older optimization instructions below are historical and must not restart after compaction.
+Storage cleanup and long-playtest preparation are complete. The user can start delivered 0.46 with `Launch MISERY DX12 - long playtest.cmd`; see [the playtest instructions](LONG_PLAYTEST.md) and [STATUS.md](STATUS.md). Review the resulting manual session next. The older optimization instructions below are historical and must not restart after compaction.
 
 ## Storage and version control
 
