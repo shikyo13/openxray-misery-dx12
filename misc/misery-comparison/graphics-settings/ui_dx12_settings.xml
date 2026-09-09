@@ -1,0 +1,30 @@
+<w>
+    <row width="414" height="42"/>
+    <label x="8" y="1" width="194" height="20">
+        <text font="letterica16" r="220" g="214" b="199" vert_align="c"/>
+    </label>
+    <value x="208" y="1" width="198" height="20">
+        <text font="letterica16" r="230" g="225" b="214" vert_align="c"/>
+    </value>
+    <hint x="8" y="24" width="398" height="16">
+        <text font="letterica16" r="164" g="164" b="158"/>
+    </hint>
+    <choice x="208" y="1" width="198" height="20" list_length="4" always_show_scroll="1">
+        <list_font font="letterica16" r="224" g="224" b="215"/>
+        <text_color><e r="224" g="224" b="215"/><d r="130" g="130" b="130"/></text_color>
+    </choice>
+    <page x="0" y="0" width="106" height="24" stretch="1">
+        <texture>ui_button_main01</texture>
+        <text font="letterica16" align="c"/>
+        <text_color><e r="225" g="218" b="204"/></text_color>
+    </page>
+    <status x="8" y="306" width="414" height="16">
+        <text font="letterica16" r="216" g="186" b="140"/>
+    </status>
+    <basic_status x="12" y="225" width="410" height="18">
+        <text font="letterica16" r="216" g="203" b="181"/>
+    </basic_status>
+    <number width="36" height="18">
+        <text font="letterica16" r="220" g="220" b="210" align="r" vert_align="c"/>
+    </number>
+</w>

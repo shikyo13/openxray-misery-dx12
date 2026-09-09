@@ -1,0 +1,50 @@
+; Versioned native DX12 quality presets for MISERY 0.46.
+; Display mode, resolution, HDR driver settings, calibration, VSync and FPS caps
+; are preferences, not quality settings, and are deliberately absent.
+[high_native]
+r_aa = dlaa
+r_fsr_fg = 0
+r__tf_aniso = 16
+rs_vis_distance = 1
+r__geometry_lod = 1
+r__detail_density = 0.2
+r__detail_radius = 49
+r_tree_wind = 1
+ai_use_torch_dynamic_lights = on
+r_sun_shadows = 1
+r2_sun = on
+r2_smap_size = 4096
+r2_sun_far = 180
+r_sun_camera_only = 0
+r_local_shadows = 1
+r_local_shadow_resolution = 1024
+r_local_shadow_faces = 768
+r_local_shadow_cache = 1
+r_detail_shadows = 1
+r_detail_shadow_distance = 100
+r_detail_shadow_coarse = 1
+r2_ssao = st_opt_ultra
+r_ssao_radius = 0.8
+r_ssao_strength = 1
+r2_sun_shafts = st_opt_high
+r_bloom_strength = 1
+r_water_temporal = 1
+r2_soft_water = on
+r_ssgi = 0
+r_ssgi_radius = 3
+r_ssgi_strength = 1
+r_rt_gi = 0
+r_hemi = 1
+r_env_diffuse = 1
+r_bump_mode = 1
+r_terrain_mode = 1
+r_material_mode = 1
+r_ssao_debug = 0
+r_ssgi_debug = 0
+r_bloom_debug = 0
+r_motion_debug = 0
+r_fsr_fg_capture = 0
+
+; Same quality settings; only reconstruction changes.
+[high_dlss_quality]:high_native
+r_aa = dlss_quality

@@ -1,0 +1,296 @@
+-- Native DX12 video settings. Choices are staged until the existing Apply action.
+-- Console values, not the legacy _preset label, identify the active preset.
+local presets = {
+    {"high_native", "DX12 High - Native"},
+    {"high_dlss_quality", "DX12 High - DLSS Q"}
+}
+local yesno = {{"0", "Off"}, {"1", "On"}}
+local onoff = {{"off", "Off"}, {"on", "On"}}
+local function numbers(values, suffix)
+    local result = {}
+    for _, value in ipairs(values) do
+        table.insert(result, {tostring(value), tostring(value) .. (suffix or "")})
+    end
+    return result
+end
+local definitions = {
+    {"Image", "r_aa", "Antialiasing / upscaling", {{"off", "Off"}, {"fxaa", "FXAA"}, {"dlaa", "DLAA (native)"}, {"dlss_quality", "DLSS Quality"}, {"dlss_balanced", "DLSS Balanced"}, {"dlss_performance", "DLSS Performance"}}, "DLAA / DLSS require an NVIDIA RTX GPU."},
+    {"Image", "r_fsr_fg", "FSR 3 frame generation", yesno, "Can be combined with DLAA or DLSS; off for base-FPS tests."},
+    {"Image", "r__tf_aniso", "Anisotropic filtering", numbers({1, 2, 4, 8, 16}, "x"), "Texture filtering at oblique angles."},
+    {"Image", false, "Texture detail", "Full source textures", "Full texture detail is fixed in this build."},
+    {"Image", "rs_v_sync", "Vertical sync", onoff, "Presentation preference; quality presets preserve this."},
+    {"Image", "rs_fps_limit", "Frame rate limit", {{"0", "Unlimited"}, {"60", "60 FPS"}, {"90", "90 FPS"}, {"120", "120 FPS"}, {"144", "144 FPS"}, {"165", "165 FPS"}, {"240", "240 FPS"}}, "Limits engine frames, before frame generation."},
+    {"Image", "rs_fps_limit_in_menu", "Menu frame rate limit", numbers({30, 60, 90, 120}, " FPS"), "Limits GPU use while browsing menus."},
+    {"Shadows", "r_sun_shadows", "Sun shadows", yesno, "Conventional shadow maps; no ray tracing."},
+    {"Shadows", "r2_smap_size", "Sun shadow resolution", numbers({1024, 2048, 4096, 8192}), "Resolution per cascade; High uses 4096."},
+    {"Shadows", "r2_sun_far", "Sun shadow distance", numbers({75, 100, 140, 180}, " m"), "Far limit of the sun shadow cascades."},
+    {"Shadows", "r_local_shadows", "Lamp / flashlight shadows", yesno, "Dynamic shadows from local light sources."},
+    {"Shadows", "r_local_shadow_resolution", "Local shadow resolution", numbers({256, 512, 1024}), "Resolution per face; High uses 1024."},
+    {"Shadows", "r_detail_shadows", "Vegetation shadows", yesno, "Authored grass and small vegetation cast sun shadows."},
+    {"Shadows", "r_detail_shadow_distance", "Vegetation shadow distance", numbers({25, 50, 75, 100, 150, 250}, " m"), "Longer distances increase shadow rendering work."},
+    {"World", "rs_vis_distance", "View distance", numbers({0.5, 0.75, 1}, "x"), "Fraction of the weather's authored far plane."},
+    {"World", "r__geometry_lod", "Object detail", numbers({0.5, 0.75, 1, 1.5, 2}, "x"), "Higher values retain detailed objects farther away."},
+    {"World", "r__detail_density", "Grass density", {{"0.6", "Low (0.60)"}, {"0.4", "Medium (0.40)"}, {"0.3", "High (0.30)"}, {"0.2", "Very high (0.20)"}, {"0.1", "Extreme (0.10)"}}, "Smaller spacing is denser. Reload a save after changing.", true},
+    {"World", "r__detail_radius", "Vegetation range", numbers({49, 75, 100, 150, 200}), "Engine range setting. Reload a save after changing.", true},
+    {"World", "r_tree_wind", "Tree wind", yesno, "Authored tree movement and matching motion vectors."},
+    {"World", "r_water_temporal", "Water antialiasing", yesno, "Stabilizes moving water when temporal AA is selected."},
+    {"World", "r2_soft_water", "Soft water intersections", onoff, "Depth-aware water edges and refraction."},
+    {"World", "ai_use_torch_dynamic_lights", "NPC flashlights", onoff, "Allow NPC torches to illuminate nearby surfaces."},
+    {"Effects", "r2_ssao", "Ambient occlusion", {{"st_opt_off", "Off"}, {"st_opt_low", "Low"}, {"st_opt_medium", "Medium"}, {"st_opt_high", "High"}, {"st_opt_ultra", "Ultra"}}, "Native DX12 SSAO; old HDAO / HBAO selectors do not apply."},
+    {"Effects", "r_ssao_radius", "AO radius", numbers({0.4, 0.6, 0.8, 1, 1.5, 2, 3}), "Occlusion sampling radius; High uses 0.80."},
+    {"Effects", "r_ssao_strength", "AO intensity", numbers({0, 0.5, 0.75, 1, 1.25, 1.5, 2, 3}), "An artistic intensity, not a quality multiplier."},
+    {"Effects", "r2_sun_shafts", "Sun shafts", {{"st_opt_off", "Off"}, {"st_opt_low", "Low"}, {"st_opt_medium", "Medium"}, {"st_opt_high", "High"}}, "Visible when the weather and sun support the effect."},
+    {"Effects", "r_bloom_strength", "MISERY bloom intensity", numbers({0, 0.5, 0.75, 1, 1.25, 1.5, 2}), "1.00 preserves authored bloom; 0 disables bloom."},
+    {"Effects", "r2_tonemap", "Adaptive exposure", onoff, "Uses MISERY's current exposure calibration."},
+    {"Effects", "r2_tonemap_amount", "Exposure blend", numbers({0, 0.3, 0.5, 0.7, 1}), "Preserved by quality presets; higher is not better."},
+    {"Effects", "r_ssgi", "Screen-space GI", {{"0", "Off"}, {"1", "Low"}, {"2", "Medium"}, {"3", "High"}}, "Experimental indirect light; off in playtest presets."},
+    {"Effects", "r_ssgi_radius", "Screen-space GI radius", numbers({1, 2, 3, 5, 10}), "Only affects experimental screen-space GI."},
+    {"Effects", "r_ssgi_strength", "Screen-space GI intensity", numbers({0.25, 0.5, 0.75, 1, 1.5, 2}), "Only affects experimental screen-space GI."},
+    {"Effects", false, "Ray tracing", function() return get_console():get_string("r_rt_gi") == "0" and "Off" or "Enabled via console" end, "Excluded from these presets."},
+    {"Effects", false, "Output color", "SDR", "RTX HDR is controlled in the NVIDIA app."},
+    {"Effects", false, "Parallax / depth of field", "Not implemented", "Legacy flags do not enable these effects in DX12."},
+    {"Effects", false, "Tessellation", "Not implemented", "The legacy toggle does not enable a native DX12 pass."}
+}
+local fixed = {"r2_sun", "r_sun_camera_only", "r_local_shadow_faces", "r_local_shadow_cache", "r_detail_shadow_coarse", "r_rt_gi", "r_hemi", "r_env_diffuse", "r_bump_mode", "r_terrain_mode", "r_material_mode", "r_ssao_debug", "r_ssgi_debug", "r_bloom_debug", "r_motion_debug", "r_fsr_fg_capture"}
+
+local function equal(a, b)
+    if a == nil or b == nil then return a == b end
+    local na, nb = tonumber(a), tonumber(b)
+    if na and nb then return math.abs(na - nb) < 0.0001 end
+    return a == b
+end
+
+local function choice(row, value)
+    local selected
+    for index, item in ipairs(row.choices) do
+        if equal(value, item[1]) then selected = index - 1; break end
+    end
+    if not selected then
+        selected = #row.choices
+        table.insert(row.choices, {value, "Custom (" .. value .. ")"})
+        row.combo:AddItem(row.choices[#row.choices][2], selected)
+    end
+    row.combo:SetCurrentID(selected) -- Native API takes the list index here.
+    row.index = selected
+end
+
+local Panel = {}
+Panel.__index = Panel
+function panel(handler)
+    local instance = setmetatable({}, Panel)
+    instance:initialize(handler)
+    return instance
+end
+function Panel:initialize(handler)
+    self.handler = handler
+    self.rows, self.pending, self.preset_values, self.keys = {}, {}, {}, {}
+    self.xml = CScriptXmlInit()
+    self.xml:ParseFile("ui_dx12_settings.xml")
+    local ini = ini_file("dx12_graphics.ltx")
+    for _, def in ipairs(definitions) do if def[2] then self.keys[def[2]] = true end end
+    for _, key in ipairs(fixed) do self.keys[key] = true end
+    for index, preset in ipairs(presets) do
+        local values = {}
+        for key in pairs(self.keys) do
+            if ini:line_exist(preset[1], key) then values[key] = ini:r_string(preset[1], key) end
+        end
+        self.preset_values[index] = values
+    end
+end
+
+function Panel:init_basic(parent, xml)
+    self.renderer = xml:InitStatic("tab_video:renderer_value", parent)
+    self.renderer:SetText("DirectX 12 (x64)")
+    self.preset = xml:InitComboBox("tab_video:list_presets", parent)
+    self.preset:AddItem("Custom", 0)
+    for index, preset in ipairs(presets) do self.preset:AddItem(preset[2], index) end
+    self.preset:SetCurrentID(0)
+    self.handler.combo_preset = self.preset
+    self.handler:Register(self.preset, "combo_preset")
+    self.basic_lines = {}
+    for index = 1, 4 do
+        local line = self.xml:InitStatic("basic_status", parent)
+        line:SetWndPos(vector2():set(12, 225 + (index - 1) * 18))
+        self.basic_lines[index] = line
+    end
+    self.basic_status = self.basic_lines[1]
+end
+
+function Panel:add_calibration(parent, xml, name)
+    local track = xml:InitTrackBar("tab_video:track_" .. name, parent)
+    local position, width = track:GetWndPos(), track:GetWidth()
+    track:SetWidth(width - 40)
+    local label = self.xml:InitStatic("number", parent)
+    label:SetWndPos(vector2():set(position.x + width - 36, position.y - 1))
+    self.calibration = self.calibration or {}
+    table.insert(self.calibration, {track, label})
+end
+
+function Panel:init_advanced(parent, xml)
+    self.scroll = xml:InitScrollView("video_adv:scroll_v", parent)
+    self.scroll:SetWndPos(vector2():set(0, 30))
+    self.scroll:SetHeight(272)
+    self.status = self.xml:InitStatic("status", parent)
+    self.buttons = {}
+    for index, name in ipairs({"Image", "Shadows", "World", "Effects"}) do
+        local page = name
+        local button = self.xml:Init3tButton("page", parent)
+        button:SetWndPos(vector2():set((index - 1) * 108, 0))
+        button:SetText(page)
+        self.handler:Register(button, "dx12_" .. page)
+        self.handler:AddCallback("dx12_" .. page, ui_events.BUTTON_CLICKED, function() self:show_page(page) end, self.handler)
+        self.buttons[page] = button
+    end
+    self.previous = self.xml:Init3tButton("page", parent)
+    self.previous:SetWndPos(vector2():set(0, 322))
+    self.previous:SetText("Previous")
+    self.handler:Register(self.previous, "dx12_previous")
+    self.handler:AddCallback("dx12_previous", ui_events.BUTTON_CLICKED, function() self:show_page(self.page, self.page_number - 1) end, self.handler)
+    self.next = self.xml:Init3tButton("page", parent)
+    self.next:SetWndPos(vector2():set(108, 322))
+    self.next:SetText("Next")
+    self.handler:Register(self.next, "dx12_next")
+    self.handler:AddCallback("dx12_next", ui_events.BUTTON_CLICKED, function() self:show_page(self.page, self.page_number + 1) end, self.handler)
+    for _, def in ipairs(definitions) do
+        local row = {def = def, window = self.xml:InitStatic("row", nil)}
+        row.label = self.xml:InitStatic("label", row.window)
+        row.label:SetText(def[3])
+        self.xml:InitStatic("hint", row.window):SetText(def[5])
+        if def[2] then
+            row.combo = self.xml:InitComboBox("choice", row.window)
+            row.choices = {}
+            for index, item in ipairs(def[4]) do
+                table.insert(row.choices, item)
+                row.combo:AddItem(item[2], index - 1)
+            end
+            self.handler:Register(row.combo, "dx12_value_" .. def[2])
+            choice(row, get_console():get_string(def[2]))
+        else
+            row.value = self.xml:InitStatic("value", row.window)
+        end
+        table.insert(self.rows, row)
+    end
+    self:show_page("Image")
+    self:load_current()
+end
+
+function Panel:show_page(name, number)
+    self.scroll:Clear()
+    local category = {}
+    for _, row in ipairs(self.rows) do
+        if row.def[1] == name then table.insert(category, row) end
+    end
+    -- Fixed pages keep every label inside the native UI's clipping rectangle.
+    self.page_total = math.ceil(#category / 6)
+    self.page_number = math.max(1, math.min(number or 1, self.page_total))
+    for index = (self.page_number - 1) * 6 + 1, math.min(self.page_number * 6, #category) do
+        local row = category[index]
+        self.scroll:AddWindow(row.window, true)
+        row.window:SetAutoDelete(false)
+    end
+    self.scroll:ScrollToBegin()
+    self.page = name
+    for page, button in pairs(self.buttons) do button:Enable(page ~= name) end
+    self.previous:Enable(self.page_number > 1)
+    self.next:Enable(self.page_number < self.page_total)
+end
+
+function Panel:match(values)
+    for index, preset in ipairs(self.preset_values) do
+        local matches = true
+        for key, value in pairs(preset) do
+            if not equal(value, values[key]) then matches = false; break end
+        end
+        if matches then return index end
+    end
+    return 0
+end
+
+function Panel:live()
+    local values = {}
+    for key in pairs(self.keys) do values[key] = get_console():get_string(key) end
+    if values.r2_sun ~= "on" then values.r_sun_shadows = "0" end
+    return values
+end
+
+function Panel:load_current()
+    self.pending = {}
+    self.baseline = self:live()
+    for _, row in ipairs(self.rows) do
+        if row.combo then choice(row, self.baseline[row.def[2]]) end
+    end
+    self:refresh(true)
+end
+
+function Panel:select_preset(index)
+    if index == 0 then return end -- Custom describes the current individual choices.
+    self.pending = {}
+    for key, value in pairs(self.preset_values[index]) do self.pending[key] = value end
+    for _, row in ipairs(self.rows) do
+        if row.combo and self.pending[row.def[2]] then choice(row, self.pending[row.def[2]]) end
+    end
+    self:refresh(true)
+end
+
+function Panel:refresh(force)
+    if not self.scroll then return end
+    if not force and time_global_async() < (self.next_update or 0) then return end
+    self.next_update = time_global_async() + 200
+    local live = self:live()
+    for _, row in ipairs(self.rows) do
+        if row.combo then
+            local key, index = row.def[2], row.combo:CurrentID()
+            if index ~= row.index then
+                self.pending[key] = row.choices[index + 1][1]
+                row.index = index
+            elseif self.pending[key] == nil and not equal(live[key], row.choices[index + 1][1]) then
+                choice(row, live[key]) -- Reflect runtime fallback or console changes.
+            end
+        elseif row.value then
+            row.value:SetText(type(row.def[4]) == "function" and row.def[4]() or row.def[4])
+        end
+    end
+    local effective, count = {}, 0
+    for key, value in pairs(live) do effective[key] = value end
+    for key, value in pairs(self.pending) do
+        effective[key] = value
+        if not equal(live[key], value) then count = count + 1 end
+    end
+    local current, staged = self:match(live), self:match(effective)
+    self.preset:SetCurrentID(staged)
+    local active_name = current > 0 and presets[current][2] or "Custom"
+    local summary = count > 0 and (tostring(count) .. " pending changes - press Apply") or ("Active: " .. active_name)
+    self.status:SetText(self.page .. " " .. self.page_number .. "/" .. self.page_total .. " | " .. summary)
+    local aa = live.r_aa
+    for _, item in ipairs(definitions[1][4]) do if item[1] == aa then aa = item[2] end end
+    self.basic_lines[1]:SetText("Active: " .. active_name)
+    self.basic_lines[2]:SetText(tostring(device().width) .. " x " .. tostring(device().height) .. " | " .. aa .. " | SDR output")
+    self.basic_lines[3]:SetText(count > 0 and summary or "Choose Advanced for individual DX12 settings.")
+    self.basic_lines[4]:SetText("RTX HDR remains an NVIDIA app setting.")
+    for _, pair in ipairs(self.calibration or {}) do pair[2]:SetText(string.format("%.2f", pair[1]:GetFValue())) end
+    self.change_count = count
+end
+
+function Panel:apply()
+    self:refresh(true)
+    local console, reload = get_console(), false
+    for _, row in ipairs(self.rows) do
+        if row.def[6] and self.pending[row.def[2]] and not equal(self.pending[row.def[2]], console:get_string(row.def[2])) then reload = true end
+    end
+    -- Stable ordering makes the applied set reproducible in the log.
+    local keys = {}
+    for key in pairs(self.pending) do table.insert(keys, key) end
+    table.sort(keys)
+    for _, key in ipairs(keys) do
+        local value = self.pending[key]
+        if not equal(console:get_string(key), value) then
+            printf("[DX12 Settings] %s %s", key, value)
+            console:execute(key .. " " .. value)
+        end
+    end
+    -- The sun pass has two enable conditions; keep the legacy gate in sync.
+    if self.pending.r_sun_shadows then console:execute("r2_sun " .. (self.pending.r_sun_shadows == "1" and "on" or "off")) end
+    self.pending = {}
+    self.reload_needed = reload
+    self:load_current()
+end
