@@ -6,6 +6,27 @@ The user's priority is to remove internal engine bottlenecks so native x64/DX12 
 
 User correction after the failed submission experiment: do not skip from submission timing to separate shadow optimization. Finish the parallel command-recording architecture first. Shadows may supply its first workload; that does not authorize prioritizing shadow-specific culling or draw optimizations ahead of it.
 
+## 0.43 delivery and native-resolution qualification (2026-09-09 UTC)
+
+Delivered independent package `D:\Codex\MISERY-DX12\outputs\MISERY_DX12_DEV_0.43`, with 17,170 initially SHA-verified files / 11,453,744,227 bytes. Compiled source is `a70a2ee050f16f04432e86a7b6db012046e4d86f`; the actual package log reports that identity. Executable SHA-256 is `39a6c9683fef395ec749d5f539312d76b0c42d1eae50ad8fa3a1cf1a2d27e2e9`, with matching archived PDB. This delivers the retained-static geometry change below, the session-only recording control and optional low-rate workload counts. The normal launcher remains serial; parallel is optional.
+
+AV (`PACKAGE_043_NATIVE_SERIAL_AV`) and AW (`PACKAGE_043_NATIVE_PARALLEL_AW`) used the actual package, 3440x1440, FXAA, AO-high, 16x, conventional shadows/grass and FG off. Initial profiles, controllers and camera replays match. Detailed CPU/GPU timers and slow-frame tracing were off; `-workload_trace` logged counts once per second. Both game, PresentMon and GPU-sampler exits were 0. All eight stills were inspected; no new visible corruption was noted. Each run retains 836 legacy shader failure lines, with no matched fatal/device/NVRHI error. These checks do not establish complete effects or campaign stability.
+
+| Scene | Application FPS serial / parallel | p99 ms serial / parallel |
+|---|---:|---:|
+| Interior | 101.81 / 101.41 | 13.48 / 13.91 |
+| Outdoor | 93.47 / 91.44 | 14.78 / 14.54 |
+| Rain | 97.59 / 98.60 | 14.06 / 13.68 |
+| Night | 113.11 / 118.54 | 13.01 / 12.21 |
+
+No consistent native FPS or p99 gain is established for parallel recording. Game GPU utilization averages about 94-97%; sampled background engines remain below 0.32%, with fourteen GPU samples per scene. Workload counts differ: serial night lights span 39-46, parallel 43-45; clocks differ by one minute in rain/night. These samples cannot assign the night difference to recording, especially with the prior traced sequential fallback. Earlier CPU measurements remain the evidence for the CPU savings; do not reinterpret these application timings as displayed-frame or isolated-code speedups. API-only PresentMon has no display-mode/latency/drop evidence.
+
+The refreshed `outputs/MISERY_DX9_DX12_COMPARISON_043.html` retains the fixed `DX9_MATCHED_041_B` baseline and uses AV for the sliders. `MISERY_GRAPHICS_SETTINGS_043.json` updates actual profile/capture provenance; all eleven cited implementation/reference file hashes were rechecked unchanged. The report includes AW's native comparison and the data limitations. Eight native-sized images, four sliders, seventeen local links and script syntax were checked. No new browser screenshot was taken.
+
+Package normal profile restored; all 17,170 files checked for presence/size after testing and the five modified/critical binary/profile/save hashes verified. Prior packages and the live/reference installations remain preserved. Separate normal 0.41 staging executable/PDB/profile restored and hash-verified. Source/build archive: `work/runtime/workload-package-043`. Native evidence: `outputs/implementation-evidence/MISERY_DX12_NATIVE_PARALLEL_043_SUMMARY.json`. Delivery details: `DEVELOPMENT_043.md`.
+
+Next: stay on priority 1 and use the existing CPU traces to address remaining geometry-data preparation/recording costs. GPU Culling and Skinned GPU Culling each recorded about 0.27 ms CPU in the earlier AT serial daytime trace. Inspect those concrete paths before another benchmark; do not keep repeating unchanged native FPS runs. Separate shadow/caster optimization remains deferred.
+
 ## Priority 1: static geometry CPU work (2026-09-09 UTC)
 
 The current candidate removes repeated destruction and copying of 21,786 unchanged static batches. The collector retains its static prefix and rebuilds dynamic batches after it. Full level unload clears the collector and resets the prefix before destroying level visuals. Shadow algorithms, culling criteria, shaders, quality settings and game callbacks are unchanged. This also removes the redundant second static-batch vector.

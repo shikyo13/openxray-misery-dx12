@@ -114,6 +114,8 @@ summary={"runs":runs,"method":"One sequential run per renderer, four fixed camer
 profile_note = ""
 if any(flag in runs["DX12"]["process"]["args"] for flag in ("-graphics_trace", "-cpu_trace")):
     profile_note = "GPU profiling was enabled in this DX12 run; its overhead is included. These results should not be treated as an isolated measurement of the code change."
+elif "-workload_trace" in runs["DX12"]["process"]["args"]:
+    profile_note = "CPU/GPU pass timers were disabled; workload counts were logged once per second. This is not a completely uninstrumented capture."
 if not runs["DX12"]["process"].get("presentmon_display_tracking", True):
     profile_note += " DX12 uses application-API capture: presentation mode, displayed-frame timing, display latency and drops are unavailable. The fixed DX9 baseline was recorded earlier; this comparison does not isolate API efficiency or the effect of a code change."
     summary["method"] += " DX12 display tracking was unavailable; only application present intervals were captured."
@@ -292,7 +294,9 @@ if parallel_summary:
     settings_html += '<p>The normal launcher uses serial recording; a separate launcher enables the experimental parallel path. Separate shadow-specific optimization remains deferred.</p>'
     settings_html += '<p>'+html.escape(parallel_summary['quality_note'])+'</p>'
     resolution = parallel_summary['resolution']
-    settings_html += '<p>Isolated CPU-scaling comparison at '+str(resolution[0])+' × '+str(resolution[1])+'. These samples do not replace the native-resolution comparison.</p>'
+    comparison_note = parallel_summary.get('comparison_note',
+        'Isolated CPU-scaling comparison at '+str(resolution[0])+' × '+str(resolution[1])+'. These samples do not replace the native-resolution comparison.')
+    settings_html += '<p>'+html.escape(comparison_note)+'</p>'
     settings_html += '<div class="table-scroll"><table><thead><tr><th>Scene</th><th>Application FPS OFF / ON</th><th>p99 ms OFF / ON</th></tr></thead><tbody>'
     for scene in cases:
         off,on=(parallel_summary['runs'][mode]['scenes'][scene] for mode in ('off','on'))
@@ -301,7 +305,7 @@ if parallel_summary:
     settings_html += '<p class="small">'+html.escape(parallel_summary['method'])+'</p>'
     settings_html += '<p><a href="'+html.escape(args.parallel_summary,quote=True)+'">Parallel recording measurements and telemetry</a>'
     if args.previous_report:
-        settings_html += ' · <a href="'+html.escape(args.previous_report,quote=True)+'#feature-cost">Earlier feature-cost experiment</a>'
+        settings_html += ' · <a href="'+html.escape(args.previous_report,quote=True)+'">Previous comparison</a>'
     settings_html += '</p></section>'
 page = page.replace('<section><h2>Interior</h2>',settings_html+'<section><h2>Interior</h2>',1)
 page = page.replace('</style>', '.table-scroll{overflow-x:auto}.settings{width:100%;font-size:14px}.settings th,.settings td{vertical-align:top;padding:10px 14px}.settings th:first-child{width:15%}.settings td{width:28%}summary{cursor:pointer;color:#c7d3a2}details{border:1px solid #465043;padding:16px} </style>',1)
