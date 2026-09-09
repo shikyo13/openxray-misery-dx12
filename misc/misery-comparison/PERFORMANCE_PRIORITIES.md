@@ -1,10 +1,10 @@
 # Engine performance and architecture priorities
 
-## Current direction: storage cleanup, then a long user playtest (2026-09-09 UTC)
+## Current direction: a long user playtest (2026-09-09 UTC)
 
 The user stopped the repeated optimization/benchmark loop and requested a long playtest with useful diagnostic logging. After finding 46 full game packages, the user explicitly authorized reclaiming space and enforcing proper version control and storage management. This supersedes the next-action instructions in the historical entries below. Read STATUS.md for the current checkpoint; do not replay completed investigations after compaction.
 
-Keep 0.46 as the playable build and 0.45 as rollback. Retire the 44 older game payloads only after preserving their saves, settings, binaries and sources. Preserve the original installation, fixed DX9 reference, reports and source Git history. Enforce storage-policy.json in packaging and comparison helpers. After cleanup, prepare bounded, low-overhead diagnostics for the user's long 0.46 playtest; use its findings to choose further engine work. No new shader or AI concurrency experiment is queued.
+Storage cleanup is complete: 44 obsolete payloads retired after preservation/verification, about 496 GB reclaimed, and all 44 profiles/91 saves archived. Keep 0.46 as the playable build and 0.45 as rollback. Preserve the original installation, fixed DX9 reference, reports and source Git history. Enforce storage-policy.json in packaging and comparison helpers. Prepare bounded, low-overhead diagnostics for the user's long 0.46 playtest; use its findings to choose further engine work. No new shader or AI concurrency experiment is queued.
 
 ## Earlier optimization direction and findings
 

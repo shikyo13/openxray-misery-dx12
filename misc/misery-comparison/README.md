@@ -1,13 +1,13 @@
 # Verified MISERY comparison workflow
 
-Current action: finish authorized storage cleanup and prepare the user's long playtest on delivered 0.46. See [STATUS.md](STATUS.md). The older optimization instructions below are historical and must not restart after compaction.
+Storage cleanup is complete: 44 obsolete payloads retired and about 496 GB reclaimed. Current action: prepare the user's long playtest on delivered 0.46. See [STATUS.md](STATUS.md). The older optimization instructions below are historical and must not restart after compaction.
 
 ## Storage and version control
 
 Deploy `storage-policy.json`, `archive-retired-package.py`, `retire-development-packages.ps1`, `package-development.py` and `run-graphics-comparison.ps1` together into the existing workspace `work` directory. Their maintained copies live here in Git. `WORKSPACE_AGENTS.md` is the versioned copy of the workspace-root instructions; `STATUS.md` is copied to `work/progress.md`.
 
 - Keep at most two full packages: current and rollback. Build and test routine changes in the existing isolated runtime; package only a user playtest or release milestone.
-- Packaging requires committed source/overlay and an archived build identity. It checks both C: and D: package roots and reserves 30 GiB after copying, with at least 20 GiB free on the system drive. Use `python -X utf8 work/package-development.py --version 0.47 --check-storage` for a read-only preflight; it deliberately refuses a third full package.
+- Packaging requires committed source/overlay and an archived build identity. It checks both C: and D: package roots, caps retired archives at 10 GiB, and reserves 30 GiB after copying, with at least 20 GiB free on the system drive. A verified package is renamed from `.incomplete` staging only after its manifest and file checks pass. Use `python -X utf8 work/package-development.py --version 0.47 --check-storage` for a read-only preflight; it deliberately refuses a third full package.
 - Before creating a replacement package, explicitly retire the older rollback using `work/retire-development-packages.ps1 -Versions @('VERSION') -Apply`. The current version is protected. The helper checks all paths, preserves and verifies an archive, then removes only that package's `game` payload. Original metadata stays beside a retirement receipt. No automatic save deletion.
 - Preserve source revisions, patches, manifests and the private compatibility overlay. Do not put game assets, user saves, binary archives or logs into public Git. Keep build artifacts outside source control.
 - Short comparisons have duration, disk and evidence limits. Heavy per-frame graphics/AI traces are not suitable defaults for a long playtest.
