@@ -118,6 +118,78 @@ void PrepareLocalShadows(LocalShadowPassState& state)
 }
 }
 
+// Resolve shared cache ownership before recording. A light and all its faces
+// stay in one partition, so workers only mutate their own cache entries.
+static bool PrepareLocalRecording(RenderContext* context, const framegraph::FrameGraph& graph,
+    framegraph::VirtualResourceHandle output, GPUCullingManager* geometry, LocalShadowPassState& state)
+{
+    auto* texture = graph.GetPhysicalTexture(output);
+    if (state.outputTexture != texture) {
+        state.outputFramebuffers.clear();
+        state.outputTexture = texture;
+    }
+    state.outputFramebuffers.resize(texture->getDesc().arraySize);
+    state.frameCaches.assign(state.matrices.size(), nullptr);
+    if (geometry && geometry->IsMegaDataUploaded()) {
+        auto* nv = context->GetCommandList()->getDevice();
+        for (u32 face = 0; face < state.matrices.size(); ++face) {
+            if (!state.visibleFaces[face]) continue;
+            const auto* source = ClusteredLightManager::Instance().GetLightSources()[state.owners[face]];
+            auto& saved = state.staticCache[source];
+            state.frameCaches[face] = &saved;
+            const u32 faceCount = source->flags.type == IRender_Light::POINT ? 6 : 1;
+            const bool reset = !saved.texture || saved.texture->getDesc().width != state.resolution ||
+                saved.texture->getDesc().arraySize != faceCount ||
+                saved.staticInstances != geometry->GetStaticInstanceBuffer() ||
+                saved.terrainInstances != geometry->GetTerrainInstanceBuffer();
+            if (reset) {
+                nvrhi::TextureDesc desc;
+                desc.width = desc.height = state.resolution; desc.arraySize = faceCount;
+                desc.dimension = nvrhi::TextureDimension::Texture2DArray;
+                desc.format = nvrhi::Format::D32; desc.isRenderTarget = true;
+                desc.initialState = nvrhi::ResourceStates::DepthWrite; desc.keepInitialState = true;
+                desc.debugName = "LocalStaticShadow";
+                saved.texture = nv->createTexture(desc);
+                R_ASSERT2(saved.texture, "Static local shadow cache allocation failed");
+                saved.staticInstances = geometry->GetStaticInstanceBuffer();
+                saved.terrainInstances = geometry->GetTerrainInstanceBuffer();
+                for (bool& valid : saved.valid) valid = false;
+                for (auto& framebuffer : saved.framebuffers) framebuffer = nullptr;
+            }
+            const u64 revision = bindless::MaterialBuffer::Instance().GetShadowRevision();
+            if (saved.materialRevision != revision) {
+                for (bool& valid : saved.valid) valid = false;
+                saved.materialRevision = revision;
+            }
+            saved.lastUsedFrame = Device.dwFrame;
+        }
+    }
+    // Active entries were marked above; no worker inserts or erases map nodes.
+    for (auto it = state.staticCache.begin(); it != state.staticCache.end();) {
+        if (Device.dwFrame - it->second.lastUsedFrame > 8) it = state.staticCache.erase(it);
+        else ++it;
+    }
+    const bool trace = strstr(Core.Params, "-shadow_trace") && Device.dwTimeGlobal >= state.nextTrace;
+    if (trace) state.nextTrace = Device.dwTimeGlobal + 1000;
+    return trace;
+}
+
+static u32 LocalRecordingSplit(const LocalShadowPassState& state)
+{
+    u32 visible = 0;
+    for (bool face : state.visibleFaces) visible += face;
+    u32 before = 0, split = 0, difference = visible;
+    for (u32 face = 0; face < state.matrices.size(); ++face) {
+        if (face && state.owners[face] != state.owners[face - 1] && before && before < visible) {
+            const u32 after = visible - before;
+            const u32 imbalance = _max(before, after) - _min(before, after);
+            if (imbalance < difference) { difference = imbalance; split = face; }
+        }
+        before += state.visibleFaces[face];
+    }
+    return split;
+}
+
 framegraph::VirtualResourceHandle setupLocalShadowPass(
     framegraph::FrameGraph& graph, RenderDevice* device, GPUCullingManager* geometry,
     MaterialCache* materials, framegraph::VirtualResourceHandle uploadDependency,
@@ -128,6 +200,7 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
     // CPU metadata is ready before ClusterLightAssign uploads its light buffer.
     PrepareLocalShadows(state);
     InitializeShadowMapResources(device, state.drawing);
+    if (strstr(Core.Params, "-fg_partition_record")) InitializeShadowMapResources(device, state.secondDrawing);
     struct PassData {
         framegraph::VirtualResourceHandle texture;
         RenderDevice* device;
@@ -138,6 +211,8 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
         SkinningPassState* skinning;
         decals::OverlayManager* overlays;
         FGDetailManager* details;
+        u32 split = 0;
+        bool trace = false;
     };
     auto& pass = graph.addCallbackPass<PassData>("Local shadow maps",
         [&](framegraph::FrameGraph& builder, framegraph::PassHandle handle, PassData& data) {
@@ -156,14 +231,18 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
             data.texture = pb.createTexture("rt_LocalShadow", desc);
             data.device = device; data.geometry = geometry; data.materials = materials; data.state = &state;
             data.collector = collector; data.skinning = &skinning; data.overlays = overlays; data.details = details;
+            data.split = LocalRecordingSplit(state);
             if (!state.matrices.empty()) builder.SetPassParallelRecording(handle,
-                [&data](RenderContext& context, const framegraph::FrameGraph&) {
-                    if (!data.geometry || !data.geometry->IsMegaDataUploaded()) return;
-                    data.materials->FinalizePendingMaterials(&context);
-                    bindless::MaterialBuffer::Instance().Upload(&context);
-                    GetOrCreateDrawIndexBuffer("SunShadow", context.GetCommandList()->getDevice());
-                    if (data.overlays) data.overlays->UploadSplats(context.GetCommandList());
-                    if (!data.skinning->initialized) return;
+                [&data](RenderContext& context, const framegraph::FrameGraph& graph) {
+                    const bool ready = data.geometry && data.geometry->IsMegaDataUploaded();
+                    if (ready) {
+                        data.materials->FinalizePendingMaterials(&context);
+                        bindless::MaterialBuffer::Instance().Upload(&context);
+                        GetOrCreateDrawIndexBuffer("SunShadow", context.GetCommandList()->getDevice());
+                        if (data.overlays) data.overlays->UploadSplats(context.GetCommandList());
+                    }
+                    data.trace = PrepareLocalRecording(&context, graph, data.texture, data.geometry, *data.state);
+                    if (!ready || !data.skinning->initialized) return;
                     const auto& state = *data.state;
                     PrepareSkinnedShadowBones(&context, data.geometry, data.collector,
                         [&state](const GeometryBatch& batch) {
@@ -176,11 +255,22 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                             }
                             return false;
                         });
-                });
+                }, data.split ? 2u : 1u);
         },
         [](const PassData& data, const framegraph::FrameGraph& graph, RenderContext* context) {
             auto& state = *data.state;
-            const bool trace = strstr(Core.Params, "-shadow_trace") && Device.dwTimeGlobal >= state.nextTrace;
+            const u32 partition = context->GetRecordingPartition();
+            const u32 partitions = context->GetRecordingPartitionCount();
+            R_ASSERT(partitions <= 2 && (partitions == 1 || data.split > 0));
+            auto& drawing = partition ? state.secondDrawing : state.drawing;
+            const u32 firstFace = partition ? data.split : 0;
+            const u32 endFace = partitions == 2 && !partition ? data.split : u32(state.matrices.size());
+            if (!context->IsParallelRecording() && data.geometry && data.geometry->IsMegaDataUploaded()) {
+                data.materials->FinalizePendingMaterials(context);
+                bindless::MaterialBuffer::Instance().Upload(context);
+            }
+            const bool trace = context->IsParallelRecording() ? data.trace :
+                PrepareLocalRecording(context, graph, data.texture, data.geometry, state);
             using Clock = std::chrono::steady_clock;
             auto stamp = Clock::now();
             double cpu[6] = {};
@@ -194,9 +284,9 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
             auto* texture = graph.GetPhysicalTexture(data.texture);
             auto* geometry = data.geometry;
             const bool canRender = !state.matrices.empty() && geometry && geometry->IsMegaDataUploaded();
-            if (!canRender) {
+            if (!partition && !canRender) {
                 command->clearDepthStencilTexture(texture, nvrhi::AllSubresources, true, 1.f, false, 0);
-            } else {
+            } else if (!partition) {
                 // Every rendered face receives a complete cached depth copy.
                 // Clear only skipped faces; unused capacity has no light index.
                 for (u32 face = 0; face < state.matrices.size();) {
@@ -207,21 +297,12 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                         nvrhi::TextureSubresourceSet(0, 1, first, face - first), true, 1.f, false, 0);
                 }
             }
-            if (!state.matrices.empty())
+            if (!partition && !state.matrices.empty())
                 command->writeBuffer(ClusteredLightManager::Instance().GetShadowMatricesBuffer(),
                     state.matrices.data(), state.matrices.size() * sizeof(Fmatrix));
             u32 worldCount = 0, skinnedCount = 0, detailCount = 0, renderedFaces = 0, staticUpdates = 0;
             u32 treeCount = 0;
             if (canRender) {
-                if (!context->IsParallelRecording()) {
-                    data.materials->FinalizePendingMaterials(context);
-                    bindless::MaterialBuffer::Instance().Upload(context);
-                }
-                if (state.outputTexture != texture) {
-                    state.outputFramebuffers.clear();
-                    state.outputTexture = texture;
-                }
-                state.outputFramebuffers.resize(texture->getDesc().arraySize);
                 lap(0);
                 xr_vector<u32> candidates[3];
                 xr_vector<u32> treeCandidates[3], animatedTrees;
@@ -244,7 +325,7 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                 };
                 u32 lastOwner = u32(-1);
                 bool staticCandidatesReady = false;
-                for (u32 face = 0; face < state.matrices.size(); ++face) {
+                for (u32 face = firstFace; face < endFace; ++face) {
                     if (!state.visibleFaces[face]) continue;
                     ++renderedFaces;
                     const auto* source = ClusteredLightManager::Instance().GetLightSources()[state.owners[face]];
@@ -274,33 +355,9 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                     auto& framebuffer = state.outputFramebuffers[face];
                     if (!framebuffer) framebuffer = command->getDevice()->createFramebuffer(fb);
                     R_ASSERT2(framebuffer, "Local shadow framebuffer creation failed");
-                    auto& saved = state.staticCache[source];
+                    R_ASSERT(state.frameCaches[face]);
+                    auto& saved = *state.frameCaches[face];
                     const u32 lightFace = state.lightFaces[face];
-                    const u32 faceCount = source->flags.type == IRender_Light::POINT ? 6 : 1;
-                    const bool reset = !saved.texture || saved.texture->getDesc().width != state.resolution ||
-                        saved.texture->getDesc().arraySize != faceCount ||
-                        saved.staticInstances != geometry->GetStaticInstanceBuffer() ||
-                        saved.terrainInstances != geometry->GetTerrainInstanceBuffer();
-                    if (reset) {
-                        nvrhi::TextureDesc desc;
-                        desc.width = desc.height = state.resolution; desc.arraySize = faceCount;
-                        desc.dimension = nvrhi::TextureDimension::Texture2DArray;
-                        desc.format = nvrhi::Format::D32; desc.isRenderTarget = true;
-                        desc.initialState = nvrhi::ResourceStates::DepthWrite; desc.keepInitialState = true;
-                        desc.debugName = "LocalStaticShadow";
-                        saved.texture = command->getDevice()->createTexture(desc);
-                        R_ASSERT2(saved.texture, "Static local shadow cache allocation failed");
-                        saved.staticInstances = geometry->GetStaticInstanceBuffer();
-                        saved.terrainInstances = geometry->GetTerrainInstanceBuffer();
-                        for (bool& valid : saved.valid) valid = false;
-                        for (auto& framebuffer : saved.framebuffers) framebuffer = nullptr;
-                    }
-                    const u64 revision = bindless::MaterialBuffer::Instance().GetShadowRevision();
-                    if (saved.materialRevision != revision) {
-                        for (bool& valid : saved.valid) valid = false;
-                        saved.materialRevision = revision;
-                    }
-                    saved.lastUsedFrame = Device.dwFrame;
                     if (!ps_r_local_shadow_cache || !saved.valid[lightFace] || memcmp(&saved.matrices[lightFace], &state.matrices[face], sizeof(Fmatrix))) {
                         // Warm cached faces need no static-world candidate scan.
                         if (!staticCandidatesReady) {
@@ -317,39 +374,33 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                         if (!target) target = command->getDevice()->createFramebuffer(staticFB);
                         R_ASSERT2(target, "Static local shadow framebuffer creation failed");
                         worldCount += DrawWorldShadowMap(context, data.device, geometry,
-                            state.matrices[face], state.frusta[face], target, state.drawing, candidates, 3, 1);
+                            state.matrices[face], state.frusta[face], target, drawing, candidates, 3, 1);
                         saved.matrices[lightFace] = state.matrices[face]; saved.valid[lightFace] = true;
                     }
                     command->copyTexture(texture, nvrhi::TextureSlice().setArraySlice(face),
                         saved.texture, nvrhi::TextureSlice().setArraySlice(lightFace));
                     lap(2);
                     worldCount += DrawWorldShadowMap(context, data.device, geometry,
-                        state.matrices[face], state.frusta[face], framebuffer, state.drawing, candidates, 4);
+                        state.matrices[face], state.frusta[face], framebuffer, drawing, candidates, 4);
                     // Wind moves authored tree vertices even though their instance transforms are static.
                     // Draw them over the fixed-geometry cache each frame.
                     treeCount += DrawWorldShadowMap(context, data.device, geometry,
-                        state.matrices[face], state.frusta[face], framebuffer, state.drawing, treeCandidates, 1, 2);
+                        state.matrices[face], state.frusta[face], framebuffer, drawing, treeCandidates, 1, 2);
                     lap(3);
                     skinnedCount += DrawSkinnedSunShadows(context, data.device, geometry, data.collector,
                         data.overlays, state.matrices[face], state.frusta[face], framebuffer, *data.skinning, &skinnedCandidates);
                     lap(4);
                     const Fvector4 lightSphere{source->position.x, source->position.y, source->position.z, source->range};
-                    detailCount += DrawDetailShadowMap(context, data.device, data.details, state.drawing,
+                    detailCount += DrawDetailShadowMap(context, data.device, data.details, drawing,
                         state.matrices[face], state.frusta[face], framebuffer, &lightSphere) ? 1 : 0;
                     lap(5);
                 }
             }
-            // Keep only recently used lights; the command list owns in-flight
-            // resource references. Stationary maps survive camera movement.
-            for (auto it = state.staticCache.begin(); it != state.staticCache.end();) {
-                if (Device.dwFrame - it->second.lastUsedFrame > 8) it = state.staticCache.erase(it);
-                else ++it;
-            }
             if (trace) {
-                state.nextTrace = Device.dwTimeGlobal + 1000;
-                Msg("* [LocalShadow] frame=%u size=%u points=%u spots=%u faces=%u rendered=%u static_updates=%u budget=%d omitted=%u world=%u skinned=%u detail=%u trees=%u",
+                Msg("* [LocalShadow] frame=%u size=%u points=%u spots=%u faces=%u rendered=%u static_updates=%u budget=%d omitted=%u world=%u skinned=%u detail=%u trees=%u part=%u parts=%u first=%u end=%u",
                     Device.dwFrame, state.resolution, state.pointLights, state.spotLights, u32(state.matrices.size()),
-                    renderedFaces, staticUpdates, ps_r_local_shadow_faces, state.omittedLights, worldCount, skinnedCount, detailCount, treeCount);
+                    renderedFaces, staticUpdates, ps_r_local_shadow_faces, state.omittedLights, worldCount, skinnedCount, detailCount, treeCount,
+                    partition, partitions, firstFace, endFace);
                 Msg("* [LocalShadowCPU] frame=%u time=%u init_ms=%.3f candidates_ms=%.3f static_copy_ms=%.3f dynamic_ms=%.3f skinned_ms=%.3f detail_ms=%.3f",
                     Device.dwFrame, Device.dwTimeGlobal, cpu[0], cpu[1], cpu[2], cpu[3], cpu[4], cpu[5]);
             }

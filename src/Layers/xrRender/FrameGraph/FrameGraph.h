@@ -86,10 +86,13 @@ public:
     void SetPassHasSideEffects(PassHandle pass);
 
     template <typename F>
-    void SetPassParallelRecording(PassHandle handle, F&& prepare) {
+    void SetPassParallelRecording(PassHandle handle, F&& prepare, u32 partitions = 1) {
         auto* pass = GetPassNode(handle);
-        VERIFY(pass);
+        VERIFY(pass && partitions > 0);
         pass->parallelRecording = true;
+        // Partitioned callbacks own their mutable scratch data and select disjoint
+        // work through RenderContext. Shared preparation runs once before all jobs.
+        pass->recordingPartitions = partitions;
         pass->prepareRecording = m_frameArena.Make<PassCallback<std::decay_t<F>>>(std::forward<F>(prepare));
     }
 
@@ -265,7 +268,8 @@ private:
     //  HELPER METHODS
     // PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 
-    void ExecutePass(PassNode* pass, nvrhi::ICommandList* cmdList, fg::RenderContext* context = nullptr);
+    void ExecutePass(PassNode* pass, nvrhi::ICommandList* cmdList, fg::RenderContext* context = nullptr,
+        const char* recordingName = nullptr, float* executionTimeMs = nullptr);
 
     ResourceNode* GetResourceNode(VirtualResourceHandle handle);
     const ResourceNode* GetResourceNode(VirtualResourceHandle handle) const;

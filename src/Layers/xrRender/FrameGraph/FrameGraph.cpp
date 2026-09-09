@@ -13,6 +13,9 @@ namespace xray::render::framegraph {
 struct FrameGraph::RecordingJob {
     nvrhi::CommandListHandle commandList;
     xr_unique_ptr<fg::RenderContext> context;
+    PassNode* pass = nullptr;
+    shared_str name;
+    float executionTimeMs = 0;
     std::chrono::steady_clock::time_point begin, end;
     u64 thread = 0;
     double openMs = 0, initializeMs = 0, recordMs = 0, closeMs = 0;
@@ -246,26 +249,28 @@ void FrameGraph::Compile() {
 //  EXECUTE PHASE (STUB FOR NOW)
 // PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 
-void FrameGraph::ExecutePass(PassNode* pass, nvrhi::ICommandList* cmdList, fg::RenderContext* context) {
+void FrameGraph::ExecutePass(PassNode* pass, nvrhi::ICommandList* cmdList, fg::RenderContext* context,
+    const char* recordingName, float* executionTimeMs) {
     static const bool traceCpu = strstr(Core.Params, "-cpu_trace") != nullptr;
     const auto cpuBegin = traceCpu ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    cmdList->beginMarker(pass->name.c_str());
+    const char* name = recordingName ? recordingName : pass->name.c_str();
+    cmdList->beginMarker(name);
 
     xray::profiler::CPUZoneScope _zonePass(
         xray::profiler::CPUProfiler::Instance().IsEnabled() ?
         xray::profiler::CPUProfiler::Instance().RegisterDynamicZone(pass->name.c_str()) : nullptr);
 
     if (m_gpuProfiler)
-        m_gpuProfiler->BeginPass(cmdList, pass->name.c_str(), pass->isAsync);
+        m_gpuProfiler->BeginPass(cmdList, name, pass->isAsync);
 
     (*pass->executeCallback)(context ? *context : *m_context, *this);
 
     if (m_gpuProfiler)
-        m_gpuProfiler->EndPass(cmdList, pass->name.c_str());
+        m_gpuProfiler->EndPass(cmdList, name);
 
     cmdList->endMarker();
     if (traceCpu)
-        pass->lastExecutionTimeMs = std::chrono::duration<float, std::milli>(
+        *(executionTimeMs ? executionTimeMs : &pass->lastExecutionTimeMs) = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - cpuBegin).count();
 }
 
@@ -354,13 +359,19 @@ void FrameGraph::Execute(const std::function<void(fg::RenderContext&)>& initiali
         }
 
         if (parallel && pass->parallelRecording) {
+            const auto partitionCount = [](const PassNode* node) {
+                return strstr(Core.Params, "-fg_partition_record") ?
+                    _min(node->recordingPartitions, u32(TaskScheduler->GetWorkersCount())) : 1u;
+            };
             size_t end = passIndex;
+            u32 jobCount = 0;
             while (end < m_sortedPasses.size()) {
                 auto* candidate = m_sortedPasses[end];
                 if (!candidate->parallelRecording || candidate->culled || !candidate->executeCallback) break;
+                jobCount += partitionCount(candidate);
                 ++end;
             }
-            if (end - passIndex >= 2) {
+            if (jobCount >= 2) {
                 const bool sample = strstr(Core.Params, "-cpu_trace") && Device.dwTimeGlobal >= m_nextRecordingTrace;
                 const auto sampleTime = [sample] {
                     return sample ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -379,9 +390,15 @@ void FrameGraph::Execute(const std::function<void(fg::RenderContext&)>& initiali
                 xr_vector<RecordingJob*> jobs;
                 xr_vector<Task*> tasks;
                 xr_vector<nvrhi::ICommandList*> ordered;
+                jobs.reserve(jobCount); tasks.reserve(jobCount); ordered.reserve(jobCount);
                 for (size_t i = passIndex; i < end; ++i) {
                     auto* candidate = m_sortedPasses[i];
-                    auto& owner = m_recordingJobs[candidate->name];
+                    const u32 count = partitionCount(candidate);
+                    for (u32 partition = 0; partition < count; ++partition) {
+                    string256 label;
+                    if (count > 1) xr_sprintf(label, "%s [%u/%u]", candidate->name.c_str(), partition + 1, count);
+                    else xr_sprintf(label, "%s", candidate->name.c_str());
+                    auto& owner = m_recordingJobs[shared_str(label)];
                     if (!owner) {
                         owner = xr_make_unique<RecordingJob>();
                         owner->commandList.Attach(recordingBackend->CreateCommandList());
@@ -390,6 +407,9 @@ void FrameGraph::Execute(const std::function<void(fg::RenderContext&)>& initiali
                         owner->context->SetParallelRecording(true);
                     }
                     auto* job = owner.get();
+                    job->pass = candidate;
+                    job->name = label;
+                    job->context->SetRecordingPartition(partition, count);
                     jobs.push_back(job);
                     ordered.push_back(job->commandList.Get());
                     tasks.push_back(&TaskScheduler->AddTask([this, candidate, job, &initializeRecording, sampleTime, milliseconds, sample] {
@@ -399,7 +419,7 @@ void FrameGraph::Execute(const std::function<void(fg::RenderContext&)>& initiali
                         const auto opened = sampleTime();
                         initializeRecording(*job->context);
                         const auto initialized = sampleTime();
-                        ExecutePass(candidate, job->commandList, job->context.get());
+                        ExecutePass(candidate, job->commandList, job->context.get(), job->name.c_str(), &job->executionTimeMs);
                         const auto recorded = sampleTime();
                         job->commandList->close();
                         job->end = std::chrono::steady_clock::now();
@@ -410,9 +430,14 @@ void FrameGraph::Execute(const std::function<void(fg::RenderContext&)>& initiali
                             job->closeMs = milliseconds(recorded, job->end);
                         }
                     }));
+                    }
                 }
                 const auto launchEnd = sampleTime();
                 for (auto* task : tasks) TaskScheduler->Wait(*task);
+                // Workers never write shared pass timing fields. This sum is CPU
+                // work across partitions; group wall time is logged separately.
+                for (size_t i = passIndex; i < end; ++i) m_sortedPasses[i]->lastExecutionTimeMs = 0;
+                for (const auto* job : jobs) job->pass->lastExecutionTimeMs += job->executionTimeMs;
                 const auto waitEnd = sampleTime();
                 recordingBackend->AppendGraphicsRecording(ordered.data(), u32(ordered.size()));
                 const auto appendEnd = sampleTime();
@@ -432,9 +457,10 @@ void FrameGraph::Execute(const std::function<void(fg::RenderContext&)>& initiali
                         milliseconds(waitEnd, appendEnd), milliseconds(appendEnd, restoreEnd), milliseconds(prepareBegin, restoreEnd));
                     for (size_t i = 0; i < jobs.size(); ++i) {
                         const auto* job = jobs[i];
-                        Msg("* [ParallelWorker] frame=%u time=%u pass=%s open_ms=%.3f initialize_ms=%.3f record_ms=%.3f close_ms=%.3f",
-                            Device.dwFrame, Device.dwTimeGlobal, m_sortedPasses[passIndex + i]->name.c_str(),
-                            job->openMs, job->initializeMs, job->recordMs, job->closeMs);
+                        Msg("* [ParallelWorker] frame=%u time=%u pass=%s open_ms=%.3f initialize_ms=%.3f record_ms=%.3f close_ms=%.3f thread=%llu part=%u parts=%u",
+                            Device.dwFrame, Device.dwTimeGlobal, job->name.c_str(),
+                            job->openMs, job->initializeMs, job->recordMs, job->closeMs, job->thread,
+                            job->context->GetRecordingPartition(), job->context->GetRecordingPartitionCount());
                     }
                 }
                 passIndex = end - 1;

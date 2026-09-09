@@ -6,6 +6,35 @@ The user's priority is to remove internal engine bottlenecks so native x64/DX12 
 
 User correction after the failed submission experiment: do not skip from submission timing to separate shadow optimization. Finish the parallel command-recording architecture first. Shadows may supply its first workload; that does not authorize prioritizing shadow-specific culling or draw optimizations ahead of it.
 
+## Priority 1: partitioned recording checkpoint (2026-09-09 UTC)
+
+The frame graph can now record multiple owned command lists for one certified pass. Shared preparation runs once, each job owns a context/list and its CPU timing storage, and lists are appended in original pass/partition order. GPU profiling uses distinct partition labels; the original CPU pass label sums CPU work after joining, while group and renderer timings measure wall time. The opt-in `-fg_partition_record` flag requires the existing `-fg_parallel_record` path; normal launches remain unchanged.
+
+The first workload splits local-light recording into two contiguous ranges, balancing visible face counts and keeping every face of a light on one worker. Each range owns its mutable indirect/culling scratch buffers. Cache insertion, eviction and output-array sizing happen before recording; workers own separate cache entries and output slices. Clears and matrix uploads occur on the first list. The existing sun job gives three recording jobs by day; local lights can use two at night. No shader, caster test, cache validity rule, draw order, quality setting or simulation callback changed.
+
+This applies [Microsoft's command-list/allocator ownership guidance](https://learn.microsoft.com/en-us/windows/win32/direct3d12/recording-command-lists-and-bundles) and [NVIDIA's advice on balanced parallel command recording](https://developer.nvidia.com/blog/advanced-api-performance-command-buffers/). The pinned NVRHI implementation stores volatile constant-buffer addresses per command list (`Externals/nvrhi/src/d3d12/d3d12-buffer.cpp`); mutable nonvolatile scratch buffers are owned separately. Its existing allocator/fence reuse and dependency-ordered submission remain in use.
+
+Candidate executable `8e4067ea07c83c883ef68c5b07c47b1849234c2d951cca10c43db273bade7f5d` was built from parent `23c15a0bc46ab5f1a3d65c4d9bd9f1ee0fe59a42` plus patch `aed384fd603730382c0090c2aa1050f8bd9b9107aaab8de760e8255544657fd9`. Matching PDB, six source hashes and configure/build logs are archived in workspace `work/runtime/recording-partitions-043`.
+
+BD (`DX12_RECORD_PARTITIONS_OFF_043_BD`) and BE (`DX12_RECORD_PARTITIONS_ON_043_BE`) use that same executable and matching profiles/controller/replays/cameras. Both run at 3440x1440, FXAA, AO-high, 16x, conventional/grass shadows, FG off and parallel recording on; only BE adds partitioning. CPU/GPU/slow-frame tracing is enabled, native debug and full-scan diagnostics disabled. Interior clocks differ by one minute; other clocks match. All game/PresentMon/GPU-sampler exits are 0.
+
+| Scene | Renderer CPU ms OFF / ON | Recording group wall ms OFF / ON | Application FPS OFF / ON | Application p99 ms OFF / ON |
+|---|---:|---:|---:|---:|
+| Interior | 6.0183 / 5.3091 | 3.246 / 2.522 | 96.59 / 97.09 | 14.74 / 13.49 |
+| Outdoor | 5.4300 / 4.7520 | 2.729 / 2.085 | 90.08 / 88.99 | 15.08 / 14.94 |
+| Rain | 5.3218 / 4.6764 | 2.595 / 2.030 | 94.03 / 93.63 | 14.60 / 14.06 |
+| Night | 5.0985 / 4.5271 | serial fallback / 2.395 | 103.33 / 108.74 | 14.34 / 13.62 |
+
+Renderer CPU is 0.571-0.709 ms lower (about 11-12.5%) in this pair. Total local recording CPU work increases 0.184-0.278 ms; partitioning reduces the critical path but adds overhead. Eighty-five daytime BE samples have three distinct worker threads; 29 night samples have two. The original overlap log directly measures the first two jobs, not a three-way interval. The first local partition remains roughly twice as expensive as the second (interior 2.186 versus 0.976 ms), so face-count balancing is not sufficient.
+
+Native FPS is mixed, with approximately 95-97% GPU utilization and changing light/face workloads. Sampled background engines stay below 0.07%; each scene has fourteen GPU samples. This single sequential pair does not establish universal FPS, displayed-frame, latency or long-session gains. PresentMon captures application API intervals only. All eight stills were inspected without obvious new missing geometry, lighting or shadow corruption. Both runs retain 836 legacy shader failures and no matched fatal/device/NVRHI error.
+
+BC (`DX12_RECORD_PARTITIONS_RELOAD_043_BC`) completes two full Zaton unload/reloads with native D3D12/NVRHI validation, DLSS Quality, FSR FG and the partitioned recorder. All 33 recording samples use three distinct threads; 30 face-range samples cover the complete list without overlap or gaps. Fourteen geometry-index checks pass. All 153 inventory contents/condition/ammo and Grouse's 22,927-byte custom data survive; the raw bolt ID changes 11077 to 14848. Exit 0; last successful FG dispatch count 1760. All three stills retain terrain, grass and the weapon. There are 2216 legacy shader failures and no matched fatal/native/NVRHI error; existing native warnings 820/821/679 persist.
+
+BF (`DX12_RECORD_PARTITIONS_RESIZE_043_BF`) completes all five existing FXAA/DLSS/FG cases, including 3440x1440 to 1920x1080 and back, with native validation. Exit 0, 59 three-thread recording samples, last successful FG dispatch count 1582. All five stills were inspected with the NPC, interior geometry and lighting present after recreation. There are 836 legacy shader failures and no matched fatal/native/NVRHI error. These checks do not qualify generated-frame temporal quality, all campaign content or extended stability.
+
+Evidence: workspace `outputs/implementation-evidence/MISERY_DX12_RECORD_PARTITIONS_043_SUMMARY.json`, BC's `reload-analysis.json`, and BF's `resize-analysis.json`. Test controls/probes are archived and restored; normal separate 0.41 executable/PDB/profile are restored and hash-verified. Delivered 0.43 and the existing DX9 comparison remain unchanged. Retain this experimental architecture work. Next, improve recording-job balance using measured cost and address the added recording overhead before another benchmark. Priority 1 remains active; separate shadow/caster algorithm, culling and quality optimization stays deferred.
+
 ## Priority 1: rigid upload preparation checkpoint (2026-09-09 UTC)
 
 The collector retains an ordered list of rigid batches whose CPU upload data needs rebuilding: terrain, transparency and dynamic geometry. Once the existing static GPU cache is populated, upload preparation visits that list instead of repeatedly classifying every unchanged static batch. Mutable access, sorting or a material-cache revision invalidates the selection; the initial upload still includes all rigid batches. GPU visibility remains evaluated every frame. This is CPU preparation work, with no change to shaders, shadow algorithms, visibility criteria, quality or game callbacks.

@@ -319,6 +319,13 @@ public:
     bool IsInRenderPass() const { return m_inRenderPass; }
     bool IsParallelRecording() const { return m_parallelRecording; }
     void SetParallelRecording(bool enabled) { m_parallelRecording = enabled; }
+    u32 GetRecordingPartition() const { return m_recordingPartition; }
+    u32 GetRecordingPartitionCount() const { return m_recordingPartitionCount; }
+    void SetRecordingPartition(u32 index, u32 count) {
+        R_ASSERT(count > 0 && index < count);
+        m_recordingPartition = index;
+        m_recordingPartitionCount = count;
+    }
 
     // ═══════════════════════════════════════════════════════
     //  INTERNAL
@@ -341,6 +348,7 @@ private:
     // State tracking
     bool m_inRenderPass = false;
     bool m_parallelRecording = false;
+    u32 m_recordingPartition = 0, m_recordingPartitionCount = 1;
     RenderPassDesc m_currentRenderPass;
     nvrhi::FramebufferHandle m_currentFramebuffer;
     nvrhi::GraphicsState m_currentState;  // Track current graphics state

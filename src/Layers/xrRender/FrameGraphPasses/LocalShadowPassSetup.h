@@ -15,11 +15,14 @@ struct LocalStaticShadowCache {
 };
 struct LocalShadowPassState {
     ShadowMapPassState drawing;
+    // Each recording partition owns its mutable draw/culling buffers.
+    ShadowMapPassState secondDrawing;
     nvrhi::TextureHandle outputTexture;
     xr_vector<nvrhi::FramebufferHandle> outputFramebuffers;
     xr_vector<Fmatrix> matrices;
     xr_vector<CFrustum> frusta;
     xr_map<const light*, LocalStaticShadowCache> staticCache;
+    xr_vector<LocalStaticShadowCache*> frameCaches;
     xr_vector<u32> owners;
     xr_vector<u32> lightFaces;
     xr_vector<bool> visibleFaces;
