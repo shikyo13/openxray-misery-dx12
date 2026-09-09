@@ -1,10 +1,45 @@
 # DX12 engine performance priorities
 
+## Current direction: pursue the largest measured gains (2026-09-09 UTC)
+
+The user's latest clarification supersedes the earlier requirement to finish parallel recording before shadow optimization. Multithreading was a suggested route to better performance, not the endpoint. Choose work by its expected reduction in frame time and stalls, measured on the user's RTX 3090 at the intended settings, with implementation cost and regression risk considered. Preserve visual quality, complete MISERY behavior, saves and reliability. Do not reopen the old priority-order discussion after compaction.
+
+The latest same-executable partitioning comparison, BD/BE, reduced renderer CPU time by 0.571-0.709 ms (11-12.5%), but native application FPS gains were mixed. That is useful CPU progress, not an 11-12.5% whole-game speedup. GPU utilization averaged about 95-97% in BE. This and the GPU pass timings make GPU rendering work the better immediate target; GPU utilization alone does not identify an internal hardware bottleneck.
+
+Cumulative progress is substantial: the published 0.40 to delivered 0.43 recordings show interior 57.63 to 101.81 FPS, outdoor 55.94 to 93.47, rain 52.24 to 97.59, and night 58.33 to 113.11, with frame generation off. Application p99 intervals improve from roughly 25-27 ms to 13-15 ms. These historical captures differ in workload and measurement conditions and cannot isolate one optimization's contribution. Mixed gains from the latest recording experiment should not be presented as lack of overall project progress. Source reports: workspace `outputs/MISERY_DX9_DX12_BASELINE_040.json` and `outputs/MISERY_DX9_DX12_COMPARISON_043.json`.
+
+BE uses native 3440x1440, FXAA, AO-high, 16x filtering, conventional and grass shadows, and frame generation off. Existing trace means:
+
+| Scene | Local shadows GPU ms | Sun shadows GPU ms | Foliage drawing GPU ms | Renderer CPU ms | Application interval ms |
+|---|---:|---:|---:|---:|---:|
+| Interior | 3.597 | 1.683 | 0.047 | 5.309 | 10.300 |
+| Outdoor | 2.887 | 1.762 | 1.494 | 4.752 | 11.237 |
+| Rain | 2.832 | 1.761 | 1.335 | 4.676 | 10.680 |
+| Night | 3.283 | inactive | 1.419 | 4.527 | 9.196 |
+
+Local GPU time sums the two sequential partition ranges. Foliage uses `DetailDraw` only; `Details.Draw` is nested and must not be added again. These are recorded pass costs, not a complete GPU frame breakdown or promises of recoverable savings. Renderer CPU excludes other game-thread work. One interior slow frame in each run spent 38-43 ms in the game-update bucket; its underlying cause and recurrence remain unproven.
+
+Current work order:
+
+1. Investigate and reduce avoidable GPU work in local shadows, the largest measured pass in these scenes. The source currently interleaves cached depth copies with dynamic/tree/skinned/detail work for each face. Determine whether copies, transitions, repeated geometry or shader work dominate, then change a concrete inefficiency. Retain moving and offscreen shadows, cache correctness and current quality.
+2. Address sun-shadow and outdoor foliage costs where the scene measurements justify them. Rank candidates against their actual cost and expected benefit rather than requiring completion of a renderer-architecture checklist.
+3. Investigate reproducible game-update stalls and remaining CPU work when they limit smoothness or the intended frame rate. Retain the tested optional parallel recorder; revisit further load balancing when CPU limits justify it. Async compute, new graphics features and higher capacity limits require a demonstrated benefit before implementation.
+
+Use the existing captures and profiling tools. Before accepting a change, compare native frame times, tail latency and affected visuals with settings disclosed, and use focused runtime checks for affected resource lifetimes or gameplay. Update the DX9/DX12 comparison after a measured milestone. Reliability defects that block the intended experience continue to take precedence.
+
+The unfinished cost-based recording splitter is preserved, unbuilt and untested, in workspace `work/runtime/deferred-recording-balance-043` (raw sources, parent and SHA-verified patch). The working source has returned to the tested recorder at `6ce2a3a36d1edc07113c6045b516141639dc6102`. No executable, settings, package or published benchmark changed during this reprioritization.
+
+Evidence: workspace `outputs/implementation-evidence/MISERY_DX12_RECORD_PARTITIONS_043_SUMMARY.json` and BD/BE `partition-analysis.json`. [Microsoft's CPU/GPU bottleneck explanation](https://devblogs.microsoft.com/directx/cpu-and-gpu-boundedness/) supports choosing work according to the limiting processor. [NVIDIA's command-buffer guide](https://developer.nvidia.com/blog/advanced-api-performance-command-buffers/) supports parallel recording while accounting for command-list overhead, GPU idle time and pipeline drains from frequently mixed copy/dispatch/draw work. The suggested local-shadow opportunity is a source-based hypothesis until measured.
+
+## Historical checkpoints
+
+The dated entries below preserve prior decisions and evidence. Their old next-step and priority labels do not override the current direction above.
+
 Research and source review: 2026-09-09 UTC. Updated with the first native parallel-recording experiment below; it remains disabled by default. Inspected source: `0a754d0127956cef570176e5b88801a415b9b19f`. The baseline at that research checkpoint was 0.41, compiled from `74a3749453254d6b80f68c695fa378373e5ca656`. CPU stage/pass tracing was subsequently implemented and tested on source parent `86742e6580092c0646562b7f67b41627ac7a3d09`. No faster rendering path was accepted at this checkpoint.
 
 The user's priority is to remove internal engine bottlenecks so native x64/DX12 can use modern hardware properly. Put that work ahead of further graphics additions. Retain the current visual quality, complete MISERY behavior, conventional shadows, 16x filtering and RTX HDR-compatible SDR output. Ray tracing remains excluded.
 
-User correction after the failed submission experiment: do not skip from submission timing to separate shadow optimization. Finish the parallel command-recording architecture first. Shadows may supply its first workload; that does not authorize prioritizing shadow-specific culling or draw optimizations ahead of it.
+Historical instruction, now superseded: after the failed submission experiment, finish the parallel command-recording architecture before separate shadow optimization. See the current direction above.
 
 ## Priority 1: partitioned recording checkpoint (2026-09-09 UTC)
 
