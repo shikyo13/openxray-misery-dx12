@@ -1291,33 +1291,27 @@ void MaterialCache::FinalizePendingTerrainMaterials(fg::RenderContext* ctx)
         }
 
         auto& texDescMgr = TextureDescr;
-        if (detailR && detailR[0]) {
-            shared_str bumpR = texDescMgr.GetBumpName(detailR);
-            if (bumpR.size()) {
-                u32 idx = RegisterTexture(bumpR.c_str(), "normalR");
-                if (idx != INVALID_TEXTURE_INDEX) { matData.normalR_Index = idx; updated = true; }
+        const char* layers[] = {detailR, detailG, detailB, detailA};
+        u32* normalIndices[] = {&matData.normalR_Index, &matData.normalG_Index,
+                                &matData.normalB_Index, &matData.normalA_Index};
+        const char* normalSlots[] = {"normalR", "normalG", "normalB", "normalA"};
+        for (u32 layer = 0; layer < 4; ++layer) {
+            if (!layers[layer] || !layers[layer][0]) continue;
+            // BmmD binds each named layer + _bump, independently of its THM association.
+            xr_string authoredName = xr_string(layers[layer]) + "_bump";
+            string_path path;
+            const bool authoredExists = FS.exist(path, "$game_textures$", authoredName.c_str(), ".dds");
+            shared_str metadataName = texDescMgr.GetBumpName(layers[layer]);
+            shared_str resolvedName = authoredExists ? shared_str(authoredName.c_str()) : metadataName;
+            if (resolvedName.size()) {
+                u32 idx = RegisterTexture(resolvedName.c_str(), normalSlots[layer]);
+                if (idx != INVALID_TEXTURE_INDEX) { *normalIndices[layer] = idx; updated = true; }
             }
-        }
-        if (detailG && detailG[0]) {
-            shared_str bumpG = texDescMgr.GetBumpName(detailG);
-            if (bumpG.size()) {
-                u32 idx = RegisterTexture(bumpG.c_str(), "normalG");
-                if (idx != INVALID_TEXTURE_INDEX) { matData.normalG_Index = idx; updated = true; }
-            }
-        }
-        if (detailB && detailB[0]) {
-            shared_str bumpB = texDescMgr.GetBumpName(detailB);
-            if (bumpB.size()) {
-                u32 idx = RegisterTexture(bumpB.c_str(), "normalB");
-                if (idx != INVALID_TEXTURE_INDEX) { matData.normalB_Index = idx; updated = true; }
-            }
-        }
-        if (detailA && detailA[0]) {
-            shared_str bumpA = texDescMgr.GetBumpName(detailA);
-            if (bumpA.size()) {
-                u32 idx = RegisterTexture(bumpA.c_str(), "normalA");
-                if (idx != INVALID_TEXTURE_INDEX) { matData.normalA_Index = idx; updated = true; }
-            }
+            if (strstr(Core.Params, "-graphics_trace"))
+                Msg("* [TerrainLayer] id=%u layer=%u detail='%s' normal='%s' metadata='%s' authored=%d index=%u scale=%.3f",
+                    terrainMaterialID, layer, layers[layer], resolvedName.c_str() ? resolvedName.c_str() : "",
+                    metadataName.c_str() ? metadataName.c_str() : "", authoredExists ? 1 : 0,
+                    *normalIndices[layer], matData.detailScale);
         }
 
         if (detailR && detailR[0]) {
