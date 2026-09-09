@@ -5,10 +5,15 @@ param(
     [switch]$RetailBenchmark,
     [switch]$Visible,
     [switch]$Lossless,
-    [string]$ExtraArguments=''
+    [string]$ExtraArguments='',
+    [string]$RuntimeRoot
 )
 $ErrorActionPreference='Stop'
 $comparisonRoot = if ($Renderer -eq 'dx9') { 'D:\Codex\MISERY-DX12\reference\DX9_MAIN_2026-09-08' } else { Join-Path $PSScriptRoot 'runtime/misery' }
+if ($RuntimeRoot) {
+    if ($Renderer -ne 'dx12') { throw 'RuntimeRoot override is for native DX12 packages only.' }
+    $comparisonRoot=$RuntimeRoot
+}
 $comparisonRoot = (Resolve-Path -LiteralPath $comparisonRoot).Path
 $comparisonExe = Join-Path $comparisonRoot $(if ($Renderer -eq 'dx9') { 'bin/xrEngine.exe' } else { 'bin/xr_3da.exe' })
 if (Get-Process -Name xrEngine,xr_3da -ErrorAction SilentlyContinue) { throw 'Another game instance is running; do not overlap performance captures.' }
