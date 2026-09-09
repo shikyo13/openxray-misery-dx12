@@ -21,7 +21,7 @@ Local GPU time sums the two sequential partition ranges. Foliage uses `DetailDra
 
 Current work order:
 
-1. The A-life time-budget units correction is delivered in independent 0.45 below. Existing ObjectListTrace attributes 35-38 ms of the recurring main-thread stall to active/sleeping object-removal notifications. Inspect net_Relcase implementations and ownership next to reduce that cost while preserving reference cleanup, required callbacks and order. No additional tracing framework is needed to establish the expensive stage. Preserve current simulation cadence and inspect capacity pressure before widening formats.
+1. Independent 0.46 retains the A-life budget correction and reduces the measured 52-object removal notification batch from 35.149 to 15.240 ms while preserving callbacks and order. The remaining removal cost stays a follow-up candidate. Next inspect AI pathfinding's per-search scratch state and existing scheduling, then use existing profiling on representative callers before enabling concurrent searches. Preserve simulation cadence and inspect actual capacity pressure before widening formats.
 2. Enable useful independent calculations through the existing task pool with explicit ownership, scratch storage and completion dependencies. A-life switching, object creation/removal, Lua state and save operations share mutable state; investigate their callers before permitting simultaneous mutation. Preserve the existing first-load/precache behavior and normal gameplay. No new simulation concurrency implementation has been tested yet.
 3. Retain delivered grouped local-shadow copies and the optional parallel recorder. The next shader experiment is deferred following the user's clarification, not queued for an automatic benchmark. Earlier argument batching remains opt-in and the rejected normal-cache/opaque-sun work remains archived. Return to graphics when its measured benefit warrants it, maintaining DX9 visual and configured-performance comparisons after milestones.
 
@@ -52,6 +52,42 @@ Source pointers: [A-life update and budget](../../src/xrGame/alife_update_manage
 Workspace evidence: `outputs/implementation-evidence/NATIVE_X64_MEMORY_CAPACITY.log` and its result JSON; `LUAJIT_X64_ARCHITECTURE_044.json`; `DX12_PBR_LIGHT_CULL_OFF_044_BW/engine.log`, profile, traces and `control-analysis.json`. BW's six in-window slow-frame records show game-update costs of 1.907-10.431 ms, and zero additional wait after rendering for the shared worker sequence. These are selected slow frames, not a full A-life timing breakdown or evidence that the worker's total cost was zero.
 
 The PBR zero-contribution shader edit is preserved in [an untested patch](pbr-light-cull-044-deferred.patch). BW tested the unmodified shader with the existing 0.44 executable; BX was never launched after the user clarified engine-wide scope. No candidate shader was staged or performance benefit measured. Both game and PresentMon exited0; runner43229 and sampler34122 are terminal0. All four control stills were opened; geometry/lighting/rain are intact, with night darkness limiting subtle assessment. Protected normal0.41 EXE/PDB/profile and the original isolated shader cache are restored. Delivered0.44, fixed DX9 and prior packages retained. The shader cache's missing include dependency hashing was handled by a fresh isolated cache for BW, not fixed in production. Do not resume this benchmark automatically.
+
+## Object-removal dispatch and 0.46 delivery (2026-09-09 UTC)
+
+Code commit `36213bc8e2861271c84a2a0938ef78fcc4f41e87` is pushed. Release builds force `PURE_DYNAMIC_CAST`, so `CScriptBinder::net_Relcase` previously performed full RTTI for every receiver/removed-object pair before checking whether the receiver had a binder. The change returns immediately for absent binders and adds a typed virtual query to `IGameObject`, overridden by `CGameObject`. Native notification loops, Lua callback selection/order, reference cleanup, scheduling, identifiers and serialization remain. All dependent native modules were rebuilt together. `-relcase_legacy_cast` retains the previous cast-first behavior for same-binary controls; `-relcase_validate` compares results against RTTI. `-relcase_trace` exposes sub-8 ms removal stages in the existing ObjectListTrace logger. All are off by default.
+
+The final native DX12 probe CE passed inherited default, class override/replacement, instance override/removal and restored default cases. Its direct TSV contains six passes and completion; the optional Lua printf does not appear in the engine log. At least 3,342,336 type-query checks agreed with RTTI across loading, the probe and shutdown; 934,088 logged checks had no binder. No null or non-game-object inputs occurred. Game/PresentMon/runner 41244 exited 0, with no matched fatal/native-debug/NVRHI error. Existing native warnings 679/820/821 and 836 legacy shader failures remain. The reused probe is now versioned as `dx12_relcase_probe.script`.
+
+CF (legacy) / CG (optimized) used the same executable, profile, controller, authored A-life config and camera replays, native 3440x1440 FXAA/AO3/16x, conventional/grass shadows, SDR, FG off, serial recording and grouped copies. Both enabled CPU, slow-frame and removal-stage logs. Fourteen GPU samples per scene had zero invalid counters; sampled background engines stayed below 0.84%. Cameras, weather names and recorded clocks match.
+
+| Measurement | Legacy CF | Optimized CG |
+|---|---:|---:|
+| Active / sleeping receivers in 52-object batch | 862 / 2614 | 875 / 2557 |
+| Estimated notifications | 180752 | 178464 |
+| Active removal notifications ms | 15.625 | 8.283 |
+| Sleeping removal notifications ms | 19.524 | 6.957 |
+| Combined notification time ms | 35.149 | 15.240 |
+| Corresponding full frame / FrameMove ms | 47.775 / 40.553 | 28.880 / 20.759 |
+
+This is about 57% less notification time with about 1.3% fewer receivers. It is one observed batch per mode, not a universal gain. The legacy batch at time 37341 falls inside the trimmed interior window; the optimized batch at 35830 precedes its window. Do not use scene p99/max differences to quantify the batch change. Overall application FPS/p99 are mixed:
+
+| Scene | FPS legacy / optimized | p99 ms legacy / optimized |
+|---|---:|---:|
+| Interior | 102.43 / 101.32 | 13.76 / 14.93 |
+| Outdoor | 88.43 / 90.14 | 16.07 / 15.13 |
+| Rain | 93.16 / 92.84 | 15.14 / 15.31 |
+| Night | 96.18 / 94.55 | 14.60 / 15.43 |
+
+CF runner 68335/sampler 93411 and CG runner 60733/sampler 53531 reached terminal 0; both game/PresentMon exits are 0. All eight stills were opened; surfaces/NPC/floor lighting, geometry/foliage, rain and night silhouettes show no obvious new corruption. HUD/weather/wind vary, and dark night limits subtle assessment. No temporal/HDR proof. Existing 836 legacy shader failures remain in each; no matched fatal/device error.
+
+The initial build compiled, but the first logging edit mistakenly landed in SingleUpdate. CC's six-case behavior probe passed, then partial timing run CD was stopped (game -1; runner 45864/sampler 76050 terminal 0) and excluded. The logging placement was corrected and the new executable was retested as CE/CF/CG. Preserve the failed-attempt artifacts under workspace `work/runtime/relcase-cast-046/initial-logger`; do not treat CD as a completed benchmark.
+
+Private package `D:/Codex/MISERY-DX12/outputs/MISERY_DX12_DEV_0.46` contains the tested EXE `ec5a100f21210c04416e5b487df3b9de1cbe51ad9225d1a9c1bc479585b127e2` and PDB `7fc27eddcf1f04331d73158c6f5b7ba8130da412efd2f09d218fa01ee1326d14`. Compiled parent `cb92d5a3f607f67560893f50e69df7973d7c844a`, patch SHA256 `3192714c5688f752143dd36e6c5f8945fe63748cb7f7661efb9315a4cbbb9b76`, raw sources and dependency/build identity are archived. NVRHI remains `dcf5f012187e9482d99b71d224ba09304cffb35e`; LuaJIT remains `5a5cd82e435a7b08d61b4e0af887493d24d9eca1`. Packaging session 76699 exited 0; all 17,170 game files (11,454,052,963 bytes) initially matched staging by SHA256.
+
+Actual-package CH ran normal serial recording with internal traces off: FPS 103.94 / 92.12 / 97.20 / 100.92; p99 ms 13.54 / 15.15 / 14.35 / 14.21. This is one run, not a matched prior-package comparison. Game 31088, PresentMon 9952, runner 72897 and sampler 5179 all exited 0. Fourteen GPU samples per scene, zero invalid counters, sampled background below 0.69%; no continuous CPU-contention trace. All four actual-package stills were opened, for 12 inspected final-build images total. No matched fatal/device error; 836 legacy shader failures remain. The normal package profile was restored and 14 critical files rehashed against the manifest, including both save pairs and replays. Protected 0.41 workspace EXE/PDB/profile and the old cleanup-probe TSV were restored separately. Previous packages and the fixed DX9 reference are preserved.
+
+Report: workspace `outputs/MISERY_DX9_DX12_COMPARISON_046.html`. Evidence: `MISERY_DX12_RELCASE_CAST_046_SUMMARY.json`, `MISERY_DX12_PACKAGE_046_SUMMARY.json`, CE `probe-analysis.json`, CF/CG `removal-analysis.json`, and CH `package-analysis.json` under `outputs/implementation-evidence`. All 11 cited graphics/reference-source files remain hash-identical to 0.45; no graphics-quality reduction. No new in-process reload, broad transition, campaign/effects parity or extended-session certification is claimed for 0.46; earlier 0.45 reload coverage remains separate. Broader simulation concurrency is still unfinished.
 
 ## A-life switching budget correction (2026-09-09 UTC)
 
