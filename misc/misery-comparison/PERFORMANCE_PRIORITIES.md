@@ -6,6 +6,31 @@ The user's priority is to remove internal engine bottlenecks so native x64/DX12 
 
 User correction after the failed submission experiment: do not skip from submission timing to separate shadow optimization. Finish the parallel command-recording architecture first. Shadows may supply its first workload; that does not authorize prioritizing shadow-specific culling or draw optimizations ahead of it.
 
+## Controlled priority-1 measurements (2026-09-09 UTC)
+
+Priority 1 remains active; parallel recording remains opt-in. Candidate source is `e54ae6076994b1302fca6936c4238c7aa5da7de9`, executable SHA-256 `d217d8cda0cd688ff83907841c871e450ff957e2ff4ad2b36cb8d56ab6817ddb`. No engine or shader code changed in this checkpoint. Separate shadow/caster optimization is still deferred.
+
+AO (parallel ON) and AP (OFF) used the same binary, starting-profile and controller hashes, the same save, matching cameras/clocks/weather, native 3440x1440, FXAA, AO-high, 16x filtering and FG off. CPU tracing, GPU timestamp profiling and slow-frame tracing were enabled in both. Both games and PresentMon exited 0 after all four scenes. All 84 daytime worker samples used distinct threads with positive overlap; night used the sequential fallback.
+
+| Scene | CPU renderer ms OFF / ON | Application FPS OFF / ON | Application p99 ms OFF / ON |
+|---|---:|---:|---:|
+| Interior | 7.418 / 6.614 | 95.29 / 95.72 | 14.28 / 14.85 |
+| Outdoor | 6.743 / 5.985 | 89.23 / 91.64 | 15.42 / 15.00 |
+| Rain | 6.735 / 5.883 | 92.15 / 94.85 | 15.68 / 14.58 |
+| Night | 5.947 / 6.037 | 93.47 / 93.11 | 14.69 / 15.49 |
+
+The three daytime scenes reduce CPU renderer time by 0.76-0.85 ms (about 11-13%). Their CPU Execute time falls by 0.75-0.82 ms; sampled job overlap averages 1.51-1.55 ms. Application FPS differs by +0.5% to +2.9%, while night is -0.4%. These are one sequential instrumented run each, not a proven uninstrumented or displayed-frame speedup. Keep the opt-in flag and existing play package.
+
+PresentMon's normal display-tracking path produced no CSV in AJ. Short preflights AK/AL and AM/AN isolated a usable application-API capture path with `--no_track_display --no_track_gpu`. The comparison runner now has an explicit `-PresentApiOnly` switch and records the unavailable tracking fields; its normal path is unchanged. AO/AP capture application present intervals only. Presentation mode, displayed frames, display latency and dropped-frame statistics are unavailable, so these measurements do not qualify a presentation-parity claim. The reason the display-tracking path failed remains unresolved. The existing DX9 report and its captured data were not rewritten. The [PresentMon project documentation](https://github.com/GameTechDev/PresentMon#troubleshooting) also distinguishes ETW access from the warning about process metadata; this account already has Performance Log Users membership and the same warning occurred in earlier successful captures.
+
+During-run NVIDIA and per-process GPU counters show roughly 92-97% game/overall GPU use. No sampled external engine exceeded 0.32% inside these measured windows. This supports GPU saturation as a likely limit on native-resolution gains; it does not prove the absence of shorter external activity. AO interior telemetry starts 16.7 seconds into that 30-second window (7 samples); the other windows have 14 samples each. One impossible AO night counter was rejected without altering the raw file; the original AO sampler did not record counter Status, so status-based validity is unknown there. AP records Status-related rejection counts. Both initial sampler versions returned code 1 during process-exit handling after the measured windows. That shutdown handling was then corrected and checked against a six-second owned idle process, which exited the sampler normally; this was a helper check, not another gameplay benchmark.
+
+Both full runs retain 836 existing legacy shader compilation failures and no matched fatal/device/NVRHI error. The outdoor ON and OFF screenshots were inspected: terrain, grass and the overall lighting appearance remain present, without an obvious new difference in these stills. This is not full visual/effects parity or extended stability certification. The >=24 ms frame trace also shows isolated game-update and worker-wait stalls; parallel rendering does not remove every engine bottleneck.
+
+Evidence: workspace `outputs/implementation-evidence/MISERY_DX12_PARALLEL_CONTROLLED_SUMMARY.json`, with raw AO/AP data, CPU/pass distributions, slow frames and telemetry. AJ and AK-AN are retained as incomplete capture/diagnostic evidence, not completed FPS benchmarks. The exact runner, sampler and analysis helpers are versioned here; deploy them into the existing workspace `work` directory before use. Normal 0.41 executable/PDB/profile were restored and all three backup hashes verified. No new package, baseline replacement or shadow-specific optimization.
+
+Next: priority-1 CPU scaling measurement at a lower resolution in the isolated test profile, with all effects and simulation settings equal between modes. Record application frame times without CPU/GPU tracing and retain during-run telemetry. Keep the native-resolution measurements as the practical baseline, restore the normal profile afterward, and avoid claiming displayed-frame gains until display tracking works.
+
 ## In-process level reload checkpoint (2026-09-09 UTC)
 
 Priority 1 remains active and opt-in. The existing save checks used separate processes, so a small additional controller now saves to a unique isolated slot and queues two full disconnect/reloads in one process. A same-level `load` uses the quickload path and would not exercise complete renderer level teardown. Normal MISERY callbacks continue throughout. Separate shadow/caster optimization remains priority 2.

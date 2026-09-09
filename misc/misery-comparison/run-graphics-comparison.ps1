@@ -5,6 +5,7 @@ param(
     [switch]$RetailBenchmark,
     [switch]$Visible,
     [switch]$Lossless,
+    [switch]$PresentApiOnly,
     [string]$ExtraArguments='',
     [string]$RuntimeRoot,
     [ValidatePattern('^[A-Za-z0-9_]+$')][string]$ScriptNamespace='graphics_comparison_baseline'
@@ -58,11 +59,13 @@ $pmExe=Join-Path $PSScriptRoot 'tools/presentmon/PresentMon-2.5.1-x64.exe'
 $pmArgs=@('--process_id',$comparisonProcess.Id,'--output_file',('"'+(Join-Path $comparisonEvidence 'presents.csv')+'"'),
     '--no_console_stats','--no_track_input','--qpc_time','--v1_metrics','--session_name',('Codex-'+$Name),
     '--terminate_on_proc_exit','--timed',($MaxSeconds+5),'--terminate_after_timed')
+if ($PresentApiOnly) { $pmArgs += @('--no_track_display','--no_track_gpu') }
 $pmProcess=Start-Process -FilePath $pmExe -ArgumentList $pmArgs -WindowStyle Hidden -PassThru `
     -RedirectStandardOutput (Join-Path $comparisonEvidence 'presentmon.log') -RedirectStandardError (Join-Path $comparisonEvidence 'presentmon-errors.log')
 $comparisonRecord=[ordered]@{renderer=$Renderer; exe=$comparisonExe; pid=$comparisonProcess.Id; args=$comparisonArgs; script_namespace=$ScriptNamespace;
     sha256=(Get-FileHash -LiteralPath $comparisonExe -Algorithm SHA256).Hash; started=$comparisonStart.ToString('o');
-    presentmon_pid=$pmProcess.Id; qpc_frequency=[Diagnostics.Stopwatch]::Frequency; max_seconds=$MaxSeconds; visible=[bool]$Visible}
+    presentmon_pid=$pmProcess.Id; presentmon_display_tracking=(-not [bool]$PresentApiOnly); presentmon_gpu_tracking=(-not [bool]$PresentApiOnly);
+    qpc_frequency=[Diagnostics.Stopwatch]::Frequency; max_seconds=$MaxSeconds; visible=[bool]$Visible}
 $comparisonRecord | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $comparisonEvidence 'process.json') -Encoding utf8
 $comparisonRecord | ConvertTo-Json
 $comparisonObserved=[System.Collections.Generic.List[object]]::new()
