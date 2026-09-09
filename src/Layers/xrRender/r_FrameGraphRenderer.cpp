@@ -408,7 +408,8 @@ void FrameGraphRenderer::Render() {
     }
 
     VERIFY(m_framegraph != nullptr);
-    const bool graphicsTrace = strstr(Core.Params, "-graphics_trace") != nullptr;
+    const bool cpuTrace = strstr(Core.Params, "-cpu_trace") != nullptr;
+    const bool graphicsTrace = cpuTrace || strstr(Core.Params, "-graphics_trace") != nullptr;
     if (graphicsTrace) {
         if (!m_graphicsTrace) {
             m_graphicsTrace = FS.w_open("$logs$", "dx12_graphics.csv");
@@ -430,12 +431,19 @@ void FrameGraphRenderer::Render() {
     }
 
     auto frameStart = std::chrono::high_resolution_clock::now();
+    auto traceCpuStage = [&](pcstr name, const auto& start) {
+        if (cpuTrace && m_graphicsTrace)
+            m_graphicsTrace->w_printf("cpu_stage,%u,%u,%u,%u,%s,%.6f\n", Device.dwFrame,
+                Device.dwTimeGlobal, ps_r_aa, ps_r_ssao, name,
+                std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start).count());
+    };
     
     Lights.Update();
 
     if (m_device && m_device->GetFGResourceManager()) {
         m_device->GetFGResourceManager()->Update(Device.fTimeDelta);
     }
+    traceCpuStage("LightsAndResources", frameStart);
 
     // ═══════════════════════════════════════════════════════
     //  SETUP FRAME (PER-FRAME: Collect geometry)
@@ -443,7 +451,9 @@ void FrameGraphRenderer::Render() {
 
     {
         ZoneScopedN("FG::SetupFrame");
+        const auto cpuBegin = std::chrono::high_resolution_clock::now();
         SetupFrame();
+        traceCpuStage("SetupFrame", cpuBegin);
     }
 
     // ═══════════════════════════════════════════════════════
@@ -509,7 +519,9 @@ void FrameGraphRenderer::Render() {
     const Fmatrix unjitteredInvViewProj = Device.mInvFullTransform;
     {
         ZoneScopedN("FG::SetupPasses");
+        const auto cpuBegin = std::chrono::high_resolution_clock::now();
         SetupFrameGraphPasses();
+        traceCpuStage("SetupPasses", cpuBegin);
     }
 
     // ═══════════════════════════════════════════════════════
@@ -528,7 +540,9 @@ void FrameGraphRenderer::Render() {
     // Compile the graph (optimizes passes, calculates lifetimes, etc.)
     {
         ZoneScopedN("FG::Compile");
+        const auto cpuBegin = std::chrono::high_resolution_clock::now();
         m_framegraph->Compile();
+        traceCpuStage("Compile", cpuBegin);
     }
 
     auto& cache = framegraph::GetPassResourceCache();
@@ -558,7 +572,14 @@ void FrameGraphRenderer::Render() {
 
     {
         ZoneScopedN("FG::Execute");
+        const auto cpuBegin = std::chrono::high_resolution_clock::now();
         m_framegraph->Execute();
+        traceCpuStage("Execute", cpuBegin);
+    }
+    if (cpuTrace && m_graphicsTrace) {
+        for (const auto& timing : m_framegraph->GetStatistics().passTimings)
+            m_graphicsTrace->w_printf("cpu_pass,%u,%u,%u,%u,%s,%.6f\n", Device.dwFrame,
+                Device.dwTimeGlobal, ps_r_aa, ps_r_ssao, timing.first.c_str(), timing.second);
     }
 
     if (m_gpuCullingManager && psDeviceFlags.test(rsStatistic))
@@ -598,6 +619,7 @@ void FrameGraphRenderer::Render() {
     // ═══════════════════════════════════════════════════════
 
     auto frameEnd = std::chrono::high_resolution_clock::now();
+    traceCpuStage("RendererTotal", frameStart);
     m_stats.totalFrameMs = std::chrono::duration<float, std::milli>(
         frameEnd - frameStart
     ).count();

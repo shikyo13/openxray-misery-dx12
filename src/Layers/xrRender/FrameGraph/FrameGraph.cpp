@@ -4,6 +4,7 @@
 #include "../RenderContext/RenderDevice.h"
 #include "../Profiler/GPUProfiler.h"
 #include "xrEngine/IRenderBackend.h"
+#include <chrono>
 
 namespace xray::render::framegraph {
 
@@ -236,6 +237,8 @@ void FrameGraph::Compile() {
 // PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
 
 void FrameGraph::ExecutePass(PassNode* pass, nvrhi::ICommandList* cmdList) {
+    static const bool traceCpu = strstr(Core.Params, "-cpu_trace") != nullptr;
+    const auto cpuBegin = traceCpu ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     cmdList->beginMarker(pass->name.c_str());
 
     xray::profiler::CPUZoneScope _zonePass(
@@ -250,6 +253,9 @@ void FrameGraph::ExecutePass(PassNode* pass, nvrhi::ICommandList* cmdList) {
         m_gpuProfiler->EndPass(cmdList, pass->name.c_str());
 
     cmdList->endMarker();
+    if (traceCpu)
+        m_stats.passTimings[pass->name] = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - cpuBegin).count();
 }
 
 void FrameGraph::Execute() {
