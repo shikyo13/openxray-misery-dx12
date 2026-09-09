@@ -1,0 +1,11 @@
+# Verified MISERY comparison workflow
+
+These are versioned copies of the workspace helpers. Run copies from the workspace `work` directory, beside `engine`, `runtime`, `tools`, and `logs`. Game data and save files stay outside this source repository. The reference path in the PowerShell helper is local to the current Windows workspace; adjust it when restoring on another PC.
+
+The DX9 reference is an independent copy of the installed game. It uses an absolute `comparison.ltx`, the existing Steam AppId 41700, and a copied original save. Its `axr_main.script` adds `callback_register("actor_on_update", graphics_comparison_baseline.update)`. DX12 uses the same controller through its native `-run_script` argument and its own compatible save. The staging/copy helpers are one-shot preparation tools and deliberately refuse existing evidence.
+
+Confirmed retail requirements: `keypress_on_start 0`, a nonempty screenshot argument (`screenshot comparison`), and logging markers shorter than the retail console's command buffer. The verified path runs visibly at 3440x1440 with fullscreen enabled. Prior empty screenshot calls merely reported command status. Preserve these constraints when simplifying the controller.
+
+Run `run-graphics-comparison.ps1 -Name NEW_EVIDENCE_NAME -Renderer dx9 -MaxSeconds 260 -Visible -Lossless`, then the equivalent `-Renderer dx12`. Never overlap game instances or a benchmark and compilation. Use distinct evidence names. The report script takes the two evidence-folder names. It rejects failed or incomplete runs and unmatched camera/lens data, trims capture boundaries, and deduplicates log rewrites. The different save formats prevent identical simulation states; up to one minute of game-clock offset is recorded rather than treated as exact synchronization. Screenshots precede driver RTX HDR conversion.
+
+Verified baseline evidence in the workspace: `DX9_MATCHED_041_B` and `DX12_MATCHED_040_A`. Both completed four scenes and exited normally. The original DX9 executable, its settings and tested save pair were preserved. An early Steam-redirected failed attempt did change the original log/cloud metadata; subsequent launches used the isolated context.

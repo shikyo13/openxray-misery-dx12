@@ -983,7 +983,7 @@ void FrameGraphRenderer::SetupFrame() {
                 for (u32 i = 0; i < cameraCount; ++i) {
                     if (!(m_lstRenderables[i]->GetSpatialData().type & STYPE_LIGHTSOURCE)) continue;
                     const auto* source = static_cast<const light*>(m_lstRenderables[i]->dcast_Light());
-                    if (!source || !source->flags.bShadow || source->range <= .1f) continue;
+                    if (!source || source->flags.bStatic || !source->flags.bShadow || source->range <= .1f) continue;
                     g_pGamePersistent->SpatialSpace.q_sphere(m_shadowCasterQuery,
                         0, STYPE_RENDERABLE, source->position, source->range);
                     for (ISpatial* spatial : m_shadowCasterQuery) {
@@ -2659,6 +2659,7 @@ void FrameGraphRenderer::CollectVisibleGeometry() {
 
     xr_vector<const light*> collectedLights;
     collectedLights.reserve(256);
+    u32 skippedBakedLights = 0;
 
     for (ISpatial* spatial : m_lstRenderables)
     {
@@ -2666,8 +2667,12 @@ void FrameGraphRenderer::CollectVisibleGeometry() {
 
         if (data.type & STYPE_LIGHTSOURCE) {
             const light* L = (const light*)spatial->dcast_Light();
-            if (L)
+            // Match CLight_DB::add_light on the legacy dynamic renderers:
+            // level-baked lights already contribute through authored lighting.
+            if (L && !L->flags.bStatic)
                 collectedLights.push_back(L);
+            else if (L)
+                ++skippedBakedLights;
             continue;
         }
 
@@ -2683,6 +2688,10 @@ void FrameGraphRenderer::CollectVisibleGeometry() {
 
     if (!collectedLights.empty())
         fg::ClusteredLightManager::Instance().CollectLightsParallel(collectedLights);
+
+    if (strstr(Core.Params, "-light_trace") && Device.dwFrame % 60 == 0)
+        Msg("* [DynamicLightCollection] frame=%u collected=%zu skipped_baked=%u",
+            Device.dwFrame, collectedLights.size(), skippedBakedLights);
 
     // ═══════════════════════════════════════════════════════
     //  HUD RENDERING (after dynamic objects)
