@@ -1,5 +1,7 @@
 # Verified MISERY comparison workflow
 
+The user's current optimization priority and the reviewed Microsoft/NVIDIA/AMD references are recorded in [DX12 engine performance priorities](PERFORMANCE_PRIORITIES.md). Architectural bottlenecks take priority over further graphics additions. DX12 async compute is currently disabled in the renderer; the presence of backend queue support must not be reported as active overlap.
+
 These are versioned copies of the workspace helpers. Run copies from the workspace `work` directory, beside `engine`, `runtime`, `tools`, and `logs`. Game data and save files stay outside this source repository. The reference path in the PowerShell helper is local to the current Windows workspace; adjust it when restoring on another PC.
 
 The DX9 reference is an independent copy of the installed game. It uses an absolute `comparison.ltx`, the existing Steam AppId 41700, and a copied original save. Its `axr_main.script` adds `callback_register("actor_on_update", graphics_comparison_baseline.update)`. DX12 uses the same controller through its native `-run_script` argument and its own compatible save. The staging/copy helpers are one-shot preparation tools and deliberately refuse existing evidence.
