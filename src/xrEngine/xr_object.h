@@ -34,6 +34,7 @@ class IObjectPhysicsCollision;
 class CAttachmentOwner;
 class CInventoryOwner;
 class CInventoryItem;
+class CGameObject;
 class CEntity;
 class CEntityAlive;
 class CActor;
@@ -243,6 +244,7 @@ public:
     virtual Fvector get_last_local_point_on_mesh(const Fvector& lastPoint, u16 boneId) const = 0;
     // CGameObject
     // functions used for avoiding most of the smart_cast
+    virtual CGameObject* cast_game_object() { return nullptr; }
     virtual CAttachmentOwner* cast_attachment_owner() = 0;
     virtual CInventoryOwner* cast_inventory_owner() = 0;
     virtual CInventoryItem* cast_inventory_item() = 0;

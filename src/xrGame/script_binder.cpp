@@ -211,7 +211,32 @@ BOOL CScriptBinder::net_SaveRelevant()
 
 void CScriptBinder::net_Relcase(IGameObject* object)
 {
-    CGameObject* game_object = smart_cast<CGameObject*>(object);
+    static const bool legacyCast = strstr(Core.Params, "-relcase_legacy_cast") != nullptr;
+    static const bool validateCast = strstr(Core.Params, "-relcase_validate") != nullptr;
+
+    // Most receivers have no script binder. Avoid RTTI for every receiver/removed-object
+    // pair, while leaving native notifications and script callback selection unchanged.
+    if (!m_object && !legacyCast && !validateCast)
+        return;
+
+    CGameObject* game_object = legacyCast ? smart_cast<CGameObject*>(object) :
+        (object ? object->cast_game_object() : nullptr);
+    if (validateCast)
+    {
+        R_ASSERT2(game_object == smart_cast<CGameObject*>(object), "Removal type query disagrees with RTTI");
+        static u64 validated = 0;
+        static u64 withoutBinder = 0;
+        static u64 nullInputs = 0;
+        static u64 nonGameObjects = 0;
+        ++validated;
+        withoutBinder += !m_object;
+        nullInputs += !object;
+        nonGameObjects += object && !game_object;
+        if (validated == 1 || (validated % 65536) == 0)
+            Msg("[RelcaseCastValidation] checked=%llu without_binder=%llu null_inputs=%llu non_game_objects=%llu mismatches=0",
+                static_cast<unsigned long long>(validated), static_cast<unsigned long long>(withoutBinder),
+                static_cast<unsigned long long>(nullInputs), static_cast<unsigned long long>(nonGameObjects));
+    }
     if (m_object && game_object)
     {
         try

@@ -238,13 +238,14 @@ void CObjectList::clear_crow_vec(Objects& o)
 void CObjectList::Update(bool bForce)
 {
     ZoneScoped;
-    const bool traceFrame = strstr(Core.Params, "-frame_trace") != nullptr;
+    const bool traceRemoval = strstr(Core.Params, "-relcase_trace") != nullptr;
+    const bool traceFrame = traceRemoval || strstr(Core.Params, "-frame_trace") != nullptr;
     u64 traceStart = traceFrame ? CPU::QPC() : 0;
     const auto traceStep = [&](const char* name) {
         if (!traceFrame) return;
         const u64 end = CPU::QPC();
         const double elapsedMs = double(end - traceStart) * 1000.0 / CPU::qpc_freq;
-        if (elapsedMs >= 8.0)
+        if (elapsedMs >= 8.0 || (traceRemoval && !destroy_queue.empty()))
             Msg("* [ObjectListTrace] frame=%u time=%u stage=%s active=%u sleeping=%u destroying=%u updated=%u registered=%u duration_ms=%.3f",
                 Device.dwFrame, Device.dwTimeGlobal, name, u32(objects_active.size()), u32(objects_sleeping.size()),
                 u32(destroy_queue.size()), stats.Updated, u32(m_relcase_callbacks.size()), elapsedMs);

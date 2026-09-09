@@ -1,0 +1,65 @@
+-- Isolated native cleanup dispatch check. Creates and removes only its own items.
+local function wait_ms(ms)
+    local stop=time_global()+ms
+    while time_global()<stop do coroutine.yield() end
+end
+
+function main()
+    while not db.actor do coroutine.yield() end
+    wait_ms(12000)
+    local out=assert(io.open("_appdata_/dx12_relcase_probe.tsv","wb"))
+    local function write(text) out:write(text.."\n");out:flush() end
+    local class=bind_stalker.actor_binder
+    local original=class.net_Relcase
+    assert(type(original)=="function")
+    local instance,target,seen
+    local function observer(label)
+        return function(self,object)
+            instance=self
+            if target and object:id()==target then
+                seen[label]=(seen[label] or 0)+1
+                assert(self.object:id()==db.actor:id())
+            end
+            original(self,object)
+        end
+    end
+    local function remove_item(label,expected)
+        local actor=db.actor
+        local server=assert(alife():create("bandage",actor:position(),actor:level_vertex_id(),actor:game_vertex_id(),actor:id()))
+        target=server.id
+        seen={}
+        local deadline=time_global()+8000
+        while not level.object_by_id(target) and time_global()<deadline do coroutine.yield() end
+        assert(level.object_by_id(target),"Probe item did not come online")
+        wait_ms(200)
+        alife():release(assert(alife():object(target)),true)
+        deadline=time_global()+8000
+        while level.object_by_id(target) and time_global()<deadline do coroutine.yield() end
+        assert(not level.object_by_id(target),"Probe item was not removed")
+        wait_ms(200)
+        if expected then
+            assert(seen[expected]==1,"Cleanup callback missing or duplicated")
+            for key,count in pairs(seen) do assert(key==expected and count==1,"Wrong cleanup override") end
+        else
+            assert(next(seen)==nil)
+        end
+        write(string.format("pass\t%s\titem=%d\tcallback=%s\tframe=%d",label,target,expected or "native_default",device().frame))
+        target=nil
+    end
+    remove_item("inherited_default")
+    class.net_Relcase=observer("class_a")
+    remove_item("class_override","class_a")
+    assert(instance)
+    class.net_Relcase=observer("class_b")
+    remove_item("class_replaced","class_b")
+    instance.net_Relcase=observer("instance")
+    remove_item("instance_override","instance")
+    instance.net_Relcase=nil
+    remove_item("instance_removed","class_b")
+    class.net_Relcase=original
+    remove_item("restored_default")
+    write("complete")
+    out:close()
+    printf("[RelcaseProbe] All six native cleanup dispatch cases passed")
+    get_console():execute("quit")
+end
