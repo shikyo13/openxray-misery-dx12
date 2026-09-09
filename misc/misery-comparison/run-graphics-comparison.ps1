@@ -6,9 +6,13 @@ param(
     [switch]$Visible,
     [switch]$Lossless,
     [string]$ExtraArguments='',
-    [string]$RuntimeRoot
+    [string]$RuntimeRoot,
+    [ValidatePattern('^[A-Za-z0-9_]+$')][string]$ScriptNamespace='graphics_comparison_baseline'
 )
 $ErrorActionPreference='Stop'
+if ($Renderer -eq 'dx9' -and $ScriptNamespace -ne 'graphics_comparison_baseline') {
+    throw 'The retail callback is fixed to the verified baseline controller.'
+}
 $comparisonRoot = if ($Renderer -eq 'dx9') { 'D:\Codex\MISERY-DX12\reference\DX9_MAIN_2026-09-08' } else { Join-Path $PSScriptRoot 'runtime/misery' }
 if ($RuntimeRoot) {
     if ($Renderer -ne 'dx12') { throw 'RuntimeRoot override is for native DX12 packages only.' }
@@ -25,11 +29,11 @@ if (Test-Path -LiteralPath $comparisonEvents) {
     Copy-Item -LiteralPath $comparisonEvents -Destination (Join-Path $comparisonEvidence 'previous-events.tsv')
 }
 Copy-Item -LiteralPath (Join-Path $comparisonRoot '_appdata_/user.ltx') -Destination (Join-Path $comparisonEvidence 'profile-initial.ltx')
-Copy-Item -LiteralPath (Join-Path $comparisonRoot 'gamedata/scripts/graphics_comparison_baseline.script') -Destination (Join-Path $comparisonEvidence 'controller.script')
+Copy-Item -LiteralPath (Join-Path $comparisonRoot ('gamedata/scripts/'+$ScriptNamespace+'.script')) -Destination (Join-Path $comparisonEvidence 'controller.script')
 $comparisonArgs = if ($Renderer -eq 'dx9') {
     '-fsltx D:\Codex\MISERY-DX12\reference\DX9_MAIN_2026-09-08\comparison.ltx -nosplash -nointro -i -silent_error_mode -start server(dx9_reference_skadovsk/single/alife/load) client(localhost)'
 } else {
-    '-fsltx fsgame.ltx -nosplash -nointro -i -silent_error_mode -run_script graphics_comparison_baseline -start server(dx12_normal_sniper/single/alife/load) client(localhost)'
+    '-fsltx fsgame.ltx -nosplash -nointro -i -silent_error_mode -run_script '+$ScriptNamespace+' -start server(dx12_normal_sniper/single/alife/load) client(localhost)'
 }
 if ($RetailBenchmark) {
     if ($Renderer -ne 'dx9') { throw 'Retail benchmark mode is only supported by this original DX9 executable.' }
@@ -56,7 +60,7 @@ $pmArgs=@('--process_id',$comparisonProcess.Id,'--output_file',('"'+(Join-Path $
     '--terminate_on_proc_exit','--timed',($MaxSeconds+5),'--terminate_after_timed')
 $pmProcess=Start-Process -FilePath $pmExe -ArgumentList $pmArgs -WindowStyle Hidden -PassThru `
     -RedirectStandardOutput (Join-Path $comparisonEvidence 'presentmon.log') -RedirectStandardError (Join-Path $comparisonEvidence 'presentmon-errors.log')
-$comparisonRecord=[ordered]@{renderer=$Renderer; exe=$comparisonExe; pid=$comparisonProcess.Id; args=$comparisonArgs;
+$comparisonRecord=[ordered]@{renderer=$Renderer; exe=$comparisonExe; pid=$comparisonProcess.Id; args=$comparisonArgs; script_namespace=$ScriptNamespace;
     sha256=(Get-FileHash -LiteralPath $comparisonExe -Algorithm SHA256).Hash; started=$comparisonStart.ToString('o');
     presentmon_pid=$pmProcess.Id; qpc_frequency=[Diagnostics.Stopwatch]::Frequency; max_seconds=$MaxSeconds; visible=[bool]$Visible}
 $comparisonRecord | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $comparisonEvidence 'process.json') -Encoding utf8
@@ -112,6 +116,10 @@ $comparisonObserved | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-P
 $comparisonRecord | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $comparisonEvidence 'result.json') -Encoding utf8
 $comparisonLog=Join-Path $comparisonRoot $(if ($Renderer -eq 'dx9') {'_appdata_/logs/xray_zero.log'} else {'_appdata_/logs/openxray_zero.log'})
 if (Test-Path -LiteralPath $comparisonLog) { Copy-Item -LiteralPath $comparisonLog -Destination (Join-Path $comparisonEvidence 'engine.log') }
+$comparisonGpuLog=Join-Path $comparisonRoot '_appdata_/logs/dx12_graphics.csv'
+if ($Renderer -eq 'dx12' -and (Test-Path -LiteralPath $comparisonGpuLog) -and (Get-Item -LiteralPath $comparisonGpuLog).LastWriteTimeUtc -ge $comparisonStart.UtcDateTime) {
+    Copy-Item -LiteralPath $comparisonGpuLog -Destination (Join-Path $comparisonEvidence 'dx12_graphics.csv')
+}
 $comparisonRows | Set-Content -LiteralPath (Join-Path $comparisonEvidence 'controller.tsv') -Encoding utf8
 Copy-Item -LiteralPath (Join-Path $comparisonRoot '_appdata_/user.ltx') -Destination (Join-Path $comparisonEvidence 'profile-after.ltx')
 foreach ($comparisonShotFolder in @('_appdata_/screenshots','_appdata_/logs','_appdata_')) {

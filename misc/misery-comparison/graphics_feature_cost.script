@@ -1,0 +1,99 @@
+-- Native-only diagnostic. Keep all gameplay callbacks and animated shadows active.
+local stage, scene_index, preset_index = "init", 1, 1
+local next_time, finished = 0, false
+local scenes = {
+    {"interior", 128.80002, -7.34269, 177.79997, 9, "af3_day_clear"},
+    {"outdoor", 164.53406, -5.55935, 152.64307, 9, "af3_day_clear"},
+    {"rain", 164.53406, -5.55935, 152.64307, 9, "af3_day_rain"},
+    {"night", 164.53406, -5.55935, 152.64307, 23, "af3_day_clear"}
+}
+local presets = {
+    {"quality_a", 16, 1, "st_opt_high"},
+    {"filter8", 8, 1, "st_opt_high"},
+    {"common", 8, 0, "st_opt_high"},
+    {"no_ao", 8, 0, "st_opt_off"},
+    {"quality_b", 16, 1, "st_opt_high"}
+}
+local function emit(message)
+    local row = string.format("%d|%s", time_global(), message):gsub("%s", "|")
+    assert(#row + #"comparison_event|" < 64, "comparison marker is too long")
+    get_console():execute("comparison_event|" .. row)
+    get_console():execute("flush")
+end
+local function step()
+    if not db.actor or time_global() < next_time then return end
+    local console, scene, preset = get_console(), scenes[scene_index], presets[preset_index]
+    local name = scene[1] .. "_" .. preset[1]
+    if stage == "init" then
+        console:execute("main_menu off")
+        device():pause(false)
+        emit("loaded")
+        stage, next_time = "place", time_global() + 12000
+    elseif stage == "place" then
+        level.set_time_factor(1)
+        console:execute("hud_draw off")
+        console:execute("hud_weapon off")
+        local torch = db.actor:object("device_torch")
+        if torch then torch:enable_torch(false) end
+        if scene[1] == "interior" or scene[1] == "night" then
+            local minutes = (scene[5]*60-level.get_time_hours()*60-level.get_time_minutes()+1440)%1440
+            level.change_game_time(0, math.floor(minutes/60), minutes%60)
+        end
+        level.set_weather(scene[6], true)
+        db.actor:set_actor_position(vector():set(scene[2], scene[3], scene[4]))
+        stage, next_time = "camera", time_global() + 6000
+    elseif stage == "camera" then
+        console:execute("demo_play graphics_comparison_" .. scene[1])
+        stage, next_time = "preset", time_global() + 10000
+    elseif stage == "preset" then
+        console:execute("r__tf_aniso " .. preset[2])
+        console:execute("r_detail_shadows " .. preset[3])
+        console:execute("r2_ssao " .. preset[4])
+        stage, next_time = "begin", time_global() + 3000
+    elseif stage == "begin" then
+        assert(console:get_integer("r__tf_aniso") == preset[2], "filter setting did not apply")
+        assert(console:get_integer("r_detail_shadows") == preset[3], "grass shadow setting did not apply")
+        assert(console:get_token("r2_ssao") == preset[4], "AO setting did not apply")
+        emit("begin\t" .. name)
+        emit("af\t" .. console:get_integer("r__tf_aniso"))
+        emit("grass\t" .. console:get_integer("r_detail_shadows"))
+        emit("ao\t" .. console:get_token("r2_ssao"))
+        emit("display\t" .. console:get_token("vid_window_mode"))
+        emit("aa\t" .. console:get_token("r_aa"))
+        emit("fg\t" .. console:get_integer("r_fsr_fg"))
+        emit(string.format("clock\t%d:%02d\t%s", level.get_time_hours(),level.get_time_minutes(),scene[6]))
+        local camera, direction = device().cam_pos, device().cam_dir
+        emit(string.format("pos\t%.5f,%.5f,%.5f",camera.x,camera.y,camera.z))
+        emit(string.format("dir\t%.5f,%.5f,%.5f",direction.x,direction.y,direction.z))
+        emit(string.format("lens\t%.5f\t%.5f",device().fov,device().aspect_ratio))
+        stage, next_time = "end", time_global() + 8000
+    elseif stage == "end" then
+        emit("end\t" .. name)
+        console:execute("screenshot feature_" .. name)
+        stage, next_time = "advance", time_global() + 900
+    elseif stage == "advance" then
+        preset_index = preset_index + 1
+        if preset_index <= #presets then
+            stage = "preset"
+        else
+            preset_index, scene_index = 1, scene_index + 1
+            if scene_index <= #scenes then stage = "place"
+            else
+                emit("complete")
+                finished = true
+                console:execute("quit")
+            end
+        end
+    end
+end
+function main()
+    while not finished do
+        local ok, err = pcall(step)
+        if not ok then
+            emit(("error\t" .. stage .. "\t" .. tostring(err)):sub(1,35))
+            finished = true
+            get_console():execute("quit")
+        end
+        coroutine.yield()
+    end
+end

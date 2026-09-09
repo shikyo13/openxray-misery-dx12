@@ -6,6 +6,7 @@ import html
 import json
 import math
 import statistics
+import bisect
 
 parser = argparse.ArgumentParser()
 parser.add_argument("dx9")
@@ -14,6 +15,7 @@ parser.add_argument("--name", default="MISERY_DX9_DX12_COMPARISON_041")
 parser.add_argument("--dx12-label", default="DX12 build 0.40")
 parser.add_argument("--previous-report")
 parser.add_argument("--settings-audit", help="Source-reviewed settings notes tied to these exact captured runs")
+parser.add_argument("--feature-probe", help="Optional same-build native settings probe using the fixed cameras")
 args = parser.parse_args()
 dx12_label = html.escape(args.dx12_label)
 outputs = Path(__file__).resolve().parent.parent / "outputs"
@@ -33,7 +35,7 @@ def percentile(values, fraction):
     low = int(point)
     return ordered[low] + (ordered[min(low+1,len(ordered)-1)]-ordered[low])*(point-low)
 
-def read_run(name):
+def read_run(name, expected_cases=cases):
     root = outputs / "implementation-evidence" / name
     result = json.loads((root/"result.json").read_text(encoding="utf-8-sig"))
     if result["exit_code"] != 0 or not result["exited_before_deadline"]:
@@ -52,21 +54,22 @@ def read_run(name):
         fields = event["line"].split("\t")
         if fields[1] == "begin":
             current = fields[2]
-            records[current] = {"begin_qpc":event["qpc"]}
+            records[current] = {"begin_qpc":event["qpc"], "begin_time_ms":int(fields[0])}
         elif fields[1] == "end":
             records[fields[2]]["end_qpc"] = event["qpc"]
+            records[fields[2]]["end_time_ms"] = int(fields[0])
             current = None
-        elif current and fields[1] in ("pos","dir","lens","clock"):
+        elif current and fields[1] in ("pos","dir","lens","clock","af","grass","ao","display","aa","fg"):
             records[current][fields[1]] = fields[2:]
-    if tuple(records) != cases:
+    if tuple(records) != tuple(expected_cases):
         raise ValueError(f"{name}: missing or reordered scene markers")
     shots = sorted(root.glob("*.jpg"), key=lambda p:p.stat().st_mtime_ns)
-    if len(shots) != len(cases):
-        raise ValueError(f"{name}: expected exactly four captures, found {len(shots)}")
+    if len(shots) != len(expected_cases):
+        raise ValueError(f"{name}: expected {len(expected_cases)} captures, found {len(shots)}")
     with (root/"presents.csv").open(newline="",encoding="utf-8-sig") as stream:
         rows = list(csv.DictReader(stream))
     frequency = result["qpc_frequency"]
-    for scene, shot in zip(cases,shots):
+    for scene, shot in zip(expected_cases,shots):
         data = records[scene]
         # Exclude logging/capture boundaries by half a second, including any
         # present interval whose start precedes the selected time window.
@@ -110,6 +113,68 @@ if "-graphics_trace" in runs["DX12"]["process"]["args"]:
     profile_note = "GPU profiling was enabled in this DX12 run; its overhead is included. These results should not be treated as an isolated measurement of the code change."
 summary["profiling_note"] = profile_note
 summary["dx12_label"] = args.dx12_label
+feature_probe = None
+presets = ("quality_a", "filter8", "common", "no_ao", "quality_b")
+if args.feature_probe:
+    feature_cases = tuple(scene+"_"+preset for scene in cases for preset in presets)
+    feature_probe = read_run(args.feature_probe, feature_cases)
+    if feature_probe['process']['sha256'].lower() != runs['DX12']['process']['sha256'].lower():
+        raise ValueError('Feature probe must use the same executable as the reported DX12 build')
+    expected_settings = {
+        'quality_a':('16','1','st_opt_high'), 'filter8':('8','1','st_opt_high'),
+        'common':('8','0','st_opt_high'), 'no_ao':('8','0','st_opt_off'),
+        'quality_b':('16','1','st_opt_high')}
+    for scene in cases:
+        reference = feature_probe['scenes'][scene+'_quality_a']
+        for preset in presets:
+            sample = feature_probe['scenes'][scene+'_'+preset]
+            expected = expected_settings[preset]
+            if tuple(sample[key][0] for key in ('af','grass','ao')) != expected or sample['aa'] != ['off'] or sample['fg'] != ['0']:
+                raise ValueError(f'{scene}/{preset}: actual feature controls did not match the requested values')
+            if sample['display'] != ['st_opt_fullscreen']:
+                raise ValueError(f'{scene}/{preset}: unexpected display control')
+            for field in ('pos','dir','lens'):
+                av = [float(x) for s in reference[field] for x in s.split(',')]
+                bv = [float(x) for s in sample[field] for x in s.split(',')]
+                if len(av) != len(bv) or any(abs(a-b) > .001 for a,b in zip(av,bv)):
+                    raise ValueError(f'{scene}/{preset}: camera/lens mismatch')
+            if reference['clock'][1] != sample['clock'][1]:
+                raise ValueError(f'{scene}/{preset}: named weather mismatch')
+    # GPU regions can nest. Preserve individual labels instead of summing them.
+    windows = list(feature_probe['scenes'].values())
+    starts = [w['begin_time_ms']+500 for w in windows]
+    totals = [{} for w in windows]
+    with (outputs/'implementation-evidence'/args.feature_probe/'dx12_graphics.csv').open(newline='',encoding='utf-8-sig') as stream:
+        for row in csv.DictReader(stream):
+            if row['kind'] != 'gpu': continue
+            time_ms = int(row['time_global_ms'])
+            index = bisect.bisect_right(starts,time_ms)-1
+            if index < 0 or time_ms >= windows[index]['end_time_ms']-500: continue
+            total = totals[index].setdefault(row['label'],[0.0,0])
+            total[0] += float(row['value_ms']); total[1] += 1
+    for sample,labels in zip(windows,totals):
+        sample['gpu_mean_ms'] = {key:total/count for key,(total,count) in labels.items()}
+    feature_probe['scene_checks'] = {}
+    for scene in cases:
+        samples = [feature_probe['scenes'][scene+'_'+preset] for preset in presets]
+        drift = (samples[-1]['mean_ms']/samples[0]['mean_ms']-1)*100
+        modes = sorted({mode for sample in samples for mode in sample['present_modes']})
+        warnings = []
+        if abs(drift) > 5:
+            warnings.append('Quality repeat differs by more than 5%; do not isolate small feature costs')
+        if len(modes) > 1:
+            warnings.append('Presentation mode changed during this sequence')
+        feature_probe['scene_checks'][scene] = {'quality_repeat_mean_ms_change_percent':drift,
+            'present_modes':modes, 'warnings':warnings,
+            'note':'A stable repeat supports this short comparison; it does not prove identical simulation or statistical significance.'}
+        if not warnings:
+            on, off = (feature_probe['scenes'][scene+'_'+preset] for preset in ('filter8','common'))
+            feature_probe['scene_checks'][scene]['grass_shadow_gpu_difference_ms'] = {
+                label:on['gpu_mean_ms'][label]-off['gpu_mean_ms'][label]
+                for label in ('Local shadow maps','Sun shadow maps')
+                if label in on['gpu_mean_ms'] and label in off['gpu_mean_ms']}
+    feature_probe['method'] = 'One native session, four fixed cameras, five 8-second samples per camera with 3-second settling and 0.5-second endpoint trimming. Quality repeated after each sequence. Gameplay continues; this is not identical simulation or an isolated API comparison. AO-off is a diagnostic, not a DX9-equivalent preset.'
+    summary['feature_probe'] = feature_probe
 settings_audit = None
 if args.settings_audit:
     audit_path = outputs / args.settings_audit
@@ -183,6 +248,25 @@ for renderer in ('DX9','DX12'):
     settings_html += '<p>'+renderer+' observed PresentMon modes: '+html.escape(', '.join(modes))+'. '
     settings_html += ' · '.join('<a href="'+html.escape(path,quote=True)+'">'+html.escape(stage)+' profile</a>' for stage,path in runs[renderer]['profile_files'].items())+'</p>'
 settings_html += '</details></section>'
+if feature_probe:
+    settings_html += '<section id="feature-cost"><h2>Measured DX12 feature costs</h2><p>These samples use the same executable and camera positions in one session. Native resolution, AA off, frame generation off and an explicit fullscreen setting apply throughout. The comparison quality setting is repeated to expose variation as gameplay continues; the normal play profile uses FXAA. Each measured window is about seven seconds after trimming.</p>'
+    settings_html += '<div class="table-scroll"><table><thead><tr><th>Scene</th><th>Quality: 16x + grass shadows</th><th>8x + grass shadows</th><th>8x, grass shadows off</th><th>Also AO off (diagnostic)</th><th>Quality repeated</th><th>Repeat / presentation check</th></tr></thead><tbody>'
+    for scene in cases:
+        check = feature_probe['scene_checks'][scene]
+        status = 'Quality mean interval drift: '+format(check['quality_repeat_mean_ms_change_percent'],'+.1f')+'%. '
+        status += ' '.join(check['warnings']) if check['warnings'] else 'One presentation mode; repeat within 5%.'
+        cells = []
+        for preset in presets:
+            sample = feature_probe['scenes'][scene+'_'+preset]
+            cells.append(f'<td>{sample["average_fps"]:.1f} FPS<br><span class="small">mean {sample["mean_ms"]:.2f} ms<br>p99 {sample["p99_ms"]:.2f} ms</span></td>')
+        settings_html += '<tr><th>'+scene.title()+'</th>'+''.join(cells)+'<td>'+html.escape(status)+'</td></tr>'
+    settings_html += '</tbody></table></div>'
+    for scene, check in feature_probe['scene_checks'].items():
+        costs = check.get('grass_shadow_gpu_difference_ms',{})
+        if costs:
+            measured = ', '.join(html.escape(label.lower())+f' {value:.2f} ms' for label,value in costs.items())
+            settings_html += '<p>'+scene.title()+': disabling grass shadows at the same 8x filtering setting reduced the measured GPU regions by '+measured+'. These region differences are not equivalent to total frame-time savings.</p>'
+    settings_html += '<p class="small">The intermediate columns are diagnostic settings; the current DX12 quality preset is retained. AO implementation, texture loading and other renderer behavior still differ from DX9. These short samples do not establish sustained performance or assign every FPS difference to the changed feature. Frame-time summaries, actual controls, presentation modes and GPU regions are in the report JSON; raw intervals are retained in the archived PresentMon CSV.</p></section>'
 page = page.replace('<section><h2>Interior</h2>',settings_html+'<section><h2>Interior</h2>',1)
 page = page.replace('</style>', '.table-scroll{overflow-x:auto}.settings{width:100%;font-size:14px}.settings th,.settings td{vertical-align:top;padding:10px 14px}.settings th:first-child{width:15%}.settings td{width:28%}summary{cursor:pointer;color:#c7d3a2}details{border:1px solid #465043;padding:16px} </style>',1)
 (outputs/(args.name+".html")).write_text(page,encoding="utf-8")
