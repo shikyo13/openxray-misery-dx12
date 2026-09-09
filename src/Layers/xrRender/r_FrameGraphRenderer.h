@@ -582,7 +582,7 @@ private:
     // ═══════════════════════════════════════════════════════
     // Static geometry from sector hierarchies doesn't change - cache it!
     // Only dynamic objects (from spatial DB) need per-frame collection
-    xr_vector<GeometryBatch> m_cachedStaticBatches;
+    size_t m_staticBatchCount = 0; // Retained at the front of the geometry collector.
     bool m_staticBatchesCached = false;
 
     // RenderContext for execution

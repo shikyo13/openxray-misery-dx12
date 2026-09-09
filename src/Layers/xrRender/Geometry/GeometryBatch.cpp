@@ -16,9 +16,11 @@ GeometryCollector::~GeometryCollector() {
     Msg("* [GeometryCollector] Destroyed");
 }
 
-void GeometryCollector::BeginFrame() {
-    // Clear previous frame's batches
-    m_batches.clear();
+void GeometryCollector::BeginFrame(size_t staticPrefix) {
+    R_ASSERT2(staticPrefix <= m_batches.size(), "Invalid retained static geometry prefix");
+    // Static batches already occupy the front of this vector. Avoid releasing and
+    // copying their buffer handles every frame; retire only last frame's dynamics.
+    m_batches.resize(staticPrefix);
 
     // Reset statistics
     m_stats = Stats{};

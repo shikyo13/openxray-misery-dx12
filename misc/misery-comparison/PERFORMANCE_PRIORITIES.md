@@ -6,6 +6,37 @@ The user's priority is to remove internal engine bottlenecks so native x64/DX12 
 
 User correction after the failed submission experiment: do not skip from submission timing to separate shadow optimization. Finish the parallel command-recording architecture first. Shadows may supply its first workload; that does not authorize prioritizing shadow-specific culling or draw optimizations ahead of it.
 
+## Priority 1: static geometry CPU work (2026-09-09 UTC)
+
+The current candidate removes repeated destruction and copying of 21,786 unchanged static batches. The collector retains its static prefix and rebuilds dynamic batches after it. Full level unload clears the collector and resets the prefix before destroying level visuals. Shadow algorithms, culling criteria, shaders, quality settings and game callbacks are unchanged. This also removes the redundant second static-batch vector.
+
+`fg_parallel_record 0/1` now switches the experimental recorder within one session. Startup still follows `-fg_parallel_record`; the live command does not save itself to `user.ltx`. Normal launches remain serial. `-cpu_trace` now measures collection substages and samples geometry/light/particle workloads once per second. The `sun` workload field denotes a valid sun-map resource, not whether a sun draw pass executed.
+
+AS (`DX12_PARALLEL_CROSSOVER_042_AS`) and AT (`DX12_STATIC_RETAIN_CROSSOVER_042_AT`) ran the same eight-window controller, alternating OFF/ON/ON/OFF by day and ON/OFF/OFF/ON at night. Each window lasts 15 seconds after settling. Both use 1720x720, FXAA, AO-high, 16x, FG off and identical initial profile/controller hashes; cameras agree within 0.001 and recorded clocks match. Native DX12, ordinary game callbacks and NVRHI validation remain enabled. Both games, PresentMon and GPU samplers exited 0.
+
+Combined `CollectorBegin` and `StaticGeometry` CPU work fell from 0.485-0.491 ms to 0.0036-0.0048 ms per frame across the eight windows. Daylight total renderer CPU time improved by 0.36-0.52 ms. Sampled static count remained 21,786. Twenty-eight daytime samples in each run used distinct overlapping recording threads; night used serial fallback. Sampled background GPU engines stayed below 0.16%.
+
+| Window | Renderer CPU ms before / after | Application FPS before / after |
+|---|---:|---:|
+| Day OFF A | 6.402 / 5.940 | 117.63 / 123.22 |
+| Day ON A | 5.605 / 5.242 | 124.20 / 126.54 |
+| Day ON B | 5.605 / 5.117 | 123.82 / 127.85 |
+| Day OFF B | 6.491 / 5.968 | 115.60 / 121.88 |
+| Night ON A | 5.288 / 4.903 | 138.24 / 147.35 |
+| Night OFF A | 5.286 / 5.280 | 138.37 / 135.09 |
+| Night OFF B | 5.056 / 5.040 | 143.91 / 135.24 |
+| Night ON B | 4.960 / 4.962 | 146.91 / 138.29 |
+
+These are traced, lower-resolution application timings, not native-resolution or displayed-frame gains. Night workload varies materially: AS lights fell from 45 to 39, while AT later reached 49. The same-process check did not reproduce a consistent penalty following the recorder switch; it does not prove the cause of the older AQ/AR difference. Day ON A's p99 also rose from 11.37 to 11.95 ms during a brief increase in lights/faces/particles. Do not hide these differences or claim a universal FPS/tail improvement.
+
+AU (`DX12_STATIC_RETAIN_RELOAD_042_AU`) completed two full Zaton unload/reloads at 3440x1440 output with DLSS Quality, FSR FG, parallel recording and native debug validation. Exit 0; three cache builds each contain 21,786 batches; 33 sampled groups overlap on distinct threads. All three stills retain world geometry, terrain and grass. All 153 inventory entries retain contents/condition/ammo; raw identity differs only for bolt 11077 -> 14848. Grouse's 22,927-byte custom data is exact after both reloads. Last successful FG dispatch count is 1724. This is not different-level or extended-session qualification.
+
+AS/AT each retain 836 legacy shader compilation failure lines; AU retains 2216 across three loads. No matched fatal, native D3D12 validation or NVRHI error occurred. Two baseline stills, four optimized crossover stills and all three reload stills were inspected; this is bounded visual evidence, not complete shader/effects parity.
+
+Candidate executable SHA-256: `53bee745f1e0125bd33d3d37254f8ca4e22d1547af7f3ba12ad6b78d4a1b0614`. Matching PDB and exact source patch are retained in workspace `work/runtime/static-geometry-retain-042`. Full evidence: workspace `outputs/implementation-evidence/MISERY_DX12_STATIC_GEOMETRY_CPU_SUMMARY.json`. Normal 0.41 staging executable/PDB/profile were restored and hash-verified; delivered 0.42 and the fixed DX9 comparison remain unchanged.
+
+Next: remain on priority 1. Measure practical native-resolution performance with instrumentation costs explicit and scene workloads accounted for before default parallel enablement. Separate shadow/caster optimization remains deferred.
+
 ## 0.42 delivery and CPU scaling (2026-09-09 UTC)
 
 Development package 0.42 is delivered at `D:\Codex\MISERY-DX12\outputs\MISERY_DX12_DEV_0.42`. It uses the tested engine source `e54ae6076994b1302fca6936c4238c7aa5da7de9` / executable `d217d8cda0cd688ff83907841c871e450ff957e2ff4ad2b36cb8d56ab6817ddb`, with the already-qualified resize/reload/resource-state fixes. No further engine/shader change was made in this checkpoint. The normal launcher remains serial; the separate experimental launcher adds only `-fg_parallel_record`. Shadow-specific optimization remains deferred.

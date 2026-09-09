@@ -160,7 +160,8 @@ public:
     ~GeometryCollector();
 
     // Begin/end frame
-    void BeginFrame();
+    // Keep the unchanged level-static prefix; dynamic batches are rebuilt after it.
+    void BeginFrame(size_t staticPrefix = 0);
     void EndFrame();
 
     // Submit geometry for rendering

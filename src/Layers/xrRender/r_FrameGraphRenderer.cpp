@@ -344,7 +344,7 @@ void FrameGraphRenderer::Shutdown() {
     m_uiRender = nullptr;
     m_uiMaterialCache = nullptr;
     m_uiVCBPool = nullptr;
-    m_cachedStaticBatches.clear();
+    m_staticBatchCount = 0;
     m_staticBatchesCached = false;
     if (m_gpuCullingManager) {
         m_gpuCullingManager->InvalidateStaticCullingData();
@@ -599,7 +599,7 @@ void FrameGraphRenderer::Render() {
                 visibleFaces = std::count(local.visibleFaces.begin(), local.visibleFaces.end(), true);
             }
             Msg("* [RenderWorkload] frame=%u time=%u parallel=%d static=%zu batches=%zu spatial=%zu offscreen=%zu lights=%u local_faces=%zu visible_faces=%zu sun=%d hud=%zu particles=%zu",
-                Device.dwFrame, Device.dwTimeGlobal, ps_fg_parallel_record, m_cachedStaticBatches.size(),
+                Device.dwFrame, Device.dwTimeGlobal, ps_fg_parallel_record, m_staticBatchCount,
                 m_geometryCollector->GetBatches().size(), m_lstRenderables.size(), m_shadowCasterCandidates.size(),
                 fg::ClusteredLightManager::Instance().GetLightCount(), localFaces, visibleFaces,
                 m_sunShadowMap.is_valid() ? 1 : 0, m_hudBatches.size(), m_worldParticleBatches.size());
@@ -1080,7 +1080,7 @@ void FrameGraphRenderer::SetupFrame() {
 
     {
         ZoneScopedN("SetupFrame::CollectorBegin");
-        m_geometryCollector->BeginFrame();
+        m_geometryCollector->BeginFrame(m_staticBatchesCached ? m_staticBatchCount : 0);
         m_hudBatches.clear();
         m_worldParticleBatches.clear();
         m_hudParticleBatches.clear();
@@ -2672,8 +2672,6 @@ void FrameGraphRenderer::CollectVisibleGeometry() {
     };
 
     const auto& sectors = scene_info::GetSceneSectors();
-    u32 submittedStatic = 0;
-
     if (!m_staticBatchesCached && !sectors.empty()) {
         Msg("* [GeomCache] Building static geometry cache from %zu sectors...", sectors.size());
 
@@ -2690,7 +2688,7 @@ void FrameGraphRenderer::CollectVisibleGeometry() {
             uniqueVisuals.insert(v);
         }
 
-        u32 batchCountBefore = static_cast<u32>(m_geometryCollector->GetBatches().size());
+        R_ASSERT2(m_geometryCollector->GetBatches().empty(), "Static geometry must be collected first");
 
         for (dxRender_Visual* visual : uniqueVisuals) {
             Fmatrix xform = Fidentity;
@@ -2707,23 +2705,15 @@ void FrameGraphRenderer::CollectVisibleGeometry() {
                     break;
             }
 
-            if (ProcessVisualGeometry(visual, xform, nullptr, true)) {
-                submittedStatic++;
-            }
+            ProcessVisualGeometry(visual, xform, nullptr, true);
         }
 
         const auto& allBatches = m_geometryCollector->GetBatches();
-        m_cachedStaticBatches.assign(allBatches.begin() + batchCountBefore, allBatches.end());
+        m_staticBatchCount = allBatches.size();
         m_staticBatchesCached = true;
 
         Msg("* [GeomCache] Cached %zu static batches from %zu unique visuals (total sectors: %zu)",
-            m_cachedStaticBatches.size(), uniqueVisuals.size(), sectors.size());
-    }
-    else if (m_staticBatchesCached) {
-        for (const auto& batch : m_cachedStaticBatches) {
-            m_geometryCollector->Submit(batch);
-            submittedStatic++;
-        }
+            m_staticBatchCount, uniqueVisuals.size(), sectors.size());
     }
 
     traceStage("StaticGeometry");

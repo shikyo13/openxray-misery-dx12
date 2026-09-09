@@ -364,7 +364,9 @@ void FrameGraphRenderer::level_Unload()
         m_blackboard->get_or_add<passes::DetailPassState>() = {};
 
     // Cached batches contain raw visual pointers into the level being destroyed.
-    m_cachedStaticBatches.clear();
+    if (m_geometryCollector)
+        m_geometryCollector->BeginFrame();
+    m_staticBatchCount = 0;
     m_staticBatchesCached = false;
     if (auto* culling = GetGPUCullingManager())
         culling->InvalidateStaticCullingData();
