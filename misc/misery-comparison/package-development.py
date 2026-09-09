@@ -7,23 +7,84 @@ import shutil
 import subprocess
 import argparse
 import re
+import os
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--version', required=True)
 parser.add_argument('--output-root', type=Path, help='Directory for the independent package; defaults to project outputs.')
 parser.add_argument('--batch-shadow-copies', action='store_true', help='Enable the tested grouped shadow-copy path in the normal launcher.')
 parser.add_argument('--build-identity', type=Path, help='Archived executable/PDB and compiled source identity to preserve with this package.')
+parser.add_argument('--check-storage', action='store_true', help='Check retention and free-space limits without creating or copying anything.')
 args = parser.parse_args()
 if not re.fullmatch(r'\d+\.\d+(?:\.\d+)?', args.version):
     raise SystemExit('Version must contain two or three numeric components.')
 
 work = Path(__file__).resolve().parent
 source = work / 'runtime/misery'
-output_root = args.output_root.resolve() if args.output_root else work.parent / 'outputs'
-package = output_root / ('MISERY_DX12_DEV_' + args.version)
+policy = json.loads((work / 'storage-policy.json').read_text(encoding='utf-8-sig'))
+output_root = args.output_root.resolve() if args.output_root else Path(policy['package_output_root']).resolve()
+final_package = output_root / ('MISERY_DX12_DEV_' + args.version)
+package = output_root / (final_package.name + '.incomplete')
 game = package / 'game'
-if package.exists():
-    raise SystemExit('Package already exists; do not overwrite a user-played profile.')
+
+def tree_bytes(root):
+    if not root.exists():
+        return 0
+    total = 0
+    pending = [root]
+    while pending:
+        with os.scandir(pending.pop()) as entries:
+            for entry in entries:
+                info = entry.stat(follow_symlinks=False)
+                if info.st_file_attributes & 0x400:
+                    raise SystemExit('Storage check refuses reparse points: ' + entry.path)
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(entry.path)
+                else:
+                    total += info.st_size
+    return total
+
+def existing_parent(path):
+    while not path.exists():
+        path = path.parent
+    return path
+
+# Check before creating a directory or copying the approximately 11 GiB payload.
+roots = {work.parent / 'outputs', Path(policy['package_output_root']).resolve(), output_root}
+full_packages = sorted(str(p) for root in roots if root.exists()
+                       for p in root.glob('MISERY_DX12_DEV_*') if (p / 'game').is_dir())
+estimated_bytes = sum(tree_bytes(source / folder) for folder in
+                      ('resources', 'levels', 'localization', 'patches', 'mp', 'gamedata', 'bin'))
+estimated_bytes += tree_bytes(work / 'misery-compat') + 64 * 1024**2
+destination_free = shutil.disk_usage(existing_parent(output_root)).free
+system_free = shutil.disk_usage(os.environ.get('SystemDrive', 'C:') + '/').free
+retired_bytes = tree_bytes(Path(policy['retired_archive_root']))
+errors = []
+if len(full_packages) >= policy['max_full_packages']:
+    errors.append('Retire the older rollback with retire-development-packages.ps1 before making another full package; maximum is ' + str(policy['max_full_packages']) + '.')
+if destination_free - estimated_bytes < policy['minimum_free_gib_after_packaging'] * 1024**3:
+    errors.append('Packaging would breach the destination free-space reserve.')
+if system_free < policy['minimum_system_free_gib'] * 1024**3:
+    errors.append('System-drive free space is below the required reserve.')
+if retired_bytes > policy['max_retired_archive_gib'] * 1024**3:
+    errors.append('Retired archives exceed their storage budget; consolidate old build binaries while preserving saves before another release.')
+storage_check = dict(full_packages=full_packages, estimated_package_bytes=estimated_bytes,
+                     destination_free_bytes=destination_free, system_free_bytes=system_free,
+                     retired_archive_bytes=retired_bytes,
+                     maximum_full_packages=policy['max_full_packages'], errors=errors)
+if args.check_storage or errors:
+    print(json.dumps(storage_check, indent=2), flush=True)
+if errors:
+    raise SystemExit(1)
+if args.check_storage:
+    raise SystemExit(0)
+if not args.build_identity:
+    raise SystemExit('Full packages require --build-identity for an archived, committed, tested build.')
+for repository in (work / 'engine', work / 'misery-compat'):
+    if subprocess.check_output(['git', '-C', str(repository), 'status', '--porcelain'], text=True).strip():
+        raise SystemExit('Commit or preserve pending changes before packaging: ' + str(repository))
+if final_package.exists() or package.exists():
+    raise SystemExit('Package or incomplete staging already exists; preserve it before retrying.')
 if source.joinpath('gamedata/scripts/ui_main_menu.script').read_bytes() != source.joinpath('reference/ui_main_menu.before-dx12-menu-probe.script').read_bytes():
     raise SystemExit('Restore the original menu script before packaging.')
 if b'actor_class\t\t\t\t= sniper' not in source.joinpath('gamedata/configs/creatures/actor.ltx').read_bytes():
@@ -39,6 +100,10 @@ def ignore_diagnostics(folder, names):
 build_identity = None
 if args.build_identity:
     build_identity = json.loads(args.build_identity.read_text(encoding='utf-8-sig'))
+    if not build_identity.get('committed_source'):
+        raise SystemExit('Build identity has no committed source revision.')
+    subprocess.run(['git', '-C', str(work / 'engine'), 'cat-file', '-e',
+                    build_identity['committed_source'] + '^{commit}'], check=True)
     for name, key in (('xr_3da.exe', 'exe_sha256'), ('xr_3da.pdb', 'pdb_sha256')):
         if sha(source / 'bin' / name) != build_identity[key]:
             raise SystemExit('Staged binary differs from the specified build identity: ' + name)
@@ -111,4 +176,8 @@ if build_identity:
     manifest['build_identity'] = build_identity
     manifest['pdb_sha256'] = build_identity['pdb_sha256']
 (package / 'manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+if package.parent != output_root or final_package.parent != output_root:
+    raise RuntimeError('Package publication escaped its output directory.')
+package.rename(final_package)
+print('Published verified package: ' + str(final_package), flush=True)
 print(json.dumps({k:v for k,v in manifest.items() if k != 'files'}, indent=2), flush=True)

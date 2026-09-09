@@ -6,6 +6,7 @@ param(
     [switch]$Visible,
     [switch]$Lossless,
     [switch]$PresentApiOnly,
+    [switch]$CheckStorageOnly,
     [string]$ExtraArguments='',
     [string]$RuntimeRoot,
     [ValidatePattern('^[A-Za-z0-9_]+$')][string]$ScriptNamespace='graphics_comparison_baseline'
@@ -20,6 +21,31 @@ if ($RuntimeRoot) {
     $comparisonRoot=$RuntimeRoot
 }
 $comparisonRoot = (Resolve-Path -LiteralPath $comparisonRoot).Path
+$comparisonPolicy=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'storage-policy.json') -Raw | ConvertFrom-Json
+if ($MaxSeconds -lt 1 -or $MaxSeconds -gt $comparisonPolicy.max_comparison_seconds) {
+    throw 'Short comparisons must fit the configured duration limit; use the long-playtest workflow for user play.'
+}
+$comparisonEvidenceRoot=Join-Path (Split-Path -Parent $PSScriptRoot) 'outputs/implementation-evidence'
+$comparisonEvidenceBytes=0L
+if (Test-Path -LiteralPath $comparisonEvidenceRoot) {
+    foreach ($comparisonFile in [IO.Directory]::EnumerateFiles($comparisonEvidenceRoot,'*',[IO.SearchOption]::AllDirectories)) {
+        $comparisonEvidenceBytes+=([IO.FileInfo]$comparisonFile).Length
+    }
+}
+$comparisonCaptureLimit=[long]($comparisonPolicy.max_single_capture_gib*1GB)
+if ($comparisonEvidenceBytes+$comparisonCaptureLimit -gt $comparisonPolicy.max_comparison_evidence_gib*1GB) {
+    throw 'Comparison evidence would exceed its storage budget. Archive obsolete raw captures before another run.'
+}
+$comparisonDriveRoots=@([IO.Path]::GetPathRoot($comparisonEvidenceRoot),[IO.Path]::GetPathRoot($comparisonRoot),[IO.Path]::GetPathRoot($env:SystemRoot)) | Select-Object -Unique
+foreach ($comparisonDriveRoot in $comparisonDriveRoots) {
+    if ([IO.DriveInfo]::new($comparisonDriveRoot).AvailableFreeSpace -lt $comparisonPolicy.minimum_system_free_gib*1GB+$comparisonCaptureLimit) {
+        throw ('Insufficient storage reserve on '+$comparisonDriveRoot)
+    }
+}
+if ($CheckStorageOnly) {
+    [ordered]@{evidence_bytes=$comparisonEvidenceBytes;maximum_evidence_bytes=$comparisonPolicy.max_comparison_evidence_gib*1GB;maximum_capture_bytes=$comparisonCaptureLimit;maximum_seconds=$comparisonPolicy.max_comparison_seconds;checked_drives=$comparisonDriveRoots;launch=$false} | ConvertTo-Json
+    return
+}
 $comparisonExe = Join-Path $comparisonRoot $(if ($Renderer -eq 'dx9') { 'bin/xrEngine.exe' } else { 'bin/xr_3da.exe' })
 if ($Renderer -eq 'dx12' -and $ScriptNamespace -eq 'graphics_comparison_baseline') {
     foreach ($comparisonScene in @('interior','outdoor','rain','night')) {
@@ -92,7 +118,24 @@ $comparisonRows=[System.Collections.Generic.List[string]]::new()
 $comparisonUniqueRows=[System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 $comparisonDeadline=$comparisonStart.AddSeconds($MaxSeconds)
 $comparisonReportAt=$comparisonStart
+$comparisonStorageAt=$comparisonStart
+$comparisonStorageStop=$null
 while (-not $comparisonProcess.HasExited -and [DateTimeOffset]::UtcNow -lt $comparisonDeadline) {
+    if (([DateTimeOffset]::UtcNow-$comparisonStorageAt).TotalSeconds -ge 10) {
+        $comparisonStorageAt=[DateTimeOffset]::UtcNow
+        $comparisonLiveBytes=0L
+        foreach ($comparisonLiveFile in @((Join-Path $comparisonRoot '_appdata_/logs/dx12_graphics.csv'),$comparisonEvents,(Join-Path $comparisonEvidence 'presents.csv'))) {
+            if (Test-Path -LiteralPath $comparisonLiveFile) {
+                $comparisonInfo=Get-Item -LiteralPath $comparisonLiveFile
+                if ($comparisonInfo.LastWriteTimeUtc -ge $comparisonStart.UtcDateTime) { $comparisonLiveBytes+=$comparisonInfo.Length }
+            }
+        }
+        if ($comparisonLiveBytes -gt $comparisonCaptureLimit) { $comparisonStorageStop='Live capture exceeded its byte budget'; break }
+        foreach ($comparisonDriveRoot in $comparisonDriveRoots) {
+            if ([IO.DriveInfo]::new($comparisonDriveRoot).AvailableFreeSpace -lt $comparisonPolicy.minimum_system_free_gib*1GB) { $comparisonStorageStop='Free-space reserve reached'; break }
+        }
+        if ($comparisonStorageStop) { break }
+    }
     if ((Test-Path -LiteralPath $comparisonEvents) -and (Get-Item -LiteralPath $comparisonEvents).LastWriteTimeUtc -ge $comparisonStart.UtcDateTime) {
         $comparisonStream=[IO.File]::Open($comparisonEvents,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
         if ($comparisonStream.Length -lt $comparisonReadOffset) { $comparisonReadOffset=0L; $comparisonPartial='' }
@@ -120,6 +163,7 @@ while (-not $comparisonProcess.HasExited -and [DateTimeOffset]::UtcNow -lt $comp
     $null=$comparisonProcess.WaitForExit(50)
 }
 $comparisonRecord.exited_before_deadline=$comparisonProcess.HasExited
+$comparisonRecord.storage_limit_stop=$comparisonStorageStop
 if (-not $comparisonProcess.HasExited) {
     Stop-Process -InputObject $comparisonProcess -Force
     $comparisonProcess.WaitForExit()
@@ -134,9 +178,9 @@ $comparisonRecord.presentmon_exit_code=if ($pmProcess.HasExited) { $pmProcess.Ex
 $comparisonObserved | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $comparisonEvidence 'observed-events.json') -Encoding utf8
 $comparisonRecord | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $comparisonEvidence 'result.json') -Encoding utf8
 $comparisonLog=Join-Path $comparisonRoot $(if ($Renderer -eq 'dx9') {'_appdata_/logs/xray_zero.log'} else {'_appdata_/logs/openxray_zero.log'})
-if (Test-Path -LiteralPath $comparisonLog) { Copy-Item -LiteralPath $comparisonLog -Destination (Join-Path $comparisonEvidence 'engine.log') }
+if ((Test-Path -LiteralPath $comparisonLog) -and (Get-Item -LiteralPath $comparisonLog).Length -le $comparisonCaptureLimit) { Copy-Item -LiteralPath $comparisonLog -Destination (Join-Path $comparisonEvidence 'engine.log') }
 $comparisonGpuLog=Join-Path $comparisonRoot '_appdata_/logs/dx12_graphics.csv'
-if ($Renderer -eq 'dx12' -and (Test-Path -LiteralPath $comparisonGpuLog) -and (Get-Item -LiteralPath $comparisonGpuLog).LastWriteTimeUtc -ge $comparisonStart.UtcDateTime) {
+if (-not $comparisonStorageStop -and $Renderer -eq 'dx12' -and (Test-Path -LiteralPath $comparisonGpuLog) -and (Get-Item -LiteralPath $comparisonGpuLog).LastWriteTimeUtc -ge $comparisonStart.UtcDateTime) {
     Copy-Item -LiteralPath $comparisonGpuLog -Destination (Join-Path $comparisonEvidence 'dx12_graphics.csv')
 }
 $comparisonRows | Set-Content -LiteralPath (Join-Path $comparisonEvidence 'controller.tsv') -Encoding utf8

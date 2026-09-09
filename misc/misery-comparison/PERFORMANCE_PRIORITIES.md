@@ -1,6 +1,12 @@
 # Engine performance and architecture priorities
 
-## Current direction: pursue the largest measured gains (2026-09-09 UTC)
+## Current direction: storage cleanup, then a long user playtest (2026-09-09 UTC)
+
+The user stopped the repeated optimization/benchmark loop and requested a long playtest with useful diagnostic logging. After finding 46 full game packages, the user explicitly authorized reclaiming space and enforcing proper version control and storage management. This supersedes the next-action instructions in the historical entries below. Read STATUS.md for the current checkpoint; do not replay completed investigations after compaction.
+
+Keep 0.46 as the playable build and 0.45 as rollback. Retire the 44 older game payloads only after preserving their saves, settings, binaries and sources. Preserve the original installation, fixed DX9 reference, reports and source Git history. Enforce storage-policy.json in packaging and comparison helpers. After cleanup, prepare bounded, low-overhead diagnostics for the user's long 0.46 playtest; use its findings to choose further engine work. No new shader or AI concurrency experiment is queued.
+
+## Earlier optimization direction and findings
 
 The user's current clarification explicitly includes A-life, AI, physics and streaming taking advantage of x64 memory and safe multithreading. Examine actual execution and capacity, rather than relying on architecture labels or enabled settings. Choose changes by their expected reduction in frame time and stalls, with implementation cost and regression risk considered. Preserve visual quality, complete MISERY behavior, normal simulation responsiveness, saves and reliability. Do not reopen the old priority-order discussion after compaction.
 
@@ -19,7 +25,7 @@ BE uses native 3440x1440, FXAA, AO-high, 16x filtering, conventional and grass s
 
 Local GPU time sums the two sequential partition ranges. Foliage uses `DetailDraw` only; `Details.Draw` is nested and must not be added again. These are recorded pass costs, not a complete GPU frame breakdown or promises of recoverable savings. Renderer CPU excludes other game-thread work. One interior slow frame in each run spent 38-43 ms in the game-update bucket; its underlying cause and recurrence remain unproven.
 
-Current work order:
+Held optimization backlog (not the current work order):
 
 1. Independent 0.46 retains the A-life budget correction and reduces the measured 52-object removal notification batch from 35.149 to 15.240 ms while preserving callbacks and order. The remaining removal cost stays a follow-up candidate. Next inspect AI pathfinding's per-search scratch state and existing scheduling, then use existing profiling on representative callers before enabling concurrent searches. Preserve simulation cadence and inspect actual capacity pressure before widening formats.
 2. Enable useful independent calculations through the existing task pool with explicit ownership, scratch storage and completion dependencies. A-life switching, object creation/removal, Lua state and save operations share mutable state; investigate their callers before permitting simultaneous mutation. Preserve the existing first-load/precache behavior and normal gameplay. No new simulation concurrency implementation has been tested yet.
