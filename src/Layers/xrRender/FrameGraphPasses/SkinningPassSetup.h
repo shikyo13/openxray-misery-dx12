@@ -5,6 +5,7 @@
 #include "Layers/xrRender/FrameGraph/FGResource.h"
 #include "Layers/xrRender/FrameGraph/IPass.h"
 #include <nvrhi/nvrhi.h>
+#include <functional>
 
 class CFrustum;
 
@@ -85,7 +86,7 @@ struct SkinningPassState {
 void InitializeSkinningResources(fg::RenderDevice* device, const nvrhi::FramebufferInfoEx& fbInfo, SkinningPassState& state);
 
 void PrepareSkinnedShadowBones(RenderContext* context, GPUCullingManager* gpuCulling,
-    const GeometryCollector* geometry, const CFrustum& frustum, const Fvector4* lightSphere = nullptr);
+    const GeometryCollector* geometry, const std::function<bool(const GeometryBatch&)>& visible);
 
 u32 DrawSkinnedSunShadows(RenderContext* context, RenderDevice* device, GPUCullingManager* gpuCulling,
     const GeometryCollector* geometry, decals::OverlayManager* overlays, const Fmatrix& viewProjection,

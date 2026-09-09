@@ -457,17 +457,14 @@ static SkinnedPhaseContext BuildSkinnedPhaseContext(
 }
 
 void PrepareSkinnedShadowBones(RenderContext* context, GPUCullingManager* gpuCulling,
-    const GeometryCollector* geometry, const CFrustum& frustum, const Fvector4* lightSphere)
+    const GeometryCollector* geometry, const std::function<bool(const GeometryBatch&)>& visible)
 {
     if (!geometry || !gpuCulling || !gpuCulling->GetGlobalBoneBuffer()) return;
+    // Prepare the union of required skeletons before worker recording. Visit
+    // scene batches once per pass instead of once for every shadow face.
     for (const auto& batch : geometry->GetBatches()) {
         if (!batch.isSkinned || !batch.vertexBuffer || !batch.indexBuffer) continue;
-        if (!frustum.testSphere_dirty(batch.worldBoundsCenter, batch.worldBoundsRadius)) continue;
-        if (lightSphere) {
-            const Fvector center{lightSphere->x, lightSphere->y, lightSphere->z};
-            const float radius = lightSphere->w + batch.worldBoundsRadius;
-            if (batch.worldBoundsCenter.distance_to_sqr(center) > radius * radius) continue;
-        }
+        if (!visible(batch)) continue;
         GetSkeletonBoneOffset(context->GetCommandList(), *gpuCulling, batch);
     }
 }

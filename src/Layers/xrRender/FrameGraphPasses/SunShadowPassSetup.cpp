@@ -492,8 +492,13 @@ framegraph::VirtualResourceHandle setupSunShadowPass(
                     GetOrCreateDrawIndexBuffer("SunShadow", context.GetCommandList()->getDevice());
                     if (data.overlays) data.overlays->UploadSplats(context.GetCommandList());
                     if (data.skinning->initialized)
-                        for (u32 cascade = 0; cascade < 3; ++cascade)
-                            PrepareSkinnedShadowBones(&context, data.geometry, data.collector, data.state->frustum[cascade]);
+                        PrepareSkinnedShadowBones(&context, data.geometry, data.collector,
+                            [&data](const GeometryBatch& batch) {
+                                for (u32 cascade = 0; cascade < 3; ++cascade)
+                                    if (data.state->frustum[cascade].testSphere_dirty(batch.worldBoundsCenter, batch.worldBoundsRadius))
+                                        return true;
+                                return false;
+                            });
                 });
         },
         [](const PassData& data, const framegraph::FrameGraph& graph, RenderContext* context) {

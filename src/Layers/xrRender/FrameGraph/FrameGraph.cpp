@@ -15,6 +15,7 @@ struct FrameGraph::RecordingJob {
     xr_unique_ptr<fg::RenderContext> context;
     std::chrono::steady_clock::time_point begin, end;
     u64 thread = 0;
+    double openMs = 0, initializeMs = 0, recordMs = 0, closeMs = 0;
 };
 
 // PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
@@ -360,12 +361,21 @@ void FrameGraph::Execute(const std::function<void(fg::RenderContext&)>& initiali
                 ++end;
             }
             if (end - passIndex >= 2) {
+                const bool sample = strstr(Core.Params, "-cpu_trace") && Device.dwTimeGlobal >= m_nextRecordingTrace;
+                const auto sampleTime = [sample] {
+                    return sample ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+                };
+                const auto milliseconds = [](auto first, auto last) {
+                    return std::chrono::duration<double, std::milli>(last - first).count();
+                };
+                const auto prepareBegin = sampleTime();
                 // Shared uploads precede every worker list in GPU submission order.
                 for (size_t i = passIndex; i < end; ++i) {
                     auto* candidate = m_sortedPasses[i];
                     R_ASSERT(candidate->prepareRecording);
                     (*candidate->prepareRecording)(*m_context, *this);
                 }
+                const auto prepareEnd = sampleTime();
                 xr_vector<RecordingJob*> jobs;
                 xr_vector<Task*> tasks;
                 xr_vector<nvrhi::ICommandList*> ordered;
@@ -382,27 +392,50 @@ void FrameGraph::Execute(const std::function<void(fg::RenderContext&)>& initiali
                     auto* job = owner.get();
                     jobs.push_back(job);
                     ordered.push_back(job->commandList.Get());
-                    tasks.push_back(&TaskScheduler->AddTask([this, candidate, job, &initializeRecording] {
+                    tasks.push_back(&TaskScheduler->AddTask([this, candidate, job, &initializeRecording, sampleTime, milliseconds, sample] {
                         job->thread = u64(std::hash<std::thread::id>{}(std::this_thread::get_id()));
                         job->begin = std::chrono::steady_clock::now();
                         job->commandList->open();
+                        const auto opened = sampleTime();
                         initializeRecording(*job->context);
+                        const auto initialized = sampleTime();
                         ExecutePass(candidate, job->commandList, job->context.get());
+                        const auto recorded = sampleTime();
                         job->commandList->close();
                         job->end = std::chrono::steady_clock::now();
+                        if (sample) {
+                            job->openMs = milliseconds(job->begin, opened);
+                            job->initializeMs = milliseconds(opened, initialized);
+                            job->recordMs = milliseconds(initialized, recorded);
+                            job->closeMs = milliseconds(recorded, job->end);
+                        }
                     }));
                 }
+                const auto launchEnd = sampleTime();
                 for (auto* task : tasks) TaskScheduler->Wait(*task);
+                const auto waitEnd = sampleTime();
                 recordingBackend->AppendGraphicsRecording(ordered.data(), u32(ordered.size()));
+                const auto appendEnd = sampleTime();
                 graphicsCmdList = recordingBackend->GetCommandList();
                 m_context->SetCommandList(graphicsCmdList);
                 initializeRecording(*m_context);
-                if (strstr(Core.Params, "-cpu_trace") && Device.dwTimeGlobal >= m_nextRecordingTrace) {
+                const auto restoreEnd = sampleTime();
+                if (sample) {
                     m_nextRecordingTrace = Device.dwTimeGlobal + 1000;
                     const auto overlap = std::min(jobs[0]->end, jobs[1]->end) - std::max(jobs[0]->begin, jobs[1]->begin);
                     const double overlapMs = std::max(0.0, std::chrono::duration<double, std::milli>(overlap).count());
                     Msg("* [ParallelRecord] frame=%u time=%u jobs=%u threads=%llu,%llu overlap_ms=%.3f",
                         Device.dwFrame, Device.dwTimeGlobal, u32(jobs.size()), jobs[0]->thread, jobs[1]->thread, overlapMs);
+                    Msg("* [ParallelCosts] frame=%u time=%u prepare_ms=%.3f launch_ms=%.3f wait_ms=%.3f append_ms=%.3f restore_ms=%.3f total_ms=%.3f",
+                        Device.dwFrame, Device.dwTimeGlobal, milliseconds(prepareBegin, prepareEnd),
+                        milliseconds(prepareEnd, launchEnd), milliseconds(launchEnd, waitEnd),
+                        milliseconds(waitEnd, appendEnd), milliseconds(appendEnd, restoreEnd), milliseconds(prepareBegin, restoreEnd));
+                    for (size_t i = 0; i < jobs.size(); ++i) {
+                        const auto* job = jobs[i];
+                        Msg("* [ParallelWorker] frame=%u time=%u pass=%s open_ms=%.3f initialize_ms=%.3f record_ms=%.3f close_ms=%.3f",
+                            Device.dwFrame, Device.dwTimeGlobal, m_sortedPasses[passIndex + i]->name.c_str(),
+                            job->openMs, job->initializeMs, job->recordMs, job->closeMs);
+                    }
                 }
                 passIndex = end - 1;
                 continue;

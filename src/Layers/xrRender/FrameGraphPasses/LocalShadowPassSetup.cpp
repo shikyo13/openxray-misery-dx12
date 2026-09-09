@@ -165,12 +165,17 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                     if (data.overlays) data.overlays->UploadSplats(context.GetCommandList());
                     if (!data.skinning->initialized) return;
                     const auto& state = *data.state;
-                    for (u32 face = 0; face < state.matrices.size(); ++face) {
-                        if (!state.visibleFaces[face]) continue;
-                        const auto* light = ClusteredLightManager::Instance().GetLightSources()[state.owners[face]];
-                        const Fvector4 sphere{light->position.x, light->position.y, light->position.z, light->range};
-                        PrepareSkinnedShadowBones(&context, data.geometry, data.collector, state.frusta[face], &sphere);
-                    }
+                    PrepareSkinnedShadowBones(&context, data.geometry, data.collector,
+                        [&state](const GeometryBatch& batch) {
+                            for (u32 face = 0; face < state.matrices.size(); ++face) {
+                                if (!state.visibleFaces[face] ||
+                                    !state.frusta[face].testSphere_dirty(batch.worldBoundsCenter, batch.worldBoundsRadius)) continue;
+                                const auto* light = ClusteredLightManager::Instance().GetLightSources()[state.owners[face]];
+                                const float radius = light->range + batch.worldBoundsRadius;
+                                if (batch.worldBoundsCenter.distance_to_sqr(light->position) <= radius * radius) return true;
+                            }
+                            return false;
+                        });
                 });
         },
         [](const PassData& data, const framegraph::FrameGraph& graph, RenderContext* context) {
