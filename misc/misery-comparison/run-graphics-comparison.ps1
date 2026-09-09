@@ -21,6 +21,14 @@ if ($RuntimeRoot) {
 }
 $comparisonRoot = (Resolve-Path -LiteralPath $comparisonRoot).Path
 $comparisonExe = Join-Path $comparisonRoot $(if ($Renderer -eq 'dx9') { 'bin/xrEngine.exe' } else { 'bin/xr_3da.exe' })
+if ($Renderer -eq 'dx12' -and $ScriptNamespace -eq 'graphics_comparison_baseline') {
+    foreach ($comparisonScene in @('interior','outdoor','rain','night')) {
+        $comparisonCamera=Join-Path $comparisonRoot ('_appdata_/savedgames/graphics_comparison_'+$comparisonScene+'.xrdemo')
+        if (-not (Test-Path -LiteralPath $comparisonCamera -PathType Leaf) -or (Get-Item -LiteralPath $comparisonCamera).Length -eq 0) {
+            throw ('Missing comparison camera replay: '+$comparisonCamera)
+        }
+    }
+}
 if (Get-Process -Name xrEngine,xr_3da -ErrorAction SilentlyContinue) { throw 'Another game instance is running; do not overlap performance captures.' }
 $comparisonEvidence = Join-Path (Split-Path -Parent $PSScriptRoot) ('outputs/implementation-evidence/'+$Name)
 if (Test-Path -LiteralPath $comparisonEvidence) { throw 'Preserve existing comparison evidence; use a new name.' }
@@ -31,6 +39,14 @@ if (Test-Path -LiteralPath $comparisonEvents) {
 }
 Copy-Item -LiteralPath (Join-Path $comparisonRoot '_appdata_/user.ltx') -Destination (Join-Path $comparisonEvidence 'profile-initial.ltx')
 Copy-Item -LiteralPath (Join-Path $comparisonRoot ('gamedata/scripts/'+$ScriptNamespace+'.script')) -Destination (Join-Path $comparisonEvidence 'controller.script')
+if ($Renderer -eq 'dx12' -and $ScriptNamespace -eq 'graphics_comparison_baseline') {
+    $comparisonCameraHashes=[ordered]@{}
+    foreach ($comparisonScene in @('interior','outdoor','rain','night')) {
+        $comparisonCamera=Join-Path $comparisonRoot ('_appdata_/savedgames/graphics_comparison_'+$comparisonScene+'.xrdemo')
+        $comparisonCameraHashes[$comparisonScene]=(Get-FileHash -LiteralPath $comparisonCamera -Algorithm SHA256).Hash
+    }
+    $comparisonCameraHashes | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $comparisonEvidence 'camera-replays.json') -Encoding utf8
+}
 $comparisonArgs = if ($Renderer -eq 'dx9') {
     '-fsltx D:\Codex\MISERY-DX12\reference\DX9_MAIN_2026-09-08\comparison.ltx -nosplash -nointro -i -silent_error_mode -start server(dx9_reference_skadovsk/single/alife/load) client(localhost)'
 } else {

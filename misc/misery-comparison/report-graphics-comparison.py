@@ -16,6 +16,7 @@ parser.add_argument("--dx12-label", default="DX12 build 0.40")
 parser.add_argument("--previous-report")
 parser.add_argument("--settings-audit", help="Source-reviewed settings notes tied to these exact captured runs")
 parser.add_argument("--feature-probe", help="Optional same-build native settings probe using the fixed cameras")
+parser.add_argument("--parallel-summary", help="Optional same-build parallel-recording comparison JSON under outputs")
 args = parser.parse_args()
 dx12_label = html.escape(args.dx12_label)
 outputs = Path(__file__).resolve().parent.parent / "outputs"
@@ -69,6 +70,7 @@ def read_run(name, expected_cases=cases):
     with (root/"presents.csv").open(newline="",encoding="utf-8-sig") as stream:
         rows = list(csv.DictReader(stream))
     frequency = result["qpc_frequency"]
+    display_tracking = result.get("presentmon_display_tracking", True)
     for scene, shot in zip(expected_cases,shots):
         data = records[scene]
         # Exclude logging/capture boundaries by half a second, including any
@@ -86,8 +88,9 @@ def read_run(name, expected_cases=cases):
         data.update(frames=len(times),seconds=sum(times)/1000,mean_ms=mean,
                     average_fps=1000/mean,p95_ms=percentile(times,.95),
                     p99_ms=percentile(times,.99),one_percent_low_fps=1000/statistics.fmean(slowest),
-                    max_ms=max(times),dropped=sum(int(r["Dropped"]) for r in selected),
-                    present_modes=sorted({r["PresentMode"] for r in selected}),
+                    max_ms=max(times),dropped=sum(int(r["Dropped"]) for r in selected) if display_tracking else None,
+                    present_modes=sorted({r["PresentMode"] for r in selected}) if display_tracking else ["Unavailable: application API capture"],
+                    display_tracking=display_tracking,
                     screenshot=shot.relative_to(outputs).as_posix())
     return {"name":name,"process":result,"scenes":records,
             "profiles": {stage:read_profile(root/f"profile-{stage}.ltx") for stage in ("initial","after")},
@@ -109,8 +112,11 @@ for scene in cases:
 
 summary={"runs":runs,"method":"One sequential run per renderer, four fixed cameras, 30-second windows trimmed by 0.5 seconds at both ends. Application present intervals from PresentMon; no frame generation. Save/simulation states differ; recorded game clocks differ by up to one minute. Screenshots are SDR before any driver RTX HDR conversion."}
 profile_note = ""
-if "-graphics_trace" in runs["DX12"]["process"]["args"]:
+if any(flag in runs["DX12"]["process"]["args"] for flag in ("-graphics_trace", "-cpu_trace")):
     profile_note = "GPU profiling was enabled in this DX12 run; its overhead is included. These results should not be treated as an isolated measurement of the code change."
+if not runs["DX12"]["process"].get("presentmon_display_tracking", True):
+    profile_note += " DX12 uses application-API capture: presentation mode, displayed-frame timing, display latency and drops are unavailable. The fixed DX9 baseline was recorded earlier; this comparison does not isolate API efficiency or the effect of a code change."
+    summary["method"] += " DX12 display tracking was unavailable; only application present intervals were captured."
 summary["profiling_note"] = profile_note
 summary["dx12_label"] = args.dx12_label
 feature_probe = None
@@ -185,6 +191,13 @@ if args.settings_audit:
         if expected["name"] != actual["name"] or expected["exe_sha256"].lower() != actual["process"]["sha256"].lower():
             raise ValueError(f"{renderer}: settings audit belongs to another run/build")
     summary["settings_audit"] = settings_audit
+parallel_summary = None
+if args.parallel_summary:
+    parallel_summary = json.loads((outputs / args.parallel_summary).read_text(encoding='utf-8-sig'))
+    for sample in parallel_summary['runs'].values():
+        if sample['process']['sha256'].lower() != runs['DX12']['process']['sha256'].lower():
+            raise ValueError('Parallel-recording evidence belongs to another executable')
+    summary['parallel_recording'] = parallel_summary
 (outputs/(args.name+".json")).write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
 sections=[]
 table=[]
@@ -207,6 +220,10 @@ page='''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewpor
 <table><thead><tr><th>Scene</th><th>DX9 avg FPS</th><th>DX12 avg FPS</th><th>DX9 p99 ms</th><th>DX12 p99 ms</th></tr></thead><tbody>'''+''.join(table)+'''</tbody></table><p class="small">FPS = 1000 / mean application present interval. p99 is the 99th-percentile interval; lower is better. Measurement excludes screenshot and transition boundaries. One run per renderer, not a sustained performance claim.</p>'''+''.join(sections)+f'<p><a href="{args.name}.json">Raw measurements and run identities</a></p></html>'
 if profile_note:
     page=page.replace("<table>","<p class='small'>"+html.escape(profile_note)+"</p><table>",1)
+dx12_aa = runs['DX12']['profiles']['after'].get('r_aa', 'not stored')
+dx9_aa = runs['DX9']['profiles']['after'].get('r2_aa', 'not stored')
+page = page.replace('Antialiasing and frame generation are off for the comparison.',
+    'Captured antialiasing settings: DX9 '+html.escape(dx9_aa)+'; DX12 '+html.escape(dx12_aa)+'. Frame generation is off for the comparison.')
 if args.previous_report:
     page=page.replace("<table>","<p><a href='"+html.escape(args.previous_report,quote=True)+"'>Previous DX12 comparison</a></p><table>",1)
 
@@ -221,7 +238,10 @@ if settings_audit:
         settings_html += '<tr>'+''.join('<'+tag+'>'+html.escape(row[key])+'</'+tag+'>' for key,tag in [('feature','th'),('DX9','td'),('DX12','td'),('assessment','td')])+'</tr>'
     settings_html += '</tbody></table></div>'
     settings_html += '<p class="small">'+html.escape(settings_audit['limitations'])+'</p>'
-    settings_html += '<p><a href="'+html.escape(args.settings_audit,quote=True)+'">Settings audit, source references and measured DX12 effect costs</a></p>'
+    audit_label = 'Settings audit and source references'
+    if settings_audit.get('gpu_mean_region_ms'):
+        audit_label += ' and measured DX12 effect costs'
+    settings_html += '<p><a href="'+html.escape(args.settings_audit,quote=True)+'">'+audit_label+'</a></p>'
 settings_html += '<details><summary>Captured configuration values and presentation evidence</summary>'
 settings_html += '<p class="small">Values below were saved after each run; any startup-to-exit change is shown. They are evidence of configuration, not proof that every control is implemented. “Not stored” does not mean disabled.</p>'
 keys = ['renderer','vid_mode','vid_window_mode','rs_fullscreen','rs_v_sync','rs_fps_limit',
@@ -267,6 +287,22 @@ if feature_probe:
             measured = ', '.join(html.escape(label.lower())+f' {value:.2f} ms' for label,value in costs.items())
             settings_html += '<p>'+scene.title()+': disabling grass shadows at the same 8x filtering setting reduced the measured GPU regions by '+measured+'. These region differences are not equivalent to total frame-time savings.</p>'
     settings_html += '<p class="small">The intermediate columns are diagnostic settings; the current DX12 quality preset is retained. AO implementation, texture loading and other renderer behavior still differ from DX9. These short samples do not establish sustained performance or assign every FPS difference to the changed feature. Frame-time summaries, actual controls, presentation modes and GPU regions are in the report JSON; raw intervals are retained in the archived PresentMon CSV.</p></section>'
+if parallel_summary:
+    settings_html += '<section id="architecture"><h2>Priority 1: parallel recording remains optional</h2>'
+    settings_html += '<p>The normal launcher uses serial recording; a separate launcher enables the experimental parallel path. Separate shadow-specific optimization remains deferred.</p>'
+    settings_html += '<p>'+html.escape(parallel_summary['quality_note'])+'</p>'
+    resolution = parallel_summary['resolution']
+    settings_html += '<p>Isolated CPU-scaling comparison at '+str(resolution[0])+' × '+str(resolution[1])+'. These samples do not replace the native-resolution comparison.</p>'
+    settings_html += '<div class="table-scroll"><table><thead><tr><th>Scene</th><th>Application FPS OFF / ON</th><th>p99 ms OFF / ON</th></tr></thead><tbody>'
+    for scene in cases:
+        off,on=(parallel_summary['runs'][mode]['scenes'][scene] for mode in ('off','on'))
+        settings_html += f'<tr><th>{scene.title()}</th><td>{off["application_fps"]:.1f} / {on["application_fps"]:.1f}</td><td>{off["application_present_ms"]["p99"]:.2f} / {on["application_present_ms"]["p99"]:.2f}</td></tr>'
+    settings_html += '</tbody></table></div><p>'+html.escape(parallel_summary['interpretation'])+'</p>'
+    settings_html += '<p class="small">'+html.escape(parallel_summary['method'])+'</p>'
+    settings_html += '<p><a href="'+html.escape(args.parallel_summary,quote=True)+'">Parallel recording measurements and telemetry</a>'
+    if args.previous_report:
+        settings_html += ' · <a href="'+html.escape(args.previous_report,quote=True)+'#feature-cost">Earlier feature-cost experiment</a>'
+    settings_html += '</p></section>'
 page = page.replace('<section><h2>Interior</h2>',settings_html+'<section><h2>Interior</h2>',1)
 page = page.replace('</style>', '.table-scroll{overflow-x:auto}.settings{width:100%;font-size:14px}.settings th,.settings td{vertical-align:top;padding:10px 14px}.settings th:first-child{width:15%}.settings td{width:28%}summary{cursor:pointer;color:#c7d3a2}details{border:1px solid #465043;padding:16px} </style>',1)
 (outputs/(args.name+".html")).write_text(page,encoding="utf-8")

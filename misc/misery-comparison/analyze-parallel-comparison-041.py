@@ -1,10 +1,11 @@
-"""Analyze the recorded priority-1 AO/AP pair; never launch or alter a game.
+"""Analyze recorded priority-1 pairs; never launch or alter a game.
 
 Present intervals use the same 0.5-second trim and interval-start exclusion as
 report-graphics-comparison.py. These captures deliberately omit display tracking.
 """
 from pathlib import Path
 import collections
+import argparse
 import csv
 import hashlib
 import json
@@ -29,7 +30,7 @@ def stats(values):
                 p99=percentile(.99), maximum=values[-1])
 
 
-def read_run(name):
+def read_run(name, require_trace=True):
     root = EVIDENCE / name
     result = json.loads((root / 'result.json').read_text(encoding='utf-8-sig'))
     assert result['exit_code'] == result['presentmon_exit_code'] == 0
@@ -53,8 +54,13 @@ def read_run(name):
     assert len(shots) == len(CASES)
     with (root / 'presents.csv').open(encoding='utf-8-sig', newline='') as stream:
         presents = list(csv.DictReader(stream))
-    with (root / 'dx12_graphics.csv').open(encoding='utf-8-sig', newline='') as stream:
-        timings = list(csv.DictReader(stream))
+    timings = []
+    if require_trace:
+        with (root / 'dx12_graphics.csv').open(encoding='utf-8-sig', newline='') as stream:
+            timings = list(csv.DictReader(stream))
+    else:
+        assert all(flag not in result['args'] for flag in ('-cpu_trace', '-graphics_trace', '-frame_trace'))
+        assert not (root / 'dx12_graphics.csv').exists()
     log = (root / 'engine.log').read_text(encoding='utf-8', errors='replace')
     telemetry = [json.loads(line) for line in (root / 'gpu-engine-samples.jsonl').read_text().splitlines()]
     frequency = result['qpc_frequency']
@@ -80,8 +86,9 @@ def read_run(name):
             if start_ms <= int(row['time_global_ms']) < end_ms:
                 buckets[(row['kind'], row['label'])].append(float(row['value_ms']))
                 quality.add((int(row['aa']), int(row['ao'])))
-        assert quality == {(1, 3)}, quality  # actual traced FXAA / AO-high IDs
-        scene['trace_quality_aa_ao'] = sorted(quality)
+        if require_trace:
+            assert quality == {(1, 3)}, quality  # actual traced FXAA / AO-high IDs
+        scene['trace_quality_aa_ao'] = sorted(quality) if require_trace else None
         scene['timings_ms'] = {kind: {label: stats(values) for (k, label), values in buckets.items() if k == kind}
                                for kind in ('cpu', 'cpu_stage', 'cpu_pass', 'gpu')}
         parallel = [m for m in re.finditer(r'\[ParallelRecord\] frame=(\d+) time=(\d+) jobs=(\d+) threads=(\d+),(\d+) overlap_ms=([\d.]+)', log)
@@ -109,7 +116,7 @@ def read_run(name):
         slow = [m for m in re.finditer(r'\[FrameTrace\] frame=(\d+) time=(\d+) total_ms=(\S+) move_ms=(\S+) camera_ms=(\S+) render_ms=(\S+) workers_ms=(\S+) pacing_ms=(\S+)', log)
                 if start_ms <= int(m[2]) < end_ms]
         scene['slow_frames_24ms_threshold'] = [{label: float(m[index]) for index, label in enumerate(
-            ('frame', 'time_ms', 'total_ms', 'move_ms', 'camera_ms', 'render_ms', 'workers_ms', 'pacing_ms'), 1)} for m in slow]
+            ('frame', 'time_ms', 'total_ms', 'move_ms', 'camera_ms', 'render_ms', 'workers_ms', 'pacing_ms'), 1)} for m in slow] if require_trace else None
     return dict(name=name, process=result, scenes=scenes,
         profile_sha256=hashlib.sha256((root / 'profile-initial.ltx').read_bytes()).hexdigest(),
         controller_sha256=hashlib.sha256((root / 'controller.script').read_bytes()).hexdigest(),
@@ -118,22 +125,38 @@ def read_run(name):
 
 
 if __name__ == '__main__':
-    runs = {mode: read_run(name) for mode, name in (
-        ('off', 'DX12_PARALLEL_CONTROLLED_OFF_041_AP'), ('on', 'DX12_PARALLEL_CONTROLLED_ON_041_AO'))}
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--off', default='DX12_PARALLEL_CONTROLLED_OFF_041_AP')
+    parser.add_argument('--on', default='DX12_PARALLEL_CONTROLLED_ON_041_AO')
+    parser.add_argument('--name', default='MISERY_DX12_PARALLEL_CONTROLLED_SUMMARY')
+    parser.add_argument('--without-trace', action='store_true')
+    args = parser.parse_args()
+    assert re.fullmatch(r'[A-Za-z0-9_]+', args.name)
+    runs = {mode: read_run(name, require_trace=not args.without_trace) for mode, name in (
+        ('off', args.off), ('on', args.on))}
     assert runs['off']['process']['sha256'] == runs['on']['process']['sha256']
     for field in ('profile_sha256', 'controller_sha256'):
         assert runs['off'][field] == runs['on'][field]
+    clock_differences = {}
     for case in CASES:
         a, b = (runs[mode]['scenes'][case] for mode in ('off', 'on'))
         for field in ('pos', 'dir', 'lens'):
             av = [float(v) for part in a[field] for v in part.split(',')]
             bv = [float(v) for part in b[field] for v in part.split(',')]
             assert len(av) == len(bv) and all(abs(x-y) <= .001 for x, y in zip(av, bv))
-        assert a['clock'] == b['clock']
-        print(case, 'API fps off/on', *(round(runs[m]['scenes'][case]['application_fps'], 2) for m in ('off', 'on')),
-              'CPU renderer ms off/on', *(round(runs[m]['scenes'][case]['timings_ms']['cpu_stage']['RendererTotal']['mean'], 3) for m in ('off', 'on')))
-    summary = dict(runs=runs, method='Same binary, starting profile, save, controller and traced FXAA/AO-high settings; four 30-second windows trimmed by 0.5 seconds at each end. CPU trace, GPU timestamp profiler and >=24ms frame trace enabled in both. PresentMon application API intervals only; display mode, displayed-frame timing, latency and drops unavailable. ON then OFF, one run each; simulation may differ. ON interior GPU telemetry covers only the end of that window. Later ON and all OFF windows have during-run GPU samples. No claim of net uninstrumented speedup or complete graphics parity.',
+        def minutes(value):
+            hour, minute = map(int, value[0].split(':'))
+            return hour * 60 + minute
+        clock_differences[case] = abs(minutes(a['clock']) - minutes(b['clock']))
+        assert a['clock'][1] == b['clock'][1] and clock_differences[case] <= 1
+        print(case, 'API fps off/on', *(round(runs[m]['scenes'][case]['application_fps'], 2) for m in ('off', 'on')))
+        if not args.without_trace:
+            print('CPU renderer ms off/on', *(round(runs[m]['scenes'][case]['timings_ms']['cpu_stage']['RendererTotal']['mean'], 3) for m in ('off', 'on')))
+    trace_note = ('CPU/GPU/slow-frame trace switches disabled in both; no worker or CPU-stage timing samples requested.' if args.without_trace else
+                  'CPU trace, GPU timestamp profiler and >=24ms frame trace enabled in both. Actual traced quality is FXAA/AO-high.')
+    summary = dict(runs=runs, method='Same binary, starting profile, save and controller; four 30-second windows trimmed by 0.5 seconds at each end. '+trace_note+' PresentMon application API intervals only; display mode, displayed-frame timing, latency and drops unavailable. One sequential run each; simulation may differ. Per-scene GPU sample counts and timestamps describe coverage. No claim of displayed-frame speedup or complete graphics parity.',
+        clock_differences_minutes=clock_differences,
         decision='Keep priority 1 active and parallel recording opt-in. Separate shadow/caster optimization remains deferred.')
-    path = EVIDENCE / 'MISERY_DX12_PARALLEL_CONTROLLED_SUMMARY.json'
+    path = EVIDENCE / (args.name + '.json')
     path.write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
     print(path)

@@ -1,10 +1,31 @@
 # DX12 engine performance priorities
 
-Research and source review: 2026-09-09 UTC. Updated with the first native parallel-recording experiment below; it remains disabled by default. Inspected source: `0a754d0127956cef570176e5b88801a415b9b19f`. Runnable baseline remains 0.41, compiled from `74a3749453254d6b80f68c695fa378373e5ca656`. CPU stage/pass tracing was subsequently implemented and tested on source parent `86742e6580092c0646562b7f67b41627ac7a3d09`. No faster rendering path was accepted at this checkpoint.
+Research and source review: 2026-09-09 UTC. Updated with the first native parallel-recording experiment below; it remains disabled by default. Inspected source: `0a754d0127956cef570176e5b88801a415b9b19f`. The baseline at that research checkpoint was 0.41, compiled from `74a3749453254d6b80f68c695fa378373e5ca656`. CPU stage/pass tracing was subsequently implemented and tested on source parent `86742e6580092c0646562b7f67b41627ac7a3d09`. No faster rendering path was accepted at this checkpoint.
 
 The user's priority is to remove internal engine bottlenecks so native x64/DX12 can use modern hardware properly. Put that work ahead of further graphics additions. Retain the current visual quality, complete MISERY behavior, conventional shadows, 16x filtering and RTX HDR-compatible SDR output. Ray tracing remains excluded.
 
 User correction after the failed submission experiment: do not skip from submission timing to separate shadow optimization. Finish the parallel command-recording architecture first. Shadows may supply its first workload; that does not authorize prioritizing shadow-specific culling or draw optimizations ahead of it.
+
+## 0.42 delivery and CPU scaling (2026-09-09 UTC)
+
+Development package 0.42 is delivered at `D:\Codex\MISERY-DX12\outputs\MISERY_DX12_DEV_0.42`. It uses the tested engine source `e54ae6076994b1302fca6936c4238c7aa5da7de9` / executable `d217d8cda0cd688ff83907841c871e450ff957e2ff4ad2b36cb8d56ab6817ddb`, with the already-qualified resize/reload/resource-state fixes. No further engine/shader change was made in this checkpoint. The normal launcher remains serial; the separate experimental launcher adds only `-fg_parallel_record`. Shadow-specific optimization remains deferred.
+
+AQ (OFF) and AR (ON) used 1720x720, the same ultrawide aspect ratio as 3440x1440, and identical profile/controller hashes between modes. Resolution is the only edit to the preserved normal starting profile. All effects, FXAA, filtering and simulation settings remain; CPU/GPU/slow-frame trace switches were absent. Both games, PresentMon and GPU samplers exited 0. Each trimmed scene has fourteen during-run GPU samples. GPU use ranged from roughly 73-94%; sampled external-engine utilization stayed below 0.47%. The interior recorded clocks differ by one minute; other clocks and all cameras match.
+
+| Scene | Application FPS OFF / ON | p99 ms OFF / ON |
+|---|---:|---:|
+| Interior | 104.11 / 116.99 | 14.20 / 12.81 |
+| Outdoor | 122.01 / 127.92 | 11.71 / 11.21 |
+| Rain | 122.48 / 132.37 | 12.32 / 11.16 |
+| Night | 152.25 / 144.04 | 10.48 / 11.03 |
+
+Daytime throughput improves by 4.8-12.4% in this untraced pair, while night is 5.4% slower despite sequential fallback. This is mixed evidence, not default-enablement qualification or a claim of universal speedup. The night difference remains unresolved. No worker/CPU-stage timing samples were requested in these runs; prior instrumented runs establish overlap. PresentMon captures application API intervals only, with display mode/timing/latency/drops unavailable. Evidence: workspace `outputs/implementation-evidence/MISERY_DX12_CPU_SCALING_SUMMARY.json`.
+
+Packaging initially omitted the four camera replay fixtures, causing `PACKAGE_042_DX9_BASELINE` to render wrong views. Its owned process was stopped, exit -1, and that run is rejected as a comparison. The package now includes the verified replays; the package builder copies them and the comparison runner rejects absent/empty native fixtures before launch, recording their hashes. `PACKAGE_042_DX9_BASELINE_B` then completed all four matched scenes at 3440x1440 with the normal FXAA profile and exited 0. Native application FPS: 98.38 / 90.63 / 96.15 / 114.60. No matched fatal/device/NVRHI errors; 836 legacy shader compile failures remain. Four screenshot dimensions and camera markers checked; interior and night stills inspected. This remains bounded runtime evidence, not complete graphics/campaign/long-session proof.
+
+Refreshed report: workspace `outputs/MISERY_DX9_DX12_COMPARISON_042.html`, using the preserved `DX9_MATCHED_041_B` baseline. It explicitly records DX12 FXAA versus DX9 AA-off, other implementation/cost differences, and missing DX12 display tracking. Historical 0.41 report/cost data remain separate. Normal 0.42 packaged profile and normal 0.41 staging files are restored; source/replay/package hashes retained. Previous packages and the original installation are preserved.
+
+Next: priority-1 CPU critical-path work and resolution of night-sample variation before default parallel enablement. Use the existing trace and matched replay inputs to distinguish draw/simulation workload changes from recorder overhead. Do not pivot to shadow-specific culling/quality changes. The full port goal remains active.
 
 ## Controlled priority-1 measurements (2026-09-09 UTC)
 
