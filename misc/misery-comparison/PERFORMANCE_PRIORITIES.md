@@ -6,6 +6,28 @@ The user's priority is to remove internal engine bottlenecks so native x64/DX12 
 
 User correction after the failed submission experiment: do not skip from submission timing to separate shadow optimization. Finish the parallel command-recording architecture first. Shadows may supply its first workload; that does not authorize prioritizing shadow-specific culling or draw optimizations ahead of it.
 
+## Resize reliability checkpoint (2026-09-09 UTC)
+
+Priority 1 remains active. This fixes a reproduced integration failure encountered while qualifying parallel recording; separate shadow/caster optimization remains priority 2. Candidate SHA-256 `c9665f2de363199ce5ae32c1f212aa19ad494e28abdd6e9b3ef8983d9e77d52d` is preserved in workspace `work/runtime/resize-material-lifetime-041`. The delivered package remains 0.41 and parallel recording remains opt-in.
+
+The final change that let the existing resize sequence finish preserves the world material cache across resolution changes. Its textures and bindless indices do not depend on resolution, and persistent GPU material buffers still reference them. Framebuffer-dependent and UI caches still invalidate. GPU work now drains before reset teardown. This removes unnecessary world material destruction/reloading during resize, without adding a gameplay-frame wait or changing shadow algorithms or quality.
+
+Native diagnostics also identified and corrected three state errors: NGX/FFX handoffs now bridge through COMMON; FSR owns the HUD-less target through presentation with COMMON as its initial/final state; and particles use a separate initial depth snapshot when previous depth is absent, instead of sampling their active depth attachment. Texture uploads now restore the declared resource state before later bindless draws in the same frame. A one-line CStalkerOutfit script-export prerequisite fixes the startup failure seen in S. These changes retain the actual effects and game callbacks.
+
+| Run | Configuration | Observed result |
+|---|---|---|
+| `DX12_RESIZE_LIFETIME_041_Z` | Serial recording, native debug layer/DRED, no generated-frame readback | All five cases, 3440x1440 to 1920x1080 and back with DLSS Quality/FSR FG, then FXAA/FG off. Exit 0; no native validation or NVRHI errors. Last successful FG dispatch count 1138. |
+| `DX12_RESIZE_PARALLEL_041_AA` | Same binary, `-fg_parallel_record -cpu_trace`, native debug off, NVRHI validation on | All five cases and exit 0. Sixty sampled parallel groups had distinct threads and positive overlap. Last successful FG dispatch count 2184. No fatal/device/NVRHI error. |
+| `DX12_UPLOAD_GBV_041_AB` | Same binary, native GPU-based validation, normal gameplay | Controller completed frames 35 through 155 and exited 0. No native validation or NVRHI errors, including the COPY_DEST sampling errors previously seen in X. This checks initial world/UI uploads, not a full resize sequence under GPU validation. |
+
+All three logs retain 690 existing legacy shader compilation failures. Three Z and two AA stills were reviewed without obvious new material/lighting corruption; this does not verify all generated frames, temporal quality or complete effects parity. No FPS improvement is claimed from these functional runs.
+
+Q through Y preserve the failed attempts. The NVRHI combined-depth-layout backport did not fix the particle feedback problem and was removed; its pinned submodule is clean. X was stopped after GPU validation exposed upload-state errors, before its resize controller began. Its pre-existing controller file was not treated as new evidence. The repeated command-list/allocator errors around device removal may be secondary and are not a proven root cause. Summary: workspace `outputs/implementation-evidence/MISERY_DX12_RESIZE_INTEROP_SUMMARY.json`.
+
+The COMMON handoffs follow Microsoft's [enhanced-barrier interoperability specification](https://microsoft.github.io/DirectX-Specs/d3d/D3D12EnhancedBarriers.html). Diagnostics use [DRED](https://learn.microsoft.com/en-us/windows/win32/direct3d12/use-dred); breadcrumb locations identify unfinished work rather than proving the exact offending instruction. FSR presentation/lifetime handling was checked against the [pinned FidelityFX API guide](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/blob/60f4ea81909200d8542eca14dccb2628b763a9a3/Kits/FidelityFX/docs/techniques/frame-interpolation-api.md).
+
+Next: continue priority-1 in-process level reload/lifetime coverage, then obtain controlled CPU/frame-time measurements before promoting parallel recording. Inspect current background GPU use and sample it during performance runs. General bindless retirement during eviction/level teardown, broader gameplay, full effects parity and net FPS benefit remain unqualified. Normal 0.41 executable/PDB/profile were restored and hash-verified; original installation, fixed DX9 reference, delivered package and published comparison were not changed in this checkpoint.
+
 ## Work order and current evidence
 
 | Order | Engine work | Verified finding and next implementation step |
@@ -99,7 +121,7 @@ The workspace summary is `outputs/implementation-evidence/MISERY_DX12_COMMAND_SU
 - AMD's [RDNA Performance Guide](https://gpuopen.com/learn/rdna-performance-guide/) covers command allocator ownership, batching, PSO creation, barrier reduction, suballocation and memory budgets. Its recommendation to minimize submissions differs in emphasis from NVIDIA's warning about submitting everything at frame end. Resolve that tradeoff with the actual RTX 3090 timeline. Treat AMD-specific numerical and shader recommendations as architecture-specific.
 - NVIDIA's [Ampere GA102 Architecture whitepaper, V1.0](https://www.nvidia.com/content/dam/en-zz/Solutions/geforce/ampere/pdf/NVIDIA-ampere-GA102-GPU-Architecture-Whitepaper-V1.pdf), especially printed pages 9-12, describes the RTX 3090 family's shader instruction paths and shared memory/cache resources. It supports examining instruction mix and bandwidth in expensive vegetation/shadow shaders. Its hardware throughput comparisons are not predictions for this port. Preserve numerical precision unless a measured shader change remains visually correct.
 
-## First implementation checkpoint
+## Historical first implementation checkpoint
 
 Priority 1 remains unfinished: implement independently owned command lists and recording contexts, record substantial jobs on CPU workers, and submit in dependency order. Use the retained CPU trace to choose the first bounded workload; inspect shared `RenderContext`, pass state, upload buffers, profiler state and resource tracking before moving its callback onto a worker. The current backend's plural `ExecuteCommandLists` helper loops over individual submissions (`Backend/D3D12Backend.cpp:687`); true batch submission belongs in the integrated path, but changing an unused helper alone is not a performance result.
 

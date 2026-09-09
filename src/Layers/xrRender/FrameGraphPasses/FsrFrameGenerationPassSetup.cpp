@@ -26,6 +26,22 @@ bool prepareFsrFrameGeneration(fg::RenderDevice* device, u32 width, u32 height)
     return false;
 }
 
+VirtualResourceHandle importFsrHudlessTarget(FrameGraph& graph)
+{
+#ifdef _WIN32
+    auto* fg = static_cast<D3D12Backend*>(GEnv.Backend)->GetFrameGeneration();
+    auto* texture = fg ? fg->GetHudlessTexture() : nullptr;
+    R_ASSERT2(texture, "Active frame generation requires its owned HUD-less target");
+    ResourceDesc desc;
+    desc.width = texture->getDesc().width; desc.height = texture->getDesc().height;
+    desc.format = texture->getDesc().format;
+    desc.isRenderTarget = true; desc.isTransient = false;
+    return graph.ImportTexture("rt_FSR3Hudless", texture, desc);
+#else
+    return {};
+#endif
+}
+
 VirtualResourceHandle setupFsrFrameGenerationPass(FrameGraph& graph,
     fg::RenderDevice* device, VirtualResourceHandle backbuffer, VirtualResourceHandle hudless,
     VirtualResourceHandle depth, VirtualResourceHandle motion, u32 width, u32 height,

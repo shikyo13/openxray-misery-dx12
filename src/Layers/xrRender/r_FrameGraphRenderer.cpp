@@ -1903,7 +1903,7 @@ void FrameGraphRenderer::SetupFrameGraphPasses() {
     framegraph::VirtualResourceHandle fsrHudless;
     if (m_fsrActive)
         fsrHudless = passes::setupTonemapPass(*m_framegraph, m_device, sceneColor,
-            exposureOutput.exposureTexture, {}, outputWidth, outputHeight,
+            exposureOutput.exposureTexture, passes::importFsrHudlessTarget(*m_framegraph), outputWidth, outputHeight,
             m_blackboard->get_or_add<passes::TonemapPassState>(),
             &m_blackboard->get_or_add<passes::ExposurePassState>(), m_postProcessParams, true);
 
@@ -3372,8 +3372,9 @@ void FrameGraphRenderer::OnBackBufferResizing(u32, u32)
 {
     ZoneScoped;
     framegraph::GetPassResourceCache().ClearFramebufferDependent();
-    if (m_materialCache)
-        m_materialCache->Clear();
+    // World materials and their bindless texture indices are independent of
+    // render dimensions. Keep them alive: retained GPU material buffers still
+    // reference those indices after resize. UI PSOs are keyed by framebuffer.
     if (m_uiMaterialCache)
         m_uiMaterialCache->Clear();
 }

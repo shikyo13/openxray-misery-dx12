@@ -595,6 +595,26 @@ ParticlePassOutput setupParticlePass(
         InitializeDistortionPipeline(device, distortFbInfo, *state);
     }
 
+    if (!prevDepth.is_valid()) {
+        // The first frame (also after a resize) has no depth history. Never
+        // sample the active depth attachment: SET particles can write it.
+        ResourceDesc depthCopyDesc;
+        depthCopyDesc.width = width;
+        depthCopyDesc.height = height;
+        depthCopyDesc.format = nvrhi::Format::D32;
+        depthCopyDesc.isDepthStencil = true;
+        depthCopyDesc.debugName = "Particles.InitialDepth";
+        prevDepth = fg.CreateTexture("Particles.InitialDepth", depthCopyDesc);
+        const auto copyPass = fg.AddPass("Particles.InitializeDepth");
+        fg.PassRead(copyPass, forwardInputs.depth, ResourceState::CopySource);
+        fg.PassWrite(copyPass, prevDepth, ResourceState::CopyDest);
+        fg.SetPassCallback(copyPass, [source = forwardInputs.depth, dest = prevDepth]
+            (fg::RenderContext& ctx, const FrameGraph& graph) {
+            ctx.GetCommandList()->copyTexture(graph.GetPhysicalTexture(dest), nvrhi::TextureSlice(),
+                graph.GetPhysicalTexture(source), nvrhi::TextureSlice());
+        });
+    }
+
     auto& passData = fg.addCallbackPass<ParticlePassData>(
         "Particles",
         [&, width, height, hiZPyramid, hiZWidth, hiZHeight, hiZMipLevels, state](FrameGraph& builder, PassHandle passHandle, ParticlePassData& data) {
@@ -683,7 +703,7 @@ ParticlePassOutput setupParticlePass(
             matBuffer.Upload(ctx);
 
             auto* baseColorRT = data.baseColor.is_valid() ? fg.GetPhysicalTexture(data.baseColor) : nullptr;
-            auto* prevDepthTex = data.prevDepth.is_valid() ? fg.GetPhysicalTexture(data.prevDepth) : depthRT;
+            auto* prevDepthTex = fg.GetPhysicalTexture(data.prevDepth);
 
             nvrhi::FramebufferDesc fbDesc;
             fbDesc.addColorAttachment(colorRT);

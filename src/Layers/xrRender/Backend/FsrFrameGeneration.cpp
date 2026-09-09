@@ -163,7 +163,7 @@ struct FsrFrameGeneration::Impl {
                 nullptr, IID_PPV_ARGS(&inputCaptureBuffers[slot])))) continue;
             D3D12_RESOURCE_BARRIER barrier{}; barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
             barrier.Transition.pResource = resource; barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-            barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+            barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
             barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
             cmd->ResourceBarrier(1, &barrier);
             D3D12_TEXTURE_COPY_LOCATION from{}, to{};
@@ -215,7 +215,7 @@ struct FsrFrameGeneration::Impl {
                 if (desc->frameID == s.captureFrame) {
                     s.Capture(cmd, desc->outputs[0], 1); s.Capture(cmd, desc->presentColor, 2);
                     s.Capture(cmd, ffxApiGetResourceDX12(static_cast<ID3D12Resource*>(s.hudless->getNativeObject(
-                        nvrhi::ObjectTypes::D3D12_Resource).pointer), FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ), 3);
+                        nvrhi::ObjectTypes::D3D12_Resource).pointer), FFX_API_RESOURCE_STATE_COMMON), 3);
                 }
             }
             if (strstr(Core.Params, "-graphics_trace") && (desc->reset || desc->frameID % 120 == 0))
@@ -297,9 +297,25 @@ bool FsrFrameGeneration::EnsureContext(nvrhi::IDevice* device, u32 width, u32 he
     create.backBufferFormat = FFX_API_SURFACE_FORMAT_R8G8B8A8_UNORM;
     // The prepare shader supplies motion with sampling jitter already removed.
     create.flags = FFX_FRAMEGENERATION_ENABLE_DEPTH_INVERTED;
+    // This image outlives frame-graph recording and is read by the SDK during
+    // Present. COMMON must remain its state at command-list close as well.
+    nvrhi::TextureDesc hudlessDesc;
+    hudlessDesc.width = width; hudlessDesc.height = height;
+    hudlessDesc.format = nvrhi::Format::RGBA8_UNORM;
+    hudlessDesc.isRenderTarget = true;
+    hudlessDesc.initialState = nvrhi::ResourceStates::Common;
+    hudlessDesc.keepInitialState = true;
+    hudlessDesc.debugName = "FSR3FG.Hudless";
+    auto hudless = device->createTexture(hudlessDesc);
+    if (!hudless) {
+        Msg("! [FSR3FG] HUD-less target allocation failed");
+        ps_r_fsr_fg = 0;
+        return false;
+    }
     // Synchronous interpolation orders HUD-less reuse on the game graphics queue.
     // Presentation still uses the SDK's separately paced queue.
     if (!s.Check(s.api.CreateContext(&s.context, &create.header, nullptr), "Create frame generation")) return false;
+    s.hudless = hudless;
     s.width = width; s.height = height; s.lastFrame = 0;
     s.Version(&s.context, "Frame generation");
     Msg("* [FSR3FG] Context %ux%u, reverse Z, render-resolution motion, SDR, HUD-less composition, async compute=0",
@@ -308,6 +324,15 @@ bool FsrFrameGeneration::EnsureContext(nvrhi::IDevice* device, u32 width, u32 he
 #else
     ps_r_fsr_fg = 0;
     return false;
+#endif
+}
+
+nvrhi::ITexture* FsrFrameGeneration::GetHudlessTexture() const
+{
+#ifdef XRAY_HAVE_FSR3
+    return impl->hudless;
+#else
+    return nullptr;
 #endif
 }
 
@@ -322,18 +347,20 @@ bool FsrFrameGeneration::Prepare(nvrhi::ICommandList* cmd, nvrhi::ITexture* dept
     s.BeginCapture(hudless);
     const auto& d = depth->getDesc();
     if (motion->getDesc().width != d.width || motion->getDesc().height != d.height ||
-        d.width > s.width || d.height > s.height || hudless->getDesc().width != s.width || hudless->getDesc().height != s.height)
+        d.width > s.width || d.height > s.height || hudless != s.hudless.Get() ||
+        hudless->getDesc().width != s.width || hudless->getDesc().height != s.height)
         return s.Check(FFX_API_RETURN_ERROR_PARAMETER, "Input dimensions");
     auto resource = [](nvrhi::ITexture* texture) {
         return ffxApiGetResourceDX12(static_cast<ID3D12Resource*>(
-            texture->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource).pointer), FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+            texture->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource).pointer), FFX_API_RESOURCE_STATE_COMMON);
     };
-    cmd->setTextureState(depth, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
-    cmd->setTextureState(motion, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
-    cmd->setTextureState(hudless, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
+    // FFX uses legacy barriers and restores the declared input state. Bridge
+    // both directions through COMMON without disabling enhanced barriers.
+    cmd->setTextureState(depth, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
+    cmd->setTextureState(motion, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
+    cmd->setTextureState(hudless, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
     cmd->commitBarriers();
     s.CaptureInputs(cmd, motion, depth);
-    s.hudless = hudless;
     ffxConfigureDescFrameGeneration config{};
     config.header.type = FFX_API_CONFIGURE_DESC_TYPE_FRAMEGENERATION;
     config.swapChain = s.swapchain;
@@ -367,7 +394,7 @@ bool FsrFrameGeneration::Prepare(nvrhi::ICommandList* cmd, nvrhi::ITexture* dept
     memcpy(prep.cameraRight, &vectors[2], 3 * sizeof(float));
     memcpy(prep.cameraForward, &vectors[3], 3 * sizeof(float));
     const auto result = s.api.Dispatch(&s.context, &prep.header);
-    // FFX restores input resource states but changes native descriptor heaps/pipelines.
+    // FFX restores COMMON input states but changes native descriptor heaps/pipelines.
     cmd->clearState();
     if (!s.Check(result, "Prepare")) return false;
     s.lastFrame = s.preparedFrame = Device.dwFrame;

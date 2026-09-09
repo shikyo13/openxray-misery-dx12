@@ -12,6 +12,7 @@ class Task;
 class FsrFrameGeneration;
 struct ID3D12Device;
 struct ID3D12CommandQueue;
+struct ID3D12InfoQueue1;
 struct IDXGISwapChain3;
 struct IDXGIFactory4;
 struct IDXGIAdapter1;
@@ -98,6 +99,7 @@ private:
     void CreateBackBufferTextures();
     void CreateBindlessResources();
     void QueryCapabilities();
+    void DumpDeviceRemoval() const;
 
     // DXGI
     IDXGIFactory4* m_dxgiFactory = nullptr;
@@ -109,6 +111,9 @@ private:
     ID3D12Device* m_d3d12Device = nullptr;
     ID3D12CommandQueue* m_commandQueue = nullptr;
     ID3D12CommandQueue* m_computeQueue = nullptr;
+    ID3D12InfoQueue1* m_debugInfoQueue = nullptr;
+    DWORD m_debugCallbackCookie = 0;
+    mutable bool m_deviceRemovalReported = false;
 
     // NVRHI wrapper
     nvrhi::DeviceHandle m_nvrhiDevice;

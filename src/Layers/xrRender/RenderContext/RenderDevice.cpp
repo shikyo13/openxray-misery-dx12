@@ -53,6 +53,14 @@ public:
     nvrhi::ICommandList* Get() const { return m_cmdList; }
     operator nvrhi::ICommandList*() const { return m_cmdList; }
 
+    void FinishTextureUpload(nvrhi::ITexture* texture) {
+        // Bindless draws cannot infer states from the descriptor table. An
+        // in-frame upload must leave COPY_DEST before a later draw samples it,
+        // rather than relying on keepInitialState at command-list close.
+        m_cmdList->setTextureState(texture, nvrhi::AllSubresources, texture->getDesc().initialState);
+        m_cmdList->commitBarriers();
+    }
+
 private:
     IRenderBackend* m_backend;
     nvrhi::IDevice* m_device;
@@ -227,6 +235,7 @@ TextureHandle RenderDevice::CreateTexture(
 
         ScopedUpload upload(m_backend.get(), GetNativeDevice());
         upload.Get()->writeTexture(nvrhiTexture, 0, 0, initialData, rowPitch, depthPitch);
+        upload.FinishTextureUpload(nvrhiTexture);
     }
 
     // Allocate handle
@@ -369,6 +378,7 @@ void RenderDevice::UploadTextureData(
         upload.Get()->writeTexture(nvrhiTexture, slice.arraySlice, slice.mipLevel,
                              slice.data, slice.rowPitch, slice.slicePitch);
     }
+    upload.FinishTextureUpload(nvrhiTexture);
 }
 
 void RenderDevice::UploadTextureDataToNVRHI(
@@ -409,6 +419,7 @@ void RenderDevice::UploadTextureDataToNVRHI(
 
     ScopedUpload upload(m_backend.get(), GetNativeDevice());
     upload.Get()->writeTexture(texture, arraySlice, mipLevel, data, rowPitch, depthPitch);
+    upload.FinishTextureUpload(texture);
 }
 
 void RenderDevice::UploadTextureDataToNVRHI(
@@ -430,6 +441,7 @@ void RenderDevice::UploadTextureDataToNVRHI(
 
     ScopedUpload upload(m_backend.get(), GetNativeDevice());
     upload.Get()->writeTexture(texture, arraySlice, mipLevel, data, rowPitch, slicePitch);
+    upload.FinishTextureUpload(texture);
 }
 
 // ═══════════════════════════════════════════════════

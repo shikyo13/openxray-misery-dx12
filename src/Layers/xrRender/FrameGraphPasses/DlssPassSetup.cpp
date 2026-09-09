@@ -152,20 +152,22 @@ bool DlssPassState::Evaluate(nvrhi::ICommandList* cmd, nvrhi::ITexture* color, n
         ps_r_aa = 1;
         return false;
     }
+    // COMMON is the required bridge between NVRHI enhanced layouts and NGX's
+    // legacy resource states. Keep NVRHI tracking COMMON across the native call.
     for (auto* texture : inputs)
-        cmd->setTextureState(texture, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
-    cmd->setTextureState(output, nvrhi::AllSubresources, nvrhi::ResourceStates::UnorderedAccess);
+        cmd->setTextureState(texture, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
+    cmd->setTextureState(output, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
     cmd->commitBarriers();
     ID3D12GraphicsCommandList* native = cmd->getNativeObject(nvrhi::ObjectTypes::D3D12_GraphicsCommandList);
-    D3D12_RESOURCE_BARRIER barriers[3]{};
-    for (u32 i = 0; i < 3; ++i) {
+    D3D12_RESOURCE_BARRIER barriers[4]{};
+    for (u32 i = 0; i < 4; ++i) {
         barriers[i].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        barriers[i].Transition.pResource = inputs[i]->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource);
+        barriers[i].Transition.pResource = (i < 3 ? inputs[i] : output)->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource);
         barriers[i].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        barriers[i].Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
-        barriers[i].Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        barriers[i].Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
+        barriers[i].Transition.StateAfter = i < 3 ? D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE : D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     }
-    native->ResourceBarrier(3, barriers);
+    native->ResourceBarrier(4, barriers);
     NVSDK_NGX_D3D12_DLSS_Eval_Params eval{};
     eval.Feature.pInColor = color->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource);
     eval.Feature.pInOutput = output->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource);
@@ -178,11 +180,11 @@ bool DlssPassState::Evaluate(nvrhi::ICommandList* cmd, nvrhi::ITexture* color, n
     eval.InPreExposure = eval.InExposureScale = 1.f;
     eval.InFrameTimeDeltaInMsec = Device.fTimeDelta * 1000.f;
     const auto result = NGX_D3D12_EVALUATE_DLSS_EXT(native, s.feature, s.parameters, &eval);
-    // NGX restores its documented states. Restore the combined SRV state that
-    // NVRHI tracks, then discard its cached bindings after native SDK recording.
+    // NGX restores its documented input/output states; bridge back to COMMON
+    // before NVRHI records any more enhanced barriers.
     for (auto& barrier : barriers)
         std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
-    native->ResourceBarrier(3, barriers);
+    native->ResourceBarrier(4, barriers);
     cmd->clearState();
     if (NVSDK_NGX_FAILED(result)) {
         Msg("! [DLSS] Evaluate failed: 0x%08x; returning to FXAA", unsigned(result));

@@ -13,6 +13,7 @@
 #include <nvrhi/d3d12.h>
 #include <nvrhi/validation.h>
 #include <SDL3/SDL.h>
+#include <atomic>
 
 // Link D3D12 libraries
 #pragma comment(lib, "d3d12.lib")
@@ -46,6 +47,16 @@ public:
 
 // Static instance (must outlive the NVRHI device)
 static NVRHIMessageCallback s_nvrhiMessageCallback;
+
+static void CALLBACK D3D12DebugMessage(D3D12_MESSAGE_CATEGORY, D3D12_MESSAGE_SEVERITY severity,
+    D3D12_MESSAGE_ID id, LPCSTR description, void*) {
+    // This callback can run on a driver thread; never call D3D from here.
+    if (severity <= D3D12_MESSAGE_SEVERITY_WARNING)
+        Msg("! [D3D12Debug] severity=%u id=%u %s", u32(severity), u32(id), description);
+    static std::atomic<bool> firstErrorStackRecorded{false};
+    if (severity <= D3D12_MESSAGE_SEVERITY_ERROR && !firstErrorStackRecorded.exchange(true))
+        xrDebug::LogStackTrace("! [D3D12Debug] First native error recording stack:");
+}
 
 D3D12Backend::D3D12Backend() = default;
 
@@ -212,6 +223,11 @@ void D3D12Backend::Shutdown() {
         m_commandQueue->Release();
         m_commandQueue = nullptr;
     }
+    if (m_debugInfoQueue) {
+        m_debugInfoQueue->UnregisterMessageCallback(m_debugCallbackCookie);
+        m_debugInfoQueue->Release();
+        m_debugInfoQueue = nullptr;
+    }
     if (m_d3d12Device) {
         m_d3d12Device->Release();
         m_d3d12Device = nullptr;
@@ -231,7 +247,18 @@ void D3D12Backend::Shutdown() {
 
 bool D3D12Backend::CreateDXGIFactory(bool enableValidation) {
     UINT dxgiFlags = 0;
-    if (enableValidation) {
+    const bool diagnostics = strstr(Core.Params, "-d3d12_diagnostics") != nullptr;
+    if (diagnostics) {
+        ID3D12DeviceRemovedExtendedDataSettings1* settings = nullptr;
+        if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&settings)))) {
+            settings->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+            settings->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+            settings->SetBreadcrumbContextEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+            settings->Release();
+            Msg("* [D3D12Backend] DRED diagnostics enabled");
+        }
+    }
+    if (enableValidation || diagnostics) {
         dxgiFlags |= DXGI_CREATE_FACTORY_DEBUG;
 
         // Enable D3D12 debug layer
@@ -241,7 +268,7 @@ bool D3D12Backend::CreateDXGIFactory(bool enableValidation) {
 
             // Enable GPU-based validation for more detailed errors
             ID3D12Debug1* debugController1 = nullptr;
-            if (SUCCEEDED(debugController->QueryInterface(IID_PPV_ARGS(&debugController1)))) {
+            if (enableValidation && SUCCEEDED(debugController->QueryInterface(IID_PPV_ARGS(&debugController1)))) {
                 debugController1->SetEnableGPUBasedValidation(TRUE);
                 debugController1->SetEnableSynchronizedCommandQueueValidation(TRUE);
                 debugController1->Release();
@@ -306,6 +333,18 @@ bool D3D12Backend::CreateDevice() {
     if (FAILED(hr)) {
         Msg("! [D3D12Backend] Failed to create D3D12 device");
         return false;
+    }
+    m_deviceRemovalReported = false;
+    if (strstr(Core.Params, "-d3d12_diagnostics") &&
+        SUCCEEDED(m_d3d12Device->QueryInterface(IID_PPV_ARGS(&m_debugInfoQueue)))) {
+        hr = m_debugInfoQueue->RegisterMessageCallback(D3D12DebugMessage, D3D12_MESSAGE_CALLBACK_FLAG_NONE,
+            nullptr, &m_debugCallbackCookie);
+        if (FAILED(hr)) {
+            m_debugInfoQueue->Release();
+            m_debugInfoQueue = nullptr;
+        } else {
+            Msg("* [D3D12Backend] Native debug messages routed to engine log");
+        }
     }
     return true;
 }
@@ -581,7 +620,7 @@ void D3D12Backend::ResizeSwapChain(u32 width, u32 height) {
     );
 
     if (FAILED(hr)) {
-        Msg("! [D3D12Backend] Failed to resize swap chain");
+        Msg("! [D3D12Backend] Failed to resize swap chain: 0x%08X", unsigned(hr));
         return;
     }
 
@@ -788,9 +827,51 @@ DeviceState D3D12Backend::GetDeviceState() const {
     // Check for device removal
     HRESULT hr = m_d3d12Device->GetDeviceRemovedReason();
     if (FAILED(hr)) {
-        Msg("! [D3D12Backend] Device removed: 0x%08X", hr);
+        if (!m_deviceRemovalReported) {
+            m_deviceRemovalReported = true;
+            Msg("! [D3D12Backend] Device removed: 0x%08X", unsigned(hr));
+            if (strstr(Core.Params, "-d3d12_diagnostics")) DumpDeviceRemoval();
+        }
         return DeviceState::Lost;
     }
 
     return DeviceState::Normal;
+}
+
+void D3D12Backend::DumpDeviceRemoval() const {
+    ID3D12DeviceRemovedExtendedData1* dred = nullptr;
+    if (FAILED(m_d3d12Device->QueryInterface(IID_PPV_ARGS(&dred)))) return;
+    D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT1 breadcrumbs{};
+    if (SUCCEEDED(dred->GetAutoBreadcrumbsOutput1(&breadcrumbs))) {
+        u32 reported = 0;
+        for (auto* node = breadcrumbs.pHeadAutoBreadcrumbNode; node && reported < 32; node = node->pNext) {
+            const u32 completed = node->pLastBreadcrumbValue ? *node->pLastBreadcrumbValue : 0;
+            if (completed == node->BreadcrumbCount) continue;
+            ++reported;
+            Msg("! [DRED] list=%s queue=%s completed=%u/%u", node->pCommandListDebugNameA ? node->pCommandListDebugNameA : "unnamed",
+                node->pCommandQueueDebugNameA ? node->pCommandQueueDebugNameA : "unnamed", completed, node->BreadcrumbCount);
+            const u32 begin = completed > 3 ? completed - 3 : 0;
+            const u32 end = u32(std::min(u64(completed) + 4, u64(node->BreadcrumbCount)));
+            for (u32 i = begin; i < end; ++i)
+                // DRED history is a 64K ring even when its operation count is larger.
+                Msg("! [DRED] breadcrumb=%u operation=%u", i, u32(node->pCommandHistory[i % 65536u]));
+            for (u32 i = 0; i < node->BreadcrumbContextsCount; ++i) {
+                const auto& context = node->pBreadcrumbContexts[i];
+                if (context.BreadcrumbIndex >= begin && context.BreadcrumbIndex < end)
+                    Msg("! [DRED] context=%u %S", context.BreadcrumbIndex, context.pContextString);
+            }
+        }
+    }
+    D3D12_DRED_PAGE_FAULT_OUTPUT1 fault{};
+    if (SUCCEEDED(dred->GetPageFaultAllocationOutput1(&fault))) {
+        Msg("! [DRED] page_fault_address=0x%llX", fault.PageFaultVA);
+        for (u32 freed = 0; freed < 2; ++freed) {
+            u32 count = 0;
+            auto* node = freed ? fault.pHeadRecentFreedAllocationNode : fault.pHeadExistingAllocationNode;
+            for (; node && count < 16; node = node->pNext, ++count)
+                Msg("! [DRED] allocation freed=%u type=%u name=%s", freed, u32(node->AllocationType),
+                    node->ObjectNameA ? node->ObjectNameA : "unnamed");
+        }
+    }
+    dred->Release();
 }

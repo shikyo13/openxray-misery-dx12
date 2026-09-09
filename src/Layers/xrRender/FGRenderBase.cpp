@@ -60,6 +60,11 @@ void FGRenderBase::Reset(SDL_Window* hWnd, u32& dwWidth, u32& dwHeight, float& f
     const u32 oldWidth = dwWidth;
     const u32 oldHeight = dwHeight;
 
+    // Cache invalidation can release bindless textures still sampled by the
+    // last submitted frame. Drain GPU work before any reset teardown begins.
+    if (GEnv.Backend)
+        GEnv.Backend->WaitForIdle();
+
     reset_begin();
     OnBackBufferResizing(oldWidth, oldHeight);
     Memory.mem_compact();

@@ -15,6 +15,7 @@ public:
     bool CreateSwapChain(IDXGIFactory4* factory, ID3D12CommandQueue* queue,
         HWND window, DXGI_SWAP_CHAIN_DESC1& desc, IDXGISwapChain3** output);
     bool EnsureContext(nvrhi::IDevice* device, u32 width, u32 height);
+    nvrhi::ITexture* GetHudlessTexture() const;
     bool Prepare(nvrhi::ICommandList* cmd, nvrhi::ITexture* depth,
         nvrhi::ITexture* motion, nvrhi::ITexture* hudless, float jitterX, float jitterY, bool reset);
     HRESULT Present(IDXGISwapChain3* swapchain, u32 interval, u32 flags);

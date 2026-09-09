@@ -1,0 +1,11 @@
+-- GPU validation of initial world/UI texture uploads under normal gameplay.
+-- Use the existing isolated comparison runner with -d3d12_diagnostics -d3ddebug.
+function main()
+    while not db.actor do coroutine.yield() end
+    local out=assert(io.open("_appdata_/dx12_gpu_upload_probe.tsv","wb"))
+    local first=device().frame
+    out:write(string.format("begin\t%d\n",first));out:flush()
+    while device().frame-first<120 do coroutine.yield() end
+    out:write(string.format("complete\t%d\n",device().frame));out:close()
+    get_console():execute("quit")
+end

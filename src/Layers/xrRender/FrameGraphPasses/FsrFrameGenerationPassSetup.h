@@ -11,6 +11,7 @@ struct FsrFrameGenerationPassState {
     float previousJitterX = 0.f, previousJitterY = 0.f;
 };
 bool prepareFsrFrameGeneration(fg::RenderDevice* device, u32 width, u32 height);
+framegraph::VirtualResourceHandle importFsrHudlessTarget(framegraph::FrameGraph& graph);
 framegraph::VirtualResourceHandle setupFsrFrameGenerationPass(framegraph::FrameGraph& graph,
     fg::RenderDevice* device, framegraph::VirtualResourceHandle backbuffer,
     framegraph::VirtualResourceHandle hudless, framegraph::VirtualResourceHandle depth,
