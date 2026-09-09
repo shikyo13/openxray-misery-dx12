@@ -31,9 +31,51 @@ The unfinished cost-based recording splitter is preserved, unbuilt and untested,
 
 Evidence: workspace `outputs/implementation-evidence/MISERY_DX12_RECORD_PARTITIONS_043_SUMMARY.json` and BD/BE `partition-analysis.json`. [Microsoft's CPU/GPU bottleneck explanation](https://devblogs.microsoft.com/directx/cpu-and-gpu-boundedness/) supports choosing work according to the limiting processor. [NVIDIA's command-buffer guide](https://developer.nvidia.com/blog/advanced-api-performance-command-buffers/) supports parallel recording while accounting for command-list overhead, GPU idle time and pipeline drains from frequently mixed copy/dispatch/draw work. The suggested local-shadow opportunity is a source-based hypothesis until measured.
 
+## Latest measured progress: grouped shadow copies (2026-09-09 UTC)
+
+The quieter BJ/BK comparison supports retaining `-local_shadow_batch_copies` for integration into the next development delivery. It reduces repeated copy/draw transitions without removing any caster type or changing shaders, culling, resolution or quality. The archived executable still requires the flag; delivered 0.43 and its normal launch behavior are unchanged at this checkpoint.
+
+| Scene | Local shadow GPU ms OFF / ON | Renderer CPU ms OFF / ON | Application FPS OFF / ON | Application p99 ms OFF / ON |
+|---|---:|---:|---:|---:|
+| Interior | 3.990 / 2.302 | 6.990 / 6.706 | 83.59 / 96.42 | 16.18 / 14.49 |
+| Outdoor | 3.321 / 2.512 | 6.511 / 6.380 | 77.83 / 81.03 | 17.58 / 16.37 |
+| Rain | 3.127 / 2.558 | 6.460 / 6.305 | 80.70 / 84.61 | 17.34 / 16.01 |
+| Night | 4.086 / 3.263 | 5.687 / 5.594 | 81.65 / 86.15 | 17.47 / 16.42 |
+
+The GPU pass saves 0.57-1.69 ms (18-42%); application FPS improves 4.1-15.3%, and p99 intervals improve 1.06-1.70 ms in these four windows. Both use the same candidate executable, serial recording, native 3440x1440, FXAA/AO-high/16x/conventional and grass shadows, FG off, and matching profiles/controller/camera replays/clocks. CPU/GPU/slow-frame traces are on in both; only BK adds the copy flag. These traced numbers must not replace or be compared directly with the untraced published 0.43 FPS.
+
+The user paused competing work. No busy Python audit workers appeared in the saved CPU snapshots. Each scene has fourteen valid GPU samples; the largest individual background engine stays below 0.73%, and NVIDIA overall GPU use averages 97-99%. This is one sequential pair with small changing light/face workloads, not a continuous CPU-contention trace or a universal/statistically established speedup. PresentMon records application API intervals only, with no displayed-frame, display-latency or drop evidence.
+
+All eight BJ/BK screenshots were opened and visually compared. Interior lighting/shadow boundaries, terrain/foliage, rain/fog and night silhouettes remain consistent; normal animation differs and night darkness limits subtle assessment. Combined with the eleven BI/BG/BH images below, nineteen experiment images have been inspected. BJ/BK game, PresentMon and samplers exit 0; each retains 836 existing legacy shader failures with no matched fatal/device error. BI's native two-reload, inventory/Grouse and partitioned-recording checks below cover the same executable. Complete effects, temporal/HDR quality and extended gameplay remain unfinished.
+
+Evidence: workspace `outputs/implementation-evidence/MISERY_DX12_LOCAL_COPY_CLEAN_043_SUMMARY.json`; runs `DX12_LOCAL_COPY_CLEAN_OFF_043_BJ` / `DX12_LOCAL_COPY_CLEAN_ON_043_BK`. Reproduce analysis with `python -X utf8 work/runtime/local-shadow-copy-043/compare.py --before DX12_LOCAL_COPY_CLEAN_OFF_043_BJ --after DX12_LOCAL_COPY_CLEAN_ON_043_BK --output MISERY_DX12_LOCAL_COPY_CLEAN_043_SUMMARY.json` (this regenerates measurements and requires restoring the saved review annotations). Normal separate 0.41 staging executable/PDB/profile restored and hash-verified. Next: include the tested batching option in the next development delivery, then select further GPU work by measured cost and expected benefit.
+
 ## Historical checkpoints
 
 The dated entries below preserve prior decisions and evidence. Their old next-step and priority labels do not override the current direction above.
+
+## Cached shadow-depth copy experiment (2026-09-09 UTC)
+
+Implemented `-local_shadow_batch_copies`, disabled by default. Warm static depth faces are copied together within their recording partition, with their copy/depth transitions batched through NVRHI's existing state tracking. Invalid caches and moving lights retain the old update/copy path. Dynamic, wind-animated tree, skinned and detail shadows retain their original drawing and culling. An invariant checks that every rendered face receives one cached depth copy. No shaders, quality settings, game callbacks or resource-lifetime rules change.
+
+This tests NVIDIA's command-buffer guidance about avoiding frequent copy/draw/dispatch switches. Source review confirmed that the pinned D3D12 `copyTexture` path commits transitions and invalidates binding state on each call. Candidate executable `d01c555fb2eb0011d57a6f39bc09d0d03689635d14abf5ef18fefc7de17ff0ea` and matching PDB are archived in workspace `work/runtime/local-shadow-copy-043`, built from parent `9c35334e1f3b09c530de788278e59d6a76d3fd83` plus patch `88774b6baeb945a418e32915f79b887e58eae042eb33acb40203336306ea1e9e`. Configure and Release build exit 0.
+
+BG/BH compare the same executable at 3440x1440, FXAA, AO-high, 16x, grass/conventional shadows and FG off. Serial recording is used in both. Initial profiles, controller, replays, cameras and game clocks match; only BH adds the copy flag. CPU/GPU/slow-frame traces are on, native debug and shadow diagnostics off. All game/PresentMon/sampler exits are 0.
+
+| Scene | Local shadow GPU ms OFF / ON | Renderer CPU ms OFF / ON | Application FPS OFF / ON | Application p99 ms OFF / ON |
+|---|---:|---:|---:|---:|
+| Interior | 5.013 / 3.317 | 7.685 / 7.952 | 68.53 / 73.31 | 24.99 / 24.09 |
+| Outdoor | 4.302 / 3.264 | 7.174 / 8.056 | 62.69 / 62.36 | 26.10 / 29.55 |
+| Rain | 4.218 / 2.971 | 7.393 / 9.948 | 63.86 / 56.74 | 27.75 / 34.00 |
+| Night | 4.718 / 3.817 | 5.734 / 10.326 | 75.73 / 54.97 | 24.50 / 42.35 |
+
+The recorded GPU pass is 0.90-1.70 ms lower, but whole-frame results do not qualify this change for default enablement. Edge's 3D engine reaches about 19% utilization, with video decoding also active. A separate ECLIPSE geometry audit starts CPU workers during BH (12:03:12-14 UTC, then another at 12:04:35); a subsequent snapshot shows substantial CPU use. That timing is consistent with the later CPU growth, but the snapshot is not a continuous CPU-contention trace. Light/geometry workloads also differ. BG/BH are confounded diagnostic captures, not replacements for the published 0.43 FPS results, and do not isolate either a universal speedup or an intrinsic CPU regression. Thirteen or fourteen GPU samples per scene; application API intervals only, with no displayed-frame/latency/drop evidence.
+
+BI completes two full Zaton unload/reloads with native D3D12/NVRHI validation, DLSS Quality, FSR FG and partitioned recording. All 67 sampled copy-count invariants pass, including cold-cache updates. All 153 inventory contents/condition/ammo and Grouse's 22,927-byte custom data survive. Game and PresentMon exit 0; no matched fatal/native/NVRHI error. Existing native warning IDs 820/821/679 remain.
+
+All eleven screenshots were actually opened and inspected: three reload stills plus four BG/BH pairs. No obvious new geometry, lighting or shadow loss was seen. Interior lighting is consistent; outdoor foliage, rain/fog and the dark night scene remain present. Animation differs, and night darkness limits subtle assessment. Sky/lighting changes across full reload already occur in earlier checkpoints; these are not exact weather or generated-frame temporal-quality tests. Both performance runs retain 836 legacy shader failures.
+
+Decision: retain the opt-in experiment for controlled follow-up; leave normal behavior and delivered 0.43 unchanged. Do not spend more full benchmark runs under the same known competing load. A quieter or appropriately counterbalanced measurement must establish frame-time benefit before promotion. The original/reference installations and main DX9 comparison are preserved; normal separate 0.41 staging executable/PDB/profile are restored and hash-verified. Evidence: workspace `outputs/implementation-evidence/MISERY_DX12_LOCAL_COPY_043_SUMMARY.json`, BG/BH `copy-analysis.json`, and BI `reload-analysis.json`.
 
 Research and source review: 2026-09-09 UTC. Updated with the first native parallel-recording experiment below; it remains disabled by default. Inspected source: `0a754d0127956cef570176e5b88801a415b9b19f`. The baseline at that research checkpoint was 0.41, compiled from `74a3749453254d6b80f68c695fa378373e5ca656`. CPU stage/pass tracing was subsequently implemented and tested on source parent `86742e6580092c0646562b7f67b41627ac7a3d09`. No faster rendering path was accepted at this checkpoint.
 

@@ -301,9 +301,50 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                 command->writeBuffer(ClusteredLightManager::Instance().GetShadowMatricesBuffer(),
                     state.matrices.data(), state.matrices.size() * sizeof(Fmatrix));
             u32 worldCount = 0, skinnedCount = 0, detailCount = 0, renderedFaces = 0, staticUpdates = 0;
-            u32 treeCount = 0;
+            u32 treeCount = 0, groupedCopies = 0;
+            const bool batchCopies = strstr(Core.Params, "-local_shadow_batch_copies") != nullptr;
             if (canRender) {
                 lap(0);
+                const auto needsStaticUpdate = [&](u32 face) {
+                    R_ASSERT(state.frameCaches[face]);
+                    const auto& saved = *state.frameCaches[face];
+                    const u32 lightFace = state.lightFaces[face];
+                    return !ps_r_local_shadow_cache || !saved.valid[lightFace] ||
+                        memcmp(&saved.matrices[lightFace], &state.matrices[face], sizeof(Fmatrix)) != 0;
+                };
+                if (batchCopies) {
+                    // Each partition owns these output slices and whole-light caches.
+                    // Warm faces can be copied together before any moving casters draw.
+                    // Cold or moved lights retain the existing update/copy path below.
+                    xr_vector<u32> warmFaces;
+                    warmFaces.reserve(endFace - firstFace);
+                    for (u32 face = firstFace; face < endFace; ++face)
+                        if (state.visibleFaces[face] && !needsStaticUpdate(face)) warmFaces.push_back(face);
+                    if (!warmFaces.empty()) {
+                        command->beginMarker("LocalShadow.CachedDepthCopies");
+                        for (u32 face : warmFaces) {
+                            const auto& saved = *state.frameCaches[face];
+                            command->setTextureState(texture, nvrhi::TextureSubresourceSet(0, 1, face, 1),
+                                nvrhi::ResourceStates::CopyDest);
+                            command->setTextureState(saved.texture, nvrhi::TextureSubresourceSet(0, 1, state.lightFaces[face], 1),
+                                nvrhi::ResourceStates::CopySource);
+                        }
+                        command->commitBarriers();
+                        for (u32 face : warmFaces)
+                            command->copyTexture(texture, nvrhi::TextureSlice().setArraySlice(face),
+                                state.frameCaches[face]->texture, nvrhi::TextureSlice().setArraySlice(state.lightFaces[face]));
+                        for (u32 face : warmFaces) {
+                            command->setTextureState(texture, nvrhi::TextureSubresourceSet(0, 1, face, 1),
+                                nvrhi::ResourceStates::DepthWrite);
+                            command->setTextureState(state.frameCaches[face]->texture,
+                                nvrhi::TextureSubresourceSet(0, 1, state.lightFaces[face], 1), nvrhi::ResourceStates::DepthWrite);
+                        }
+                        command->commitBarriers();
+                        command->endMarker();
+                        groupedCopies = u32(warmFaces.size());
+                    }
+                    lap(2);
+                }
                 xr_vector<u32> candidates[3];
                 xr_vector<u32> treeCandidates[3], animatedTrees;
                 const auto& staticObjects = geometry->GetStaticObjectData();
@@ -358,7 +399,8 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                     R_ASSERT(state.frameCaches[face]);
                     auto& saved = *state.frameCaches[face];
                     const u32 lightFace = state.lightFaces[face];
-                    if (!ps_r_local_shadow_cache || !saved.valid[lightFace] || memcmp(&saved.matrices[lightFace], &state.matrices[face], sizeof(Fmatrix))) {
+                    const bool refreshStatic = needsStaticUpdate(face);
+                    if (refreshStatic) {
                         // Warm cached faces need no static-world candidate scan.
                         if (!staticCandidatesReady) {
                             collect(0, geometry->GetStaticObjectData(), source);
@@ -377,8 +419,9 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                             state.matrices[face], state.frusta[face], target, drawing, candidates, 3, 1);
                         saved.matrices[lightFace] = state.matrices[face]; saved.valid[lightFace] = true;
                     }
-                    command->copyTexture(texture, nvrhi::TextureSlice().setArraySlice(face),
-                        saved.texture, nvrhi::TextureSlice().setArraySlice(lightFace));
+                    if (!batchCopies || refreshStatic)
+                        command->copyTexture(texture, nvrhi::TextureSlice().setArraySlice(face),
+                            saved.texture, nvrhi::TextureSlice().setArraySlice(lightFace));
                     lap(2);
                     worldCount += DrawWorldShadowMap(context, data.device, geometry,
                         state.matrices[face], state.frusta[face], framebuffer, drawing, candidates, 4);
@@ -396,11 +439,13 @@ framegraph::VirtualResourceHandle setupLocalShadowPass(
                     lap(5);
                 }
             }
+            R_ASSERT2(!batchCopies || groupedCopies + staticUpdates == renderedFaces,
+                "Every local shadow face must receive exactly one cached depth copy");
             if (trace) {
-                Msg("* [LocalShadow] frame=%u size=%u points=%u spots=%u faces=%u rendered=%u static_updates=%u budget=%d omitted=%u world=%u skinned=%u detail=%u trees=%u part=%u parts=%u first=%u end=%u",
+                Msg("* [LocalShadow] frame=%u size=%u points=%u spots=%u faces=%u rendered=%u static_updates=%u budget=%d omitted=%u world=%u skinned=%u detail=%u trees=%u part=%u parts=%u first=%u end=%u grouped_copies=%u",
                     Device.dwFrame, state.resolution, state.pointLights, state.spotLights, u32(state.matrices.size()),
                     renderedFaces, staticUpdates, ps_r_local_shadow_faces, state.omittedLights, worldCount, skinnedCount, detailCount, treeCount,
-                    partition, partitions, firstFace, endFace);
+                    partition, partitions, firstFace, endFace, groupedCopies);
                 Msg("* [LocalShadowCPU] frame=%u time=%u init_ms=%.3f candidates_ms=%.3f static_copy_ms=%.3f dynamic_ms=%.3f skinned_ms=%.3f detail_ms=%.3f",
                     Device.dwFrame, Device.dwTimeGlobal, cpu[0], cpu[1], cpu[2], cpu[3], cpu[4], cpu[5]);
             }
