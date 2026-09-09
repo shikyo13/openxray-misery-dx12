@@ -12,6 +12,7 @@ parser.add_argument("dx9")
 parser.add_argument("dx12")
 parser.add_argument("--name", default="MISERY_DX9_DX12_COMPARISON_041")
 parser.add_argument("--dx12-label", default="DX12 build 0.40")
+parser.add_argument("--previous-report")
 args = parser.parse_args()
 dx12_label = html.escape(args.dx12_label)
 outputs = Path(__file__).resolve().parent.parent / "outputs"
@@ -93,6 +94,11 @@ for scene in cases:
         raise ValueError(f"{scene}: time/weather differs materially: {a['clock']} / {b['clock']}")
 
 summary={"runs":runs,"method":"One sequential run per renderer, four fixed cameras, 30-second windows trimmed by 0.5 seconds at both ends. Application present intervals from PresentMon; no frame generation. Save/simulation states differ; recorded game clocks differ by up to one minute. Screenshots are SDR before any driver RTX HDR conversion."}
+profile_note = ""
+if "-graphics_trace" in runs["DX12"]["process"]["args"]:
+    profile_note = "GPU profiling was enabled in this DX12 run; its overhead is included. These results should not be treated as an isolated measurement of the code change."
+summary["profiling_note"] = profile_note
+summary["dx12_label"] = args.dx12_label
 (outputs/(args.name+".json")).write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
 sections=[]
 table=[]
@@ -113,5 +119,9 @@ page='''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewpor
 <p>3440 × 1440, matched camera positions, directions, 75° field of view and named weather. Each run uses the same resolution and authored brightness, contrast, gamma and tone-map settings. Antialiasing and frame generation are off for the comparison.</p>
 <p class="note">These are scene comparisons and short performance samples. The two engines require different save formats, so NPCs and ongoing simulation are not identical. Recorded game clocks differ by up to one minute. Renderer effects also differ. This is not a complete campaign or stability test. Images show the engine's SDR output; RTX HDR is applied later by the driver.</p>
 <table><thead><tr><th>Scene</th><th>DX9 avg FPS</th><th>DX12 avg FPS</th><th>DX9 p99 ms</th><th>DX12 p99 ms</th></tr></thead><tbody>'''+''.join(table)+'''</tbody></table><p class="small">FPS = 1000 / mean application present interval. p99 is the 99th-percentile interval; lower is better. Measurement excludes screenshot and transition boundaries. One run per renderer, not a sustained performance claim.</p>'''+''.join(sections)+f'<p><a href="{args.name}.json">Raw measurements and run identities</a></p></html>'
+if profile_note:
+    page=page.replace("<table>","<p class='small'>"+html.escape(profile_note)+"</p><table>",1)
+if args.previous_report:
+    page=page.replace("<table>","<p><a href='"+html.escape(args.previous_report,quote=True)+"'>Previous DX12 comparison</a></p><table>",1)
 (outputs/(args.name+".html")).write_text(page,encoding="utf-8")
 print(json.dumps({k:{c:{m:r['scenes'][c][m] for m in ('frames','average_fps','mean_ms','p99_ms')} for c in cases} for k,r in runs.items()},indent=2))
