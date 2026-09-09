@@ -21,7 +21,7 @@ Local GPU time sums the two sequential partition ranges. Foliage uses `DetailDra
 
 Current work order:
 
-1. Inspect outdoor foliage vertex/material work using the latest pass timings and existing source. BR/BS measures about 1.5-2.5 ms for outdoor foliage drawing, with live-scene variation. The opaque sun-shadow pixel-shader split below did not reduce its target pass cost and was removed from production source. Preserve caster coverage, wind, lighting, geometry quality and normal callbacks; do not repeat that experiment without a concrete new hypothesis.
+1. Inspect per-pixel clustered lighting and shadow sampling before more geometry-math changes. Current source calls `SampleLocalShadow` before PBR evaluation even when `max(dot(N,L),0)` makes the PBR result zero. A conservative PBR-only early exit is a concrete next hypothesis; preserve the separate authored-material response. It is not yet implemented or measured. The normal-cache and opaque-sun experiments below did not show useful consistent gains and were removed from production source.
 2. Retain the delivered grouped local-shadow copies. The follow-up argument batching experiment below has mixed results and remains opt-in; do not spend more benchmark cycles tuning it without a specific new explanation or change. Local shadows remain costly, so revisit further drawing or shader work when its expected benefit exceeds the other candidates.
 3. Investigate reproducible game-update stalls and remaining CPU work when they limit smoothness or the intended frame rate. Retain the tested optional parallel recorder; revisit further load balancing when CPU limits justify it. Async compute, new graphics features and higher capacity limits require a demonstrated benefit before implementation.
 
@@ -31,7 +31,32 @@ The unfinished cost-based recording splitter is preserved, unbuilt and untested,
 
 Evidence: workspace `outputs/implementation-evidence/MISERY_DX12_RECORD_PARTITIONS_043_SUMMARY.json` and BD/BE `partition-analysis.json`. [Microsoft's CPU/GPU bottleneck explanation](https://devblogs.microsoft.com/directx/cpu-and-gpu-boundedness/) supports choosing work according to the limiting processor. [NVIDIA's command-buffer guide](https://developer.nvidia.com/blog/advanced-api-performance-command-buffers/) supports parallel recording while accounting for command-list overhead, GPU idle time and pipeline drains from frequently mixed copy/dispatch/draw work. The suggested local-shadow opportunity is a source-based hypothesis until measured.
 
-## Latest experiment: opaque sun-shadow depth (2026-09-09 UTC)
+## Latest experiment: cached detail-model normals (2026-09-09 UTC)
+
+Rejected for promotion. Clear-weather foliage GPU time improves only 0.031 ms, rain worsens 0.020 ms, and nighttime results are confounded by different lighting work. No consistent affected-pass or application benefit. Five production source changes restored to parent b24295865; exact patch/binaries retained. Delivered 0.44 remains normal.
+
+The archived `-detail_cached_normals` candidate adds a separate vertex shader and immutable `StructuredBuffer<float3>` at free SRV slot42. It computes the original triangle cross product, normalization and 0.001 degeneracy threshold once at model load; rotation and height-dependent wind bending remain per vertex. Original position/UV/index buffers, instance generation, culling, pixel lighting, motion and shadows retain behavior. OFF keeps the original shader and allocates no normal buffer. No production source/default/package promotion.
+
+| Scene | Foliage GPU ms OFF / ON | Application FPS OFF / ON | p99 ms OFF / ON |
+|---|---:|---:|---:|
+| Interior | 0.046 / 0.047 | 96.89 / 93.36 | 14.02 / 15.21 |
+| Outdoor | 1.541 / 1.510 | 83.75 / 83.08 | 16.36 / 16.52 |
+| Rain | 1.584 / 1.603 | 84.36 / 84.79 | 16.13 / 15.69 |
+| Night | 1.614 / 2.127 | 99.56 / 86.28 | 14.63 / 16.10 |
+
+One sequential same-executable pair with matching starting profiles, controller, replays, cameras and game clocks. Native 3440x1440, FXAA/high AO/16x, conventional and grass shadows, serial recording, grouped local-shadow copies ON, FG OFF; CPU/GPU/slow-frame tracing in both. The only added command-line flag is -detail_cached_normals. OFF uses the original vertex shader and creates no normal buffer; ON uses the separate cached variant. Night mean lights differ 43.10/50.21 and local-shadow GPU time 2.485/3.309 ms; daytime light/object workloads also vary. This prevents attributing the nighttime slowdown solely to the cache. There are 13-14 GPU samples per scene, sampled background engines below 0.56 percent and no invalid in-window GPU counters. Preflight CPU snapshots are not continuous contention measurement. PresentMon measures application API intervals, not displayed frames, latency or drops.
+
+Configure/build exit0. Compiled parent `b242958652f6bc9afb285a2beef9404426e6c7f3`, patch SHA256 `58d5e8e0add679369351a286bc27c710263c3054de96ec2803547aaf06c02e36`, executable `ab49a5bac413e768a191acec83c22f859b6c845244adae552319254302686c1f`, PDB `203c3f99561b241c158fe3d61eb55fcff2e4e74abcec648d4e2ea8c92bbd96f2`. NVRHI pin remains `dcf5f012187e9482d99b71d224ba09304cffb35e`. Exact sources and binaries are in workspace `work/runtime/detail-normals-044`; [replayable patch](detail-normals-044.patch) passes `git apply --check` against the restored parent source.
+
+BT passed two full unload/reloads with native validation, parallel partitions, DLSS Quality and FSR FG. All three loads cached37 models,356 triangles,2,664 entries and31,968 bytes, with zero degenerate triangles; the cached vertex shader loaded. All153 inventory contents/condition/ammo entries and22,927 Grouse bytes match; raw bolt IDs differ. Final successful FG dispatch1450. Native warnings679/820/821 and2,216 legacy shader failures remain. BU/BV each retain836 legacy shader failures. No matched new fatal/native/NVRHI error; all game/PresentMon/sampler processes exit0.
+
+All eleven stills opened: three BT reload images and all eight BU/BV comparison images. Interior NPC/counter/fence/floor lighting and shadow edges, outdoor terrain/bridge/foliage cutouts, rain/fog and night silhouettes remain consistent without obvious new corruption. Vegetation movement and rain/leaf patterns differ; very dark night images limit subtle shading assessment. No exact numerical normal-buffer equality, temporal FG/HDR or full effects-parity claim.
+
+Fourteen BT probe files archived/hash-verified/removed, original control restored byte-exact. Protected normal0.41 EXE/PDB/profile and original billboard shader restored/rehashed; only the newly staged cached wrapper was removed after checking its hash. Delivered0.44, previous packages and fixed DX9 reference retained. Existing comparison report #detail-normal-experiment contains the new four sliders; prior data preserved. Evidence: workspace `outputs/implementation-evidence/MISERY_DX12_DETAIL_NORMALS_044_SUMMARY.json`, BT `reload-analysis.json` and BU/BV `normal-analysis.json`.
+
+[Microsoft's shader guidance](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl-optimize) supports removing unnecessary work and skipping zero-contribution lighting. This is a hypothesis-selection guide, not hardware performance proof. Next inspection found `shared/clustered_lighting.h` samples local shadows before PBR evaluation, while `shared/pbr_brdf.h` multiplies the entire PBR result by nonnegative NdotL. Preserve authored-material lighting when investigating that opportunity; no change has been made yet.
+
+## Earlier experiment: opaque sun-shadow depth (2026-09-09 UTC)
 
 Rejected for promotion: skipping the pixel shader on opaque world/terrain sun-shadow casters did not reduce the affected GPU pass. The three production C++ files were restored to parent `1488eb851b7c59507449eb41d1dbdeabffb61bf0`. The exact tested change remains in [sun-opaque-depth-044.patch](sun-opaque-depth-044.patch); `git apply --check` passed against that restored source. Delivered 0.44 remains normal. Do not repeat these checks without a concrete new hypothesis.
 

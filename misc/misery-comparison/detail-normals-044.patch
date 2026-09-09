@@ -1,0 +1,214 @@
+diff --git a/res/gamedata/shaders/r5/detail_billboard.vs b/res/gamedata/shaders/r5/detail_billboard.vs
+index 19983030b..8a77b62ff 100644
+--- a/res/gamedata/shaders/r5/detail_billboard.vs
++++ b/res/gamedata/shaders/r5/detail_billboard.vs
+@@ -74,6 +74,9 @@ Texture3D g_Perlin4D : register(t12);
+ StructuredBuffer<uint> visible_indices : register(t33);
+ StructuredBuffer<DetailModelGPU> detail_models : register(t35);
+ StructuredBuffer<PulledVertex> pulled_vertices : register(t36);
++#ifdef DETAIL_CACHED_NORMALS
++StructuredBuffer<float3> pulled_normals : register(t42);
++#endif
+ StructuredBuffer<InstanceData> all_instances : register(t37);
+ StructuredBuffer<GPUSlotData> slot_data : register(t38);
+ 
+@@ -159,6 +162,9 @@ DetailVertexOutput main(uint vertex_id : SV_VertexID, uint instance_id : SV_Inst
+ 	float hemi = abs(slot_hemi);
+ 	float sun = sign(slot_hemi) * 0.25 + 0.25;
+ 
++#ifdef DETAIL_CACHED_NORMALS
++	float3 faceN = pulled_normals[mdl.pulledVertexBase + vertex_id];
++#else
+ 	uint triBase = (vertex_id / 3) * 3;
+ 	PulledVertex v0 = pulled_vertices[mdl.pulledVertexBase + triBase];
+ 	PulledVertex v1 = pulled_vertices[mdl.pulledVertexBase + triBase + 1];
+@@ -168,6 +174,7 @@ DetailVertexOutput main(uint vertex_id : SV_VertexID, uint instance_id : SV_Inst
+ 	float3 faceN = cross(e1, e2);
+ 	float len = length(faceN);
+ 	faceN = (len > 0.001) ? (faceN / len) : float3(0, 1, 0);
++#endif
+ 	float3 N;
+ 	N.x = faceN.x * c - faceN.z * s;
+ 	N.y = faceN.y;
+diff --git a/res/gamedata/shaders/r5/detail_billboard_cached.vs b/res/gamedata/shaders/r5/detail_billboard_cached.vs
+new file mode 100644
+index 000000000..9e01e4516
+--- /dev/null
++++ b/res/gamedata/shaders/r5/detail_billboard_cached.vs
+@@ -0,0 +1,2 @@
++#define DETAIL_CACHED_NORMALS
++#include "detail_billboard.vs"
+diff --git a/src/Layers/xrRender/FGDetailManager.cpp b/src/Layers/xrRender/FGDetailManager.cpp
+index 3418831e4..d255f558d 100644
+--- a/src/Layers/xrRender/FGDetailManager.cpp
++++ b/src/Layers/xrRender/FGDetailManager.cpp
+@@ -859,6 +859,17 @@ bool FGDetailManager::CreateGPUBuffers(nvrhi::IDevice* device)
+         pvDesc.keepInitialState = true;
+         pulledVertexBuffer = device->createBuffer(pvDesc);
+ 
++        if (!pulledNormalData.empty())
++        {
++            static_assert(sizeof(Fvector) == 12, "Detail normals must match StructuredBuffer<float3>");
++            nvrhi::BufferDesc normalDesc = pvDesc;
++            normalDesc.byteSize = pulledNormalData.size() * sizeof(Fvector);
++            normalDesc.structStride = sizeof(Fvector);
++            normalDesc.debugName = "DetailPulledNormals";
++            pulledNormalBuffer = device->createBuffer(normalDesc);
++            R_ASSERT2(pulledNormalBuffer, "Detail normal buffer creation failed");
++        }
++
+         if (maxPulledIndexCount > 0)
+         {
+             Msg("* [FGDetailManager] Pulled vertices: %u entries (%u models, max %u indices/model)",
+@@ -1415,6 +1426,8 @@ void FGDetailManager::DestroyGPUBuffers()
+     billboardPixelShader = nullptr;
+ 
+     pulledVertexBuffer = nullptr;
++    pulledNormalBuffer = nullptr;
++    pulledNormalData.clear();
+     pulledIndexBuffer = nullptr;
+     buildDetailsTexture = nullptr;
+ 
+@@ -1866,6 +1879,11 @@ bool FGDetailManager::CreatePrefixSumPipeline(fg::RenderDevice* renderDevice)
+     return true;
+ }
+ 
++const char* FGDetailManager::GetBillboardVertexShaderName() const
++{
++    return strstr(Core.Params, "-detail_cached_normals") ? "detail_billboard_cached" : "detail_billboard";
++}
++
+ bool FGDetailManager::LoadGraphicsShaders(framegraph::ShaderLoader* shaderLoader)
+ {
+     if (!shaderLoader)
+@@ -1906,9 +1924,9 @@ bool FGDetailManager::LoadGraphicsShaders(framegraph::ShaderLoader* shaderLoader
+     }
+     decalPixelShader = decalPsResult.handle;
+ 
+-    auto bbVsResult = shaderLoader->LoadVertexShader("detail_billboard", "main");
++    auto bbVsResult = shaderLoader->LoadVertexShader(GetBillboardVertexShaderName(), "main");
+     if (!bbVsResult.handle)
+-        Msg("! [FGDetailManager] Failed to load detail_billboard.vs (billboard grass unavailable)");
++        Msg("! [FGDetailManager] Failed to load %s.vs (billboard grass unavailable)", GetBillboardVertexShaderName());
+     else
+         billboardVertexShader = bbVsResult.handle;
+ 
+@@ -1941,6 +1959,9 @@ void FGDetailManager::UploadBufferData(nvrhi::ICommandList* cmdList)
+     if (pulledVertexBuffer && !pulledVertexData.empty())
+         cmdList->writeBuffer(pulledVertexBuffer, pulledVertexData.data(), pulledVertexData.size() * sizeof(DecalPulledVertex));
+ 
++    if (pulledNormalBuffer && !pulledNormalData.empty())
++        cmdList->writeBuffer(pulledNormalBuffer, pulledNormalData.data(), pulledNormalData.size() * sizeof(Fvector));
++
+     if (pulledIndexBuffer && maxPulledIndexCount > 0)
+     {
+         xr_vector<u16> seqIndices(maxPulledIndexCount);
+@@ -1951,6 +1972,8 @@ void FGDetailManager::UploadBufferData(nvrhi::ICommandList* cmdList)
+ 
+     pulledVertexData.clear();
+     pulledVertexData.shrink_to_fit();
++    pulledNormalData.clear();
++    pulledNormalData.shrink_to_fit();
+ 
+     cmdList->writeBuffer(slotAABBBuffer, slot_aabbs.data(), slot_aabbs.size() * sizeof(SlotAABB));
+     if (strstr(Core.Params, "-cpu_trace"))
+@@ -2186,7 +2209,7 @@ bool FGDetailManager::CreateGraphicsPipeline(fg::RenderDevice* renderDevice, con
+ 
+     if (billboardVertexShader && billboardPixelShader)
+     {
+-        auto* bbVsRefl = shaderLoader->GetCachedReflection("detail_billboard", ".vs");
++        auto* bbVsRefl = shaderLoader->GetCachedReflection(GetBillboardVertexShaderName(), ".vs");
+         auto* bbPsRefl = shaderLoader->GetCachedReflection("detail_billboard", ".ps");
+         if (bbVsRefl && bbPsRefl)
+             billboardBindingLayout = framegraph::GetPassResourceCache().GetOrCreateBindingLayoutFromReflection("DetailBillboard", *bbVsRefl, *bbPsRefl, device);
+@@ -2579,6 +2602,40 @@ void FGDetailManager::BuildDetailModelGPUData()
+         pulledVerts.push_back(DecalPulledVertex{});
+ 
+     pulledVertexData = std::move(pulledVerts);
++    pulledNormalData.clear();
++    if (strstr(Core.Params, "-detail_cached_normals"))
++    {
++        // These are the same undeformed triangle normals used by the vertex
++        // shader. Rotation and height-dependent wind bending still run there.
++        pulledNormalData.resize(pulledVertexData.size());
++        for (auto& normal : pulledNormalData) normal.set(0.f, 1.f, 0.f);
++        u32 triangles = 0, degenerate = 0;
++        for (const auto& model : cachedModelGPUData)
++        {
++            for (u32 j = 0; j + 2 < model.pulledIndexCount; j += 3)
++            {
++                const u32 base = model.pulledVertexBase + j;
++                R_ASSERT(base + 2 < pulledVertexData.size());
++                const auto& v0 = pulledVertexData[base];
++                const auto& v1 = pulledVertexData[base + 1];
++                const auto& v2 = pulledVertexData[base + 2];
++                Fvector e1, e2, normal;
++                e1.set(v1.px - v0.px, v1.py - v0.py, v1.pz - v0.pz);
++                e2.set(v2.px - v0.px, v2.py - v0.py, v2.pz - v0.pz);
++                normal.crossproduct(e1, e2);
++                const float length = normal.magnitude();
++                if (length > 0.001f) normal.div(length);
++                else { normal.set(0.f, 1.f, 0.f); ++degenerate; }
++                R_ASSERT(std::isfinite(normal.x) && std::isfinite(normal.y) && std::isfinite(normal.z));
++                for (u32 corner = 0; corner < 3; ++corner)
++                    pulledNormalData[base + corner] = normal;
++                ++triangles;
++            }
++        }
++        Msg("* [DetailNormals] models=%zu vertices=%zu triangles=%u degenerate=%u bytes=%zu",
++            cachedModelGPUData.size(), pulledNormalData.size(), triangles, degenerate,
++            pulledNormalData.size() * sizeof(Fvector));
++    }
+ }
+ 
+ nvrhi::BindingSetHandle FGDetailManager::CreateInstanceGenBindingSet(nvrhi::IDevice* device) const
+diff --git a/src/Layers/xrRender/FGDetailManager.h b/src/Layers/xrRender/FGDetailManager.h
+index 28e3c042d..989f9d67f 100644
+--- a/src/Layers/xrRender/FGDetailManager.h
++++ b/src/Layers/xrRender/FGDetailManager.h
+@@ -179,6 +179,7 @@ public:
+     xr_vector<u16> bladeIndices[LOD_COUNT];
+ 
+     nvrhi::BufferHandle pulledVertexBuffer;
++    nvrhi::BufferHandle pulledNormalBuffer;
+     nvrhi::BufferHandle pulledIndexBuffer;
+     u32 maxPulledIndexCount = 0;
+     xr_vector<DetailModelGPU> cachedModelGPUData;
+@@ -322,6 +323,7 @@ public:
+     bool LoadCullComputeShader(class framegraph::ShaderLoader* shaderLoader);
+     bool LoadInstanceGenShader(class framegraph::ShaderLoader* shaderLoader);
+     bool LoadGraphicsShaders(class framegraph::ShaderLoader* shaderLoader);
++    const char* GetBillboardVertexShaderName() const;
+     bool CreateGraphicsPipeline(fg::RenderDevice* device, const nvrhi::FramebufferInfo& fbInfo);
+     bool CreateComputePipeline(fg::RenderDevice* device);
+     bool CreateInstanceGenPipeline(fg::RenderDevice* device);
+@@ -364,6 +366,7 @@ private:
+     int dither[16][16];
+ 
+     xr_vector<DecalPulledVertex> pulledVertexData;
++    xr_vector<Fvector> pulledNormalData;
+ 
+     nvrhi::BindingSetHandle CreateInstanceGenBindingSet(nvrhi::IDevice* device) const;
+     void BuildDetailModelGPUData();
+diff --git a/src/Layers/xrRender/FrameGraphPasses/DetailPassSetup.cpp b/src/Layers/xrRender/FrameGraphPasses/DetailPassSetup.cpp
+index 351f2d163..7526dc2fc 100644
+--- a/src/Layers/xrRender/FrameGraphPasses/DetailPassSetup.cpp
++++ b/src/Layers/xrRender/FrameGraphPasses/DetailPassSetup.cpp
+@@ -266,7 +266,7 @@ DefaultOutputLayout setupDetailPass(
+                 return cache.GetOrCreateBindingSet(bindDesc, dm->graphicsBindingLayout, nvDev);
+             };
+ 
+-            auto* bbVsRefl = shaderLoader->GetCachedReflection("detail_billboard", ".vs");
++            auto* bbVsRefl = shaderLoader->GetCachedReflection(dm->GetBillboardVertexShaderName(), ".vs");
+             auto* bbPsRefl = shaderLoader->GetCachedReflection("detail_billboard", ".ps");
+ 
+             auto makePulledBindingSet = [&](nvrhi::BufferHandle visibleIndicesBuffer, nvrhi::BindingLayoutHandle layout) {
+@@ -276,6 +276,8 @@ DefaultOutputLayout setupDetailPass(
+                 bsb.BufferSRV("visible_indices", visibleIndicesBuffer);
+                 bsb.BufferSRV("detail_models", dm->detailModelsBuffer);
+                 bsb.BufferSRV("pulled_vertices", dm->pulledVertexBuffer);
++                if (dm->pulledNormalBuffer)
++                    bsb.BufferSRV("pulled_normals", dm->pulledNormalBuffer);
+                 bsb.BufferSRV("all_instances", dm->generatedInstancesBuffer);
+                 bsb.BufferSRV("slot_data", dm->slotDataBuffer);
+                 bsb.Texture("g_Perlin4D", dm->perlin4dTexture);
