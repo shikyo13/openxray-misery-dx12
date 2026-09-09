@@ -47,8 +47,8 @@ public:
     virtual float shedule_Scale() const;
     virtual void shedule_Update(u32 dt);
     virtual bool shedule_Needed() { return true; };
-    void update_switch();
-    void update_scheduled(bool init_ef = true);
+    u32 update_switch();
+    u32 update_scheduled(bool init_ef = true);
     void load(LPCSTR game_name = 0, bool no_assert = false, bool new_only = false);
     bool load_game(LPCSTR game_name, bool no_assert = false);
     float update_monster_factor() const { return m_update_monster_factor; }

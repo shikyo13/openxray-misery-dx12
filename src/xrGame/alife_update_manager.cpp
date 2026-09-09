@@ -22,6 +22,7 @@
 #include "xrEngine/profiler.h"
 #include "mt_config.h"
 #include "xrNetServer/NET_Messages.h"
+#include "xrCore/Threading/TaskManager.hpp"
 
 using namespace ALife;
 
@@ -75,29 +76,91 @@ float CALifeUpdateManager::shedule_Scale() const
     return (.5f); // (schedule_min + schedule_max)*0.5f
 }
 
-void CALifeUpdateManager::update_switch()
+u32 CALifeUpdateManager::update_switch()
 {
     init_ef_storage();
 
+    u32 count = 0;
     START_PROFILE("ALife/switch");
-    graph().level().update(CSwitchPredicate(this), Device.dwPrecacheFrame > 0);
+    count = graph().level().update(CSwitchPredicate(this), Device.dwPrecacheFrame > 0);
     STOP_PROFILE
+    return count;
 }
 
-void CALifeUpdateManager::update_scheduled(bool init_ef)
+u32 CALifeUpdateManager::update_scheduled(bool init_ef)
 {
     if (init_ef)
         init_ef_storage();
 
+    u32 count = 0;
     START_PROFILE("ALife/scheduled");
-    scheduled().update();
+    count = scheduled().update();
     STOP_PROFILE
+    return count;
 }
 
 void CALifeUpdateManager::update()
 {
-    update_switch();
-    update_scheduled(false);
+    static const bool trace = strstr(Core.Params, "-alife_trace") != nullptr;
+    if (!trace)
+    {
+        update_switch();
+        update_scheduled(false);
+        return;
+    }
+
+    CTimer timer;
+    timer.Start();
+    const u32 switchChecks = update_switch();
+    const float switch_ms = timer.GetElapsed_sec() * 1000.f;
+    const u32 updated = update_scheduled(false);
+    const float total_ms = timer.GetElapsed_sec() * 1000.f;
+    Msg("* [ALifeUpdate] frame=%u time=%u worker=%zu precache=%u switch_checked=%u level_objects=%zu "
+        "scheduled=%u scheduled_objects=%zu switch_ms=%.6f scheduled_ms=%.6f total_ms=%.6f",
+        Device.dwFrame, Device.dwTimeGlobal, TaskManager::GetCurrentWorkerID(), Device.dwPrecacheFrame,
+        switchChecks, graph().level().objects().size(), updated, scheduled().objects().size(),
+        switch_ms, total_ms - switch_ms, total_ms);
+
+    // Inspect coverage only in diagnostics, outside the measured update. A rising
+    // oldest cycle shows that the budgeted iterator continues through the registry.
+    static u32 lastCoverageFrame = 0;
+    if (Device.dwFrame - lastCoverageFrame >= 60)
+    {
+        lastCoverageFrame = Device.dwFrame;
+        u64 oldestSwitch = u64(-1), newestSwitch = 0;
+        u64 oldestScheduled = u64(-1), newestScheduled = 0;
+        size_t unvisitedSwitch = 0, unvisitedScheduled = 0;
+        for (const auto& entry : graph().level().objects())
+        {
+            const u64 cycle = entry.second->m_switch_counter;
+            if (cycle == u64(-1) || cycle == 0)
+            {
+                ++unvisitedSwitch;
+                continue;
+            }
+            oldestSwitch = std::min(oldestSwitch, cycle);
+            newestSwitch = std::max(newestSwitch, cycle);
+        }
+        for (const auto& entry : scheduled().objects())
+        {
+            const u64 cycle = entry.second->m_schedule_counter;
+            if (cycle == u64(-1) || cycle == 0)
+            {
+                ++unvisitedScheduled;
+                continue;
+            }
+            oldestScheduled = std::min(oldestScheduled, cycle);
+            newestScheduled = std::max(newestScheduled, cycle);
+        }
+        if (newestSwitch == 0) oldestSwitch = 0;
+        if (newestScheduled == 0) oldestScheduled = 0;
+        Msg("* [ALifeCoverage] frame=%u time=%u precache=%u level_objects=%zu switch_unvisited=%zu "
+            "switch_oldest=%llu switch_newest=%llu scheduled_objects=%zu scheduled_unvisited=%zu "
+            "scheduled_oldest=%llu scheduled_newest=%llu",
+            Device.dwFrame, Device.dwTimeGlobal, Device.dwPrecacheFrame, graph().level().objects().size(),
+            unvisitedSwitch, oldestSwitch, newestSwitch, scheduled().objects().size(),
+            unvisitedScheduled, oldestScheduled, newestScheduled);
+    }
 }
 
 void CALifeUpdateManager::shedule_Update(u32 dt)
@@ -122,7 +185,18 @@ void CALifeUpdateManager::shedule_Update(u32 dt)
 
 void CALifeUpdateManager::set_process_time(int microseconds)
 {
-    graph().set_process_time(float(microseconds) - float(microseconds) * update_monster_factor() / 1000000.f);
+    // The registry timer measures seconds. Convert the entire remaining budget,
+    // including the initial term, from the authored microsecond configuration.
+    const float monsterMicroseconds = float(microseconds) * update_monster_factor();
+    // Diagnostic control for comparing the old calculation in the same binary.
+    const bool legacyBudget = strstr(Core.Params, "-alife_legacy_budget") != nullptr;
+    const float switchSeconds = legacyBudget
+        ? float(microseconds) - monsterMicroseconds / 1000000.f
+        : (float(microseconds) - monsterMicroseconds) / 1000000.f;
+    graph().set_process_time(switchSeconds);
+    if (strstr(Core.Params, "-alife_trace"))
+        Msg("* [ALifeBudget] process_us=%d monster_factor=%.6f switch_budget_ms=%.6f legacy=%u",
+            microseconds, update_monster_factor(), switchSeconds * 1000.f, legacyBudget ? 1u : 0u);
 }
 
 void CALifeUpdateManager::objects_per_update(const u32& objects_per_update)
