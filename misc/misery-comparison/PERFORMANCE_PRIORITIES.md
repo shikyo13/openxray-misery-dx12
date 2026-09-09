@@ -12,6 +12,8 @@ The current candidate removes repeated destruction and copying of 21,786 unchang
 
 `fg_parallel_record 0/1` now switches the experimental recorder within one session. Startup still follows `-fg_parallel_record`; the live command does not save itself to `user.ltx`. Normal launches remain serial. `-cpu_trace` now measures collection substages and samples geometry/light/particle workloads once per second. The `sun` workload field denotes a valid sun-map resource, not whether a sun draw pass executed.
 
+For native-resolution qualification, `-workload_trace` also permits those once-per-second counts with CPU/GPU pass timing disabled. Its output names that resource field `sun_map` explicitly. Keep this low-rate logging disclosed in results; do not call it a fully uninstrumented run.
+
 AS (`DX12_PARALLEL_CROSSOVER_042_AS`) and AT (`DX12_STATIC_RETAIN_CROSSOVER_042_AT`) ran the same eight-window controller, alternating OFF/ON/ON/OFF by day and ON/OFF/OFF/ON at night. Each window lasts 15 seconds after settling. Both use 1720x720, FXAA, AO-high, 16x, FG off and identical initial profile/controller hashes; cameras agree within 0.001 and recorded clocks match. Native DX12, ordinary game callbacks and NVRHI validation remain enabled. Both games, PresentMon and GPU samplers exited 0.
 
 Combined `CollectorBegin` and `StaticGeometry` CPU work fell from 0.485-0.491 ms to 0.0036-0.0048 ms per frame across the eight windows. Daylight total renderer CPU time improved by 0.36-0.52 ms. Sampled static count remained 21,786. Twenty-eight daytime samples in each run used distinct overlapping recording threads; night used serial fallback. Sampled background GPU engines stayed below 0.16%.

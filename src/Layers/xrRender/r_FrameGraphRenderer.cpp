@@ -590,20 +590,21 @@ void FrameGraphRenderer::Render() {
         for (const auto& timing : m_framegraph->GetStatistics().passTimings)
             m_graphicsTrace->w_printf("cpu_pass,%u,%u,%u,%u,%s,%.6f\n", Device.dwFrame,
                 Device.dwTimeGlobal, ps_r_aa, ps_r_ssao, timing.first.c_str(), timing.second);
-        if (Device.dwTimeGlobal >= m_nextWorkloadTrace) {
-            m_nextWorkloadTrace = Device.dwTimeGlobal + 1000;
-            size_t localFaces = 0, visibleFaces = 0;
-            if (m_localShadowMap.is_valid()) {
-                const auto& local = m_blackboard->get<passes::LocalShadowPassState>();
-                localFaces = local.matrices.size();
-                visibleFaces = std::count(local.visibleFaces.begin(), local.visibleFaces.end(), true);
-            }
-            Msg("* [RenderWorkload] frame=%u time=%u parallel=%d static=%zu batches=%zu spatial=%zu offscreen=%zu lights=%u local_faces=%zu visible_faces=%zu sun=%d hud=%zu particles=%zu",
-                Device.dwFrame, Device.dwTimeGlobal, ps_fg_parallel_record, m_staticBatchCount,
-                m_geometryCollector->GetBatches().size(), m_lstRenderables.size(), m_shadowCasterCandidates.size(),
-                fg::ClusteredLightManager::Instance().GetLightCount(), localFaces, visibleFaces,
-                m_sunShadowMap.is_valid() ? 1 : 0, m_hudBatches.size(), m_worldParticleBatches.size());
+    }
+    // Low-rate workload counts can accompany PresentMon without enabling pass timers.
+    if ((cpuTrace || strstr(Core.Params, "-workload_trace")) && Device.dwTimeGlobal >= m_nextWorkloadTrace) {
+        m_nextWorkloadTrace = Device.dwTimeGlobal + 1000;
+        size_t localFaces = 0, visibleFaces = 0;
+        if (m_localShadowMap.is_valid()) {
+            const auto& local = m_blackboard->get<passes::LocalShadowPassState>();
+            localFaces = local.matrices.size();
+            visibleFaces = std::count(local.visibleFaces.begin(), local.visibleFaces.end(), true);
         }
+        Msg("* [RenderWorkload] frame=%u time=%u parallel=%d static=%zu batches=%zu spatial=%zu offscreen=%zu lights=%u local_faces=%zu visible_faces=%zu sun_map=%d hud=%zu particles=%zu",
+            Device.dwFrame, Device.dwTimeGlobal, ps_fg_parallel_record, m_staticBatchCount,
+            m_geometryCollector->GetBatches().size(), m_lstRenderables.size(), m_shadowCasterCandidates.size(),
+            fg::ClusteredLightManager::Instance().GetLightCount(), localFaces, visibleFaces,
+            m_sunShadowMap.is_valid() ? 1 : 0, m_hudBatches.size(), m_worldParticleBatches.size());
     }
 
     if (m_gpuCullingManager && psDeviceFlags.test(rsStatistic))
